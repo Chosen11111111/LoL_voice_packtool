@@ -18,9 +18,18 @@ const logger = createLogger("lcu-events");
 
 export type ChampSelectPresence = "in" | "out" | "offline";
 
+export interface ChampSelectPoll {
+  status: number;
+  presence: ChampSelectPresence;
+  /** 该次响应的摘要(排障: 看到底拿到了什么)。 */
+  detail: string;
+}
+
 export interface WatchOptions {
   onSession: (session: ChampSelectSession, presence: ChampSelectPresence) => void;
   onPresence?: (presence: ChampSelectPresence) => void;
+  /** 每次轮询(结果有变化时)回调, 用于排障。 */
+  onPoll?: (poll: ChampSelectPoll) => void;
   /** 选人中的轮询间隔。 */
   fastIntervalMs?: number;
   /** 不在选人时的轮询间隔。 */
@@ -35,15 +44,23 @@ export function watchChampSelect(options: WatchOptions): StopWatch {
   const idle = Math.max(fast, options.idleIntervalMs ?? 1500);
   let stopped = false;
   let lastPresence: ChampSelectPresence | null = null;
+  let lastPollKey = "";
 
   const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
   const report = (presence: ChampSelectPresence) => {
     if (presence !== lastPresence) {
       lastPresence = presence;
-      logger.debug(`选人流程状态: ${presence}`);
+      logger.info(`选人流程状态变化: ${presence}`);
       options.onPresence?.(presence);
     }
+  };
+
+  const reportPoll = (poll: ChampSelectPoll) => {
+    const key = `${poll.status}|${poll.presence}|${poll.detail}`;
+    if (key === lastPollKey) return;
+    lastPollKey = key;
+    options.onPoll?.(poll);
   };
 
   void (async () => {
@@ -53,22 +70,33 @@ export function watchChampSelect(options: WatchOptions): StopWatch {
         const response = await lcuRequest("GET", "/lol-champ-select/v1/session", { timeoutMs: 4000 });
         if (response.status === 200 && response.body) {
           presence = "in";
-          report(presence);
+          let detail = "";
           try {
             const session = JSON.parse(response.body) as ChampSelectSession;
+            const actions = (session.actions ?? []).flat();
+            const mine = actions.filter((item) => item.actorCellId === session.localPlayerCellId);
+            detail =
+              `cell=${session.localPlayerCellId} 动作${actions.length} 自己的${mine.length}` +
+              ` [${mine.map((item) => `${item.type}:${item.championId}${item.completed ? "✓" : ""}`).join(" ")}]`;
+            reportPoll({ status: response.status, presence, detail });
+            report(presence);
             if (!stopped) options.onSession(session, presence);
           } catch (error) {
+            reportPoll({ status: response.status, presence, detail: "会话解析失败" });
             logger.debug(`选人会话解析失败: ${String((error as Error).message ?? error)}`);
           }
         } else if (response.status === 404) {
           presence = "out";
+          reportPoll({ status: response.status, presence, detail: "不在选人" });
           report(presence);
           if (!stopped) options.onSession({}, presence);
         } else {
           presence = "offline";
+          reportPoll({ status: response.status, presence, detail: response.status === 0 ? "拿不到客户端接口" : "非预期状态" });
           report(presence);
         }
       } catch (error) {
+        reportPoll({ status: -1, presence: "offline", detail: String((error as Error).message ?? error).slice(0, 60) });
         logger.debug(`选人轮询异常: ${String((error as Error).message ?? error)}`);
       }
       await sleep(presence === "in" ? fast : idle);

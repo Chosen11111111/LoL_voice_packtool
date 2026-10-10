@@ -64,6 +64,8 @@ export interface LobbyLiveState {
   last_session: Record<string, unknown> | null;
   /** 最近的会话快照序列(排障: 看悬停/锁定是怎么变化的)。 */
   session_log: Array<Record<string, unknown>>;
+  /** 轮询轨迹(排障: 每次结果变化时记一条)。 */
+  poll_log: string[];
   /** 窗口回报的最近一次播放结果(排障用)。 */
   last_playback: PlaybackReport | null;
   playback_ok: number;
@@ -88,6 +90,7 @@ export class LobbyLiveEngine {
   /** 最近一次选人会话摘要(排障用: 看客户端到底给了什么结构)。 */
   private lastSession: Record<string, unknown> | null = null;
   private sessionLog: Array<Record<string, unknown>> = [];
+  private pollLog: string[] = [];
   /** 本轮选人是否已经建立基线(建立后才有事件)。 */
   private baselined = false;
   /** 窗口回报的播放结果。 */
@@ -147,6 +150,7 @@ export class LobbyLiveEngine {
     this.playbackOk = 0;
     this.playbackFailed = 0;
     this.sessionLog = [];
+    this.pollLog = [];
     this.lastSession = null;
     this.baselined = false;
     const watch = options.watcher ?? watchChampSelect;
@@ -160,6 +164,10 @@ export class LobbyLiveEngine {
           this.tracker.reset();
           this.baselined = false;
         }
+      },
+      onPoll: (poll) => {
+        const stamp = new Date().toLocaleTimeString("zh-CN", { hour12: false });
+        this.pollLog = [`${stamp} [${poll.presence}] status=${poll.status} ${poll.detail}`, ...this.pollLog].slice(0, 40);
       },
       onSession: (session, presence) => this.handleSession(session, presence)
     });
@@ -200,6 +208,12 @@ export class LobbyLiveEngine {
     if (!this.baselined) {
       this.tracker.baseline(session);
       this.baselined = true;
+      const lockedNow = (session.actions ?? []).flat().filter((item) => item.completed && item.championId > 0);
+      logger.info(
+        lockedNow.length
+          ? `建立基线: 已经锁定的 ${lockedNow.map((item) => item.championId).join(",")} 不补播`
+          : "建立基线: 当前还没有锁定动作"
+      );
       return;
     }
     const events = this.tracker.derive(null, session, { includeOthers: options.includeOthers });
@@ -256,6 +270,7 @@ export class LobbyLiveEngine {
       history: this.history,
       last_session: this.lastSession,
       session_log: this.sessionLog,
+      poll_log: this.pollLog,
       last_playback: this.lastPlayback,
       playback_ok: this.playbackOk,
       playback_failed: this.playbackFailed,
