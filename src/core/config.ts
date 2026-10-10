@@ -38,8 +38,6 @@ export interface AppConfig {
   leaguePath: string;
   /** 游戏本体目录(含 League of Legends.exe, 留空=跟随客户端推导)。 */
   gamePath: string;
-  /** Pengu Loader 目录(含 core.dll, 留空=自动探测)。 */
-  penguLoaderDir: string;
   /** 清单下载器可执行文件(相对项目根或绝对路径)。 */
   manifestDownloader: string;
   /** 清单 ID。 */
@@ -67,7 +65,6 @@ const DEFAULT_CONFIG: AppConfig = {
   voiceRoot: "",
   leaguePath: "",
   gamePath: "",
-  penguLoaderDir: "",
   manifestDownloader: "ManifestDownloader.exe",
   manifestId: "37D5BB71755990B9",
   bundleProxy: "https://gh.chosen.cc.cd/channels/public/bundles",

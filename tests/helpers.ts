@@ -132,22 +132,4 @@ export async function makeLeagueInstall(root: string, options: FinalFixtureOptio
   return { leagueDir, finalDir };
 }
 
-export interface PenguFixture {
-  penguDir: string;
-  pluginDir: string;
-}
 
-/** 造一个假的 Pengu Loader(core.dll + d3d9_stub.dll + 语音插件)。 */
-export async function makePenguLoader(root: string): Promise<PenguFixture> {
-  const penguDir = path.join(root, "Pengu Loader");
-  await writeFile(path.join(penguDir, "core.dll"), "fake-core-dll");
-  await writeFile(path.join(penguDir, "d3d9_stub.dll"), "fake-stub-dll");
-  await writeFile(path.join(penguDir, "Pengu Loader.exe"), "fake-exe");
-  const pluginDir = path.join(penguDir, "plugins", "Chosen-VoiceSync");
-  const templateDir = path.join(projectRoot, "assets", "pengu-plugin", "Chosen-VoiceSync");
-  await fs.mkdir(pluginDir, { recursive: true });
-  for (const name of await listDir(templateDir)) {
-    await fs.copyFile(path.join(templateDir, name), path.join(pluginDir, name));
-  }
-  return { penguDir, pluginDir };
-}

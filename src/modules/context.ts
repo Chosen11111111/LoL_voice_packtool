@@ -3,8 +3,6 @@ import path from "node:path";
 import { appRoot, type AppConfig } from "../core/config.ts";
 import { resolveGamePaths, resolveVoiceRoot, type GamePathResolution } from "../core/paths.ts";
 import { detectBaseLocale, detectRegion } from "../packs/baselocale.ts";
-import { detectPenguLoaderDir } from "../pengu/loader.ts";
-import { voicePluginDir } from "../pengu/plugin.ts";
 import { createLogger } from "../core/logger.ts";
 
 const logger = createLogger("context");
@@ -14,8 +12,6 @@ export interface SwitchEnv {
   appDir: string;
   voiceRoot: string;
   voiceRootSource: string;
-  penguDir: string | null;
-  pluginDir: string | null;
   resolution: GamePathResolution;
   finalDir: string | null;
   leagueDir: string | null;
@@ -51,9 +47,6 @@ export async function buildEnv(options: BuildEnvOptions): Promise<SwitchEnv> {
     skipAutoDetect: options.skipAutoDetect
   });
 
-  const penguDir = await detectPenguLoaderDir({ configured: config.penguLoaderDir, appDir });
-  const pluginDir = penguDir ? voicePluginDir(penguDir) : null;
-
   const base = await detectBaseLocale({
     finalDir: resolution.finalDir,
     leagueDir: resolution.leagueDir || null,
@@ -69,8 +62,6 @@ export async function buildEnv(options: BuildEnvOptions): Promise<SwitchEnv> {
     appDir,
     voiceRoot: voiceRootResolution.root,
     voiceRootSource: voiceRootResolution.source,
-    penguDir,
-    pluginDir,
     resolution,
     finalDir: resolution.finalDir,
     leagueDir: resolution.leagueDir || null,

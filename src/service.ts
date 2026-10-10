@@ -21,8 +21,6 @@ import { applyIngameLang, restoreIngameLang } from "./modules/ingameLang.ts";
 import { applyIngameVoice, restoreIngameVoice } from "./modules/ingameVoice.ts";
 import { applyLobbyVoice, getLobbyStatus, restoreLobbyVoice, type LobbyStatus } from "./modules/lobbyVoice.ts";
 import { buildEnv, type SwitchEnv } from "./modules/context.ts";
-import { ensurePluginInstalled, pluginTemplateDir, readPluginConfig, voicePluginDir } from "./pengu/plugin.ts";
-import { getStubStatus } from "./pengu/loader.ts";
 import { taskManager, type TaskSnapshot } from "./tasks/manager.ts";
 
 const logger = createLogger("service");
@@ -165,15 +163,12 @@ export async function planSwitch(options: { locale: string; modules?: ModuleId[]
 
   if (!env.resolution.ok) blockers.push(env.resolution.message);
   if (await isGameRunning()) blockers.push("检测到游戏对局正在进行中，请退出对局后再切换。");
-  if (!env.penguDir && modules.includes("lobby_voice")) {
-    blockers.push("未找到 Pengu Loader（大厅语音需要它），请把 Pengu Loader 放到项目目录或配置 penguLoaderDir。");
-  }
   if (!env.resolution.leagueDir && modules.includes("lobby_lang")) {
     blockers.push("未定位到联盟客户端目录，无法修改大厅界面语言。");
   }
 
   const checks = await Promise.all(
-    modules.map((module) => checkModuleResources(module, options.locale, { voiceRoot: env.voiceRoot, pluginDir: env.pluginDir }))
+    modules.map((module) => checkModuleResources(module, options.locale, { voiceRoot: env.voiceRoot }))
   );
   for (const check of checks) {
     if (!check.ok) blockers.push(`${check.module_name}：${check.message}`);
@@ -224,11 +219,8 @@ export function defaultApplyModules(config: AppConfig): ModuleId[] {
 /** 默认还原范围: 大厅能力关闭时, 只在大厅确实处于开启状态才把它加回来(避免残留)。 */
 async function defaultRestoreModules(config: AppConfig, env: SwitchEnv): Promise<ModuleId[]> {
   const modules: ModuleId[] = [];
-  if (config.features.lobbyVoice) {
-    modules.push("lobby_voice");
-  } else if (env.penguDir && (await getStubStatus(env.penguDir, env.resolution)).active) {
-    modules.push("lobby_voice");
-  }
+  // 大厅选人语音(WAD 方案)未接入完成前, 默认还原流程不包含它
+  if (config.features.lobbyVoice) modules.push("lobby_voice");
   if (config.features.lobbyLang) modules.push("lobby_lang");
   modules.push("ingame_voice", "ingame_lang");
   return modules;
@@ -415,22 +407,6 @@ export function startUpdateRunTask(request: UpdateRunRequest = {}): TaskSnapshot
   });
 }
 
-/** 安装/重装大厅语音插件(独立工具自带模板)。 */
-export async function installPlugin(force = false): Promise<{ ok: boolean; message: string; pluginDir: string | null }> {
-  const config = await loadConfig();
-  const env = await buildEnvFromConfig(config, { skipProcess: true });
-  if (!env.penguDir) {
-    return {
-      ok: false,
-      message: "未找到 Pengu Loader（需要 core.dll 与 d3d9_stub.dll），请把它放到项目目录或在配置里指定 penguLoaderDir。",
-      pluginDir: null
-    };
-  }
-  const pluginDir = voicePluginDir(env.penguDir);
-  const result = await ensurePluginInstalled(pluginDir, pluginTemplateDir(env.appDir), { force });
-  return { ok: result.ok, message: result.message, pluginDir };
-}
-
 /** 路径自动侦测(诊断/首次配置)。 */
 export async function inspectPaths(): Promise<{ resolution: PathsPayload; candidates: Awaited<ReturnType<typeof detectCandidates>> }> {
   const config = await loadConfig();
@@ -454,20 +430,18 @@ export async function inspectPaths(): Promise<{ resolution: PathsPayload; candid
 export async function doctor(): Promise<Record<string, unknown>> {
   const config = await loadConfig();
   const env = await buildEnvFromConfig(config);
-  const [stub, pluginConfig, gameRunning, clientRunning] = await Promise.all([
-    getStubStatus(env.penguDir, env.resolution),
-    env.pluginDir ? readPluginConfig(env.pluginDir) : Promise.resolve(null),
+  const [lobby, gameRunning, clientRunning] = await Promise.all([
+    getLobbyStatus(env),
     isGameRunning(),
     isClientRunning()
   ]);
   const locales = await scanLocales(env.voiceRoot, { withCounts: false });
   return {
     app: { version: APP_VERSION, appRoot: env.appDir, node: process.version, platform: process.platform },
-    config: { path: path.join(env.appDir, "config.json"), voiceRoot: env.voiceRoot, voiceRootSource: env.voiceRootSource, penguLoaderDir: env.penguDir },
+    config: { path: path.join(env.appDir, "config.json"), voiceRoot: env.voiceRoot, voiceRootSource: env.voiceRootSource, baseLocale: env.baseLocale, region: env.region },
     paths: pathsPayload(env),
     processes: { game_running: gameRunning, client_running: clientRunning },
-    stub: { active: stub.active, target: stub.target, message: stub.message },
-    plugin: { dir: env.pluginDir, config: pluginConfig },
+    lobby: { mechanism: lobby.mechanism, enabled: lobby.enabled, wad_file: lobby.wad_file, wad_available: lobby.wad_available },
     locales: locales.map((item) => ({ code: item.code, voice: item.has_voice, lang: item.has_lang, lobby: item.has_lobby }))
   };
 }

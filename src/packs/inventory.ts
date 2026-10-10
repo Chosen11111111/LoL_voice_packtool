@@ -38,7 +38,7 @@ export interface ResourceCheck {
 export async function checkModuleResources(
   module: ModuleId,
   locale: string,
-  context: { voiceRoot: string; pluginDir: string | null }
+  context: { voiceRoot: string }
 ): Promise<ResourceCheck> {
   const base = { module, module_name: moduleResultName(module), success: 0, failed: 0 };
 
@@ -87,16 +87,6 @@ export async function checkModuleResources(
   }
 
   if (module === "lobby_voice") {
-    if (!context.pluginDir || !(await isFile(path.join(context.pluginDir, "index.js")))) {
-      return {
-        ...base,
-        ok: false,
-        planned: 0,
-        missing: true,
-        reason: "资源缺失",
-        message: `未找到大厅语音插件：${context.pluginDir ?? "(未定位 Pengu Loader)"}`
-      };
-    }
     const assets = await lobbyAssetsDir(locale, context.voiceRoot);
     const oggs = assets ? await walkFiles(path.join(assets, "champion-choose-vo"), { match: (name) => name.toLowerCase().endsWith(".ogg") }) : [];
     if (!oggs.length) {
@@ -109,7 +99,14 @@ export async function checkModuleResources(
         message: `未找到 ${locale} 的大厅选人语音资源 assets/champion-choose-vo/*.ogg（当前资源目录：${context.voiceRoot}）`
       };
     }
-    return { ...base, ok: true, planned: 1, missing: false, reason: "", message: `选人语音 ${oggs.length} 个` };
+    return {
+      ...base,
+      ok: false,
+      planned: oggs.length,
+      missing: false,
+      reason: "能力未接入",
+      message: "大厅选人语音的 WAD 方案尚未接入完成（不会修改客户端文件）"
+    };
   }
 
   if (module === "lobby_lang") {

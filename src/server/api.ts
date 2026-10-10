@@ -17,7 +17,6 @@ import {
   getDashboard,
   getLocales,
   inspectPaths,
-  installPlugin,
   planSwitch,
   startApplyTask,
   startImportTask,
@@ -184,12 +183,6 @@ export function buildRouter(): Router {
     return { ok: true, task: startUpdateRunTask({ locales }) };
   });
 
-  router.post("/api/plugin/install", async (context) => {
-    const body = asRecord(context.body);
-    const plugin = await installPlugin(Boolean(body.force));
-    return { ok: plugin.ok, message: plugin.message, plugin_dir: plugin.pluginDir };
-  });
-
   router.post("/api/doctor", async () => ({ ok: true, doctor: await doctor() }));
 
   router.get("/api/tasks", () => ({ ok: true, tasks: taskManager.list(), busy: taskManager.busyGroups() }));
@@ -254,5 +247,5 @@ export async function startApiServer(
 export async function stateOnce(): Promise<unknown> {
   const config = await loadConfig();
   const env = await buildEnvFromConfig(config);
-  return { dashboard: await getDashboard(), env: { voiceRoot: env.voiceRoot, penguDir: env.penguDir } };
+  return { dashboard: await getDashboard(), env: { voiceRoot: env.voiceRoot, baseLocale: env.baseLocale, region: env.region } };
 }

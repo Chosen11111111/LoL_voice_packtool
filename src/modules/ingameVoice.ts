@@ -127,7 +127,7 @@ export async function restoreIngameVoice(context: ModuleContext): Promise<Module
 
 /** 对局语音相关的资源预检(界面开着"开始切换"按钮前调用)。 */
 export async function precheckIngameVoice(locale: string, context: Pick<ModuleContext, "voiceRoot">): Promise<ReturnType<typeof checkModuleResources>> {
-  return checkModuleResources(MODULE, locale, { voiceRoot: context.voiceRoot, pluginDir: null });
+  return checkModuleResources(MODULE, locale, { voiceRoot: context.voiceRoot });
 }
 
 /** 清理某目录里残留的临时文件(诊断用)。 */

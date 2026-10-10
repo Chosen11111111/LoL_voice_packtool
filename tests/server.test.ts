@@ -5,10 +5,10 @@ import path from "node:path";
 import { invalidateConfigCache } from "../src/core/config.ts";
 import { startApiServer } from "../src/server/api.ts";
 import type { RunningServer } from "../src/server/http.ts";
-import { cleanupSuite, exists, makeFinalDir, makePack, makePenguLoader, makeTempDir, readFile, useSuite, writeFile } from "./helpers.ts";
+import { cleanupSuite, exists, makeFinalDir, makePack, makeTempDir, readFile, useSuite, writeFile } from "./helpers.ts";
 
 const savedEnv: Record<string, string | undefined> = {};
-const ENV_KEYS = ["LEAGUE_VOICE_CONFIG", "LEAGUE_VOICE_ROOT", "LEAGUE_VOICE_PENGU", "LOCALAPPDATA", "LEAGUE_PATH"];
+const ENV_KEYS = ["LEAGUE_VOICE_CONFIG", "LEAGUE_VOICE_ROOT", "LOCALAPPDATA", "LEAGUE_PATH"];
 
 let running: RunningServer | null = null;
 let base = "";
@@ -17,7 +17,6 @@ let fixture: {
   voiceRoot: string;
   leagueDir: string;
   finalDir: string;
-  pluginDir: string;
 } | null = null;
 
 async function post(pathname: string, body?: unknown): Promise<{ status: number; json: any }> {
@@ -65,7 +64,6 @@ before(async () => {
   await writeFile(path.join(leagueDir, "LeagueClient.exe"), "fake-client");
   await writeFile(path.join(leagueDir, "d3d9.dll"), "official-proxy");
   await writeFile(path.join(leagueDir, "Config", "LeagueClientSettings.yaml"), 'locale: "zh_CN"\n');
-  const pengu = await makePenguLoader(root);
 
   const configFile = path.join(root, "config.json");
   await writeFile(
@@ -74,7 +72,6 @@ before(async () => {
       {
         leaguePath: leagueDir,
         voiceRoot,
-        penguLoaderDir: pengu.penguDir,
         defaultLocale: "ja_JP",
         supportedLocales: ["ja_JP"],
         autoRestartClient: false
@@ -86,7 +83,6 @@ before(async () => {
 
   process.env.LEAGUE_VOICE_CONFIG = configFile;
   process.env.LEAGUE_VOICE_ROOT = voiceRoot;
-  process.env.LEAGUE_VOICE_PENGU = pengu.penguDir;
   process.env.LOCALAPPDATA = path.join(root, "localappdata");
   delete process.env.LEAGUE_PATH;
   invalidateConfigCache();
@@ -94,7 +90,7 @@ before(async () => {
   const started = await startApiServer({ host: "127.0.0.1", port: 0 });
   running = started.running;
   base = `http://127.0.0.1:${started.running.port}`;
-  fixture = { root, voiceRoot, leagueDir, finalDir, pluginDir: pengu.pluginDir };
+  fixture = { root, voiceRoot, leagueDir, finalDir };
 });
 
 after(async () => {
@@ -140,35 +136,27 @@ test("POST /api/plan 干跑预检通过且不修改任何文件", async () => {
   assert.equal(await readFile(path.join(fixture!.finalDir, "Champions", "Ahri.zh_CN.wad.client")), "CN-Ahri");
 });
 
-test("POST /api/apply 全链路切换(大厅+对局语音+对局语言)", async () => {
-  // 显式指定三个模块(含大厅语音): 界面不暴露它, 但后端能力必须保留可用
+test("POST /api/apply 全链路切换(对局语音+对局语言)", async () => {
   const { json } = await post("/api/apply", {
     locale: "ja_JP",
     restartClient: false,
-    modules: ["lobby_voice", "ingame_voice", "ingame_lang"]
+    modules: ["ingame_voice", "ingame_lang"]
   });
   assert.equal(json.ok, true);
   const finished = await waitTask(json.task.id);
   assert.equal(finished.task.status, "succeeded", JSON.stringify(finished.result));
   assert.equal(finished.result.ok, true, JSON.stringify(finished.result.summary));
 
-  // 对局端
   assert.equal(await readFile(path.join(fixture!.finalDir, "Champions", "Ahri.zh_CN.wad.client")), "ja_JP-Ahri");
   assert.equal(await readFile(path.join(fixture!.finalDir, "Maps", "Shipping", "Map11.zh_CN.wad.client")), "ja_JP-Map11");
   assert.equal(await readFile(path.join(fixture!.finalDir, "Localized", "Global.zh_CN.wad.client")), "ja_JP-LANG");
-  // 大厅端
-  assert.equal(await readFile(path.join(fixture!.leagueDir, "d3d9.dll")), "fake-stub-dll");
-  const pluginConfig = JSON.parse(await readFile(path.join(fixture!.pluginDir, "config.json")));
-  assert.equal(pluginConfig.enabled, true);
-  assert.equal(pluginConfig.locale, "ja_JP");
 
   const state = await get("/api/state");
   assert.equal(state.json.state.ingame.is_voice_active, true);
-  assert.equal(state.json.state.lobby.enabled, true);
 });
 
 test("POST /api/restore 全部还原为官方默认", async () => {
-  const { json } = await post("/api/restore", { restartClient: false, modules: ["lobby_voice", "lobby_lang", "ingame_voice", "ingame_lang"] });
+  const { json } = await post("/api/restore", { restartClient: false, modules: ["lobby_lang", "ingame_voice", "ingame_lang"] });
   assert.equal(json.ok, true);
   const finished = await waitTask(json.task.id);
   assert.equal(finished.task.status, "succeeded", JSON.stringify(finished.result));
@@ -176,12 +164,19 @@ test("POST /api/restore 全部还原为官方默认", async () => {
 
   assert.equal(await readFile(path.join(fixture!.finalDir, "Champions", "Ahri.zh_CN.wad.client")), "CN-Ahri");
   assert.equal(await readFile(path.join(fixture!.finalDir, "Localized", "Global.zh_CN.wad.client")), "CN-LANG");
-  assert.equal(await readFile(path.join(fixture!.leagueDir, "d3d9.dll")), "official-proxy");
-  assert.equal(await exists(path.join(fixture!.pluginDir, "voice_assets")), false);
 
   const state = await get("/api/state");
   assert.equal(state.json.state.ingame.is_voice_active, false);
-  assert.equal(state.json.state.lobby.enabled, false);
+});
+
+test("大厅选人语音: 未接入时不误报成功, 且不修改客户端任何文件", async () => {
+  const before = await readFile(path.join(fixture!.leagueDir, "d3d9.dll"));
+  const { json } = await post("/api/apply", { locale: "ja_JP", modules: ["lobby_voice"], restartClient: false });
+  assert.equal(json.ok, true);
+  const finished = await waitTask(json.task.id);
+  assert.equal(finished.result.ok, false);
+  assert.match(String(finished.result.results[0].reason), /能力未接入/);
+  assert.equal(await readFile(path.join(fixture!.leagueDir, "d3d9.dll")), before);
 });
 
 test("POST /api/packs/import 上传压缩包 -> 自动出现在语言包列表", async () => {

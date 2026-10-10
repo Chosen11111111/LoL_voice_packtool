@@ -75,10 +75,12 @@
       "voice_backups": 180, "lang_backup": false
     },
     "lobby": {
-      "ok": true, "voice": "已开启|官方默认", "lang": "未知", "enabled": true, "locale": "ja_JP",
-      "stub_active": true, "assets_mounted": true, "loader_path": "…\\Pengu Voice",
-      "pengu_dir": "…\\Pengu Loader", "plugin_dir": "…\\Chosen-VoiceSync",
-      "plugin_installed": true, "message": "加载桩已就位"
+      "ok": true, "voice": "官方默认", "lang": "未知", "enabled": false, "locale": "zh_CN",
+      "mechanism": "wad",                       // 走客户端自带的资源包, 不注入进程
+      "wad_file": "…\\Plugins\\rcp-be-lol-game-data\\zh_CN-assets.wad",
+      "wad_available": true,
+      "patched": false,
+      "message": "资源包：…"
     },
     "processes": { "game_running": false, "client_running": true },
     "tasks": [ /* 任务快照数组，最新的在前 */ ],
@@ -132,7 +134,7 @@
 字段含义见 `config.example.json`。
 
 ### POST /api/plan —— 干跑预检（只读，不改任何文件）
-请求：`{ "locale": "ja_JP", "modules": ["lobby_voice","ingame_voice","ingame_lang"] }`
+请求：`{ "locale": "ja_JP", "modules": ["ingame_voice","ingame_lang"] }`
 ```json
 { "ok": true,
   "plan": {
@@ -154,7 +156,7 @@
 ### POST /api/apply
 ```json
 { "locale": "ja_JP",
-  "modules": ["lobby_voice","ingame_voice","ingame_lang"],   // 省略=三个都做
+  "modules": ["ingame_voice","ingame_lang"],   // 省略=三个都做
   "restartClient": true,        // 成功后自动重启客户端 UX
   "skinsOn": false,             // 换肤插件同时开启时保持完整加载器目录
   "lobbyLang": "keep"           // "en_US" 时顺带把大厅界面切成英文
@@ -222,9 +224,6 @@ await fetch("/api/packs/import?name=" + encodeURIComponent(file.name), {
 语种识别顺序：`?locale=` 显式指定 > 压缩包文件名（含 `ja_JP`/`日语`/`japanese` 等）> 包内目录名 > 包内 wad 文件的语种后缀 > 用压缩包名当自定义包名。
 支持的格式：`zip` / `tar` / `tar.gz` / `tgz`（系统自带工具解压）；`7z` / `rar` 需要本机装 7-Zip 或 WinRAR，没装会返回明确提示。
 压缩包内部只要有 `DATA/FINAL`（Champions / Maps / Localized）或 `assets/champion-choose-vo` 即可，外层多套一层目录也能自动找到。
-
-### POST /api/plugin/install
-请求 `{ "force": false }` → `{ ok, message, plugin_dir }`。把内置的 `Chosen-VoiceSync` 装到 Pengu Loader。
 
 ### POST /api/doctor → `{ ok, doctor: { app, config, paths, processes, stub, plugin, locales } }`
 

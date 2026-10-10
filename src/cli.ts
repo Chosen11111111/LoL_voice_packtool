@@ -6,11 +6,12 @@ import { APP_NAME_CN, APP_VERSION } from "./version.ts";
 import { appRoot, configPath, loadConfig, saveConfig } from "./core/config.ts";
 import { formatResult, type ModuleResult } from "./core/result.ts";
 import type { ModuleId } from "./core/types.ts";
+import { wadSuffix } from "./packs/baselocale.ts";
 import { scanLocales } from "./packs/locales.ts";
 import { getIngameStatus } from "./packs/inventory.ts";
 import { getLobbyStatus } from "./modules/lobbyVoice.ts";
 import { getLobbyLangState } from "./modules/lobbyLang.ts";
-import { buildEnvFromConfig, doctor, getLocales, inspectPaths, planSwitch, startApplyTask, startRestoreTask, startUpdateCheckTask, startUpdateRunTask, installPlugin, updateConfig } from "./service.ts";
+import { buildEnvFromConfig, doctor, getLocales, inspectPaths, planSwitch, startApplyTask, startRestoreTask, startUpdateCheckTask, startUpdateRunTask, updateConfig } from "./service.ts";
 import { taskManager } from "./tasks/manager.ts";
 import { startApiServer } from "./server/api.ts";
 import { setLogFile, setLogLevel, type LogLevel } from "./core/logger.ts";
@@ -173,11 +174,11 @@ async function commandStatus(jsonMode: boolean): Promise<number> {
   print(`  客户端目录: ${env.resolution.leagueDir || "(未定位)"}`);
   if (env.resolution.finalDir) print(`  游戏文件目录: ${env.resolution.finalDir}`);
   else print(`  [!] ${env.resolution.message.split("\n")[0]}`);
-  print(`  加载器目录: ${env.penguDir ?? "(未找到 Pengu Loader)"}`);
+  print(`  客户端渠道: ${env.region === "cn" ? "国服" : "外服"}（基准语种 ${env.baseLocale}，槽位 ${wadSuffix(env.baseLocale)}）`);
   print("-".repeat(60));
   print(`  【对局端】语音/播报: ${ingame.voice} | 语言: ${ingame.lang}`);
   print(`  【大厅端】选人语音: ${lobby.voice} | 语言: ${lobbyLang.label}`);
-  print(`  加载桩: ${lobby.stub_active ? "已就位" : "未放置"} | 插件: ${lobby.plugin_installed ? "已安装" : "未安装"} | 资源挂载: ${lobby.assets_mounted ? "已挂载" : "未挂载"}`);
+  print(`  选人语音资源包: ${lobby.wad_available ? lobby.wad_file : "未定位"}`);
   print("=".repeat(60));
   return 0;
 }
@@ -338,17 +339,6 @@ export async function runCli(argv = process.argv.slice(2)): Promise<number> {
         print(JSON.stringify(payload, null, 2));
         return 0;
       }
-      case "plugin": {
-        const action = args.positionals[0] ?? "install";
-        if (action !== "install") {
-          print("[-] 未知子命令, 可用: plugin install [--force]");
-          return 1;
-        }
-        const result = await installPlugin(Boolean(flagBool(args, "force")));
-        print(`${result.ok ? "[+]" : "[-]"} ${result.message}`);
-        if (result.pluginDir) print(`    插件目录: ${result.pluginDir}`);
-        return result.ok ? 0 : 1;
-      }
       case "config": {
         const action = args.positionals[0] ?? "get";
         if (action === "path") {
@@ -411,9 +401,8 @@ export function printHelp(): void {
   print("  restore                    恢复官方国服默认 [--modules ...] [--restart=false]");
   print("  oneclick apply|restore     一键全套 / 一键还原");
   print("  update check|run           检查更新 / 增量同步语言包 [--locales ja_JP,ko_KR]");
-  print("  plugin install [--force]   安装大厅语音插件到 Pengu Loader");
   print("  paths                      探测所有可能的游戏安装路径");
-  print("  doctor                     环境自检(路径/进程/加载桩/插件/语言包)");
+  print("  doctor                     环境自检(路径/进程/语种/语言包)");
   print("  config [get|set k=v|path]  查看或修改配置");
   print("  serve [--host 127.0.0.1] [--port 43110]   启动后端 API 服务");
   print("");

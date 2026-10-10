@@ -102,7 +102,6 @@ serve [--host] [--port]      启动后端服务(默认 http://127.0.0.1:43110)
 | POST | `/api/restore` | 启动还原任务 |
 | POST | `/api/packs/import` | 导入语音包压缩包（上传或本机路径） |
 | POST | `/api/update/check` `/run` | 检查更新 / 增量同步 |
-| POST | `/api/plugin/install` | 安装/重装大厅语音插件 |
 | GET | `/api/tasks` `/api/tasks/:id` | 任务列表 / 详情（含结果与日志） |
 | POST | `/api/tasks/:id/cancel` | 取消任务 |
 | GET | `/api/events` | SSE：`progress` / `log` / `done` / `state` 事件 |
@@ -138,20 +137,17 @@ src/
     wad.ts            wad 匹配与目标命名
     inventory.ts      资源校验/状态/工作量/磁盘估算
     archive.ts        压缩包解压/结构识别/语种识别/导入
+    wadfile.ts        客户端自带资源包(RW WAD)定位与解析
     updater.ts        清单下载、CommunityDragon 增量同步、版本检查
-  pengu/
-    loader.ts         d3d9 加载桩、加载器配置、精简语音加载器
-    plugin.ts         语音插件安装与资源挂载
   modules/
     applyPlan.ts      替换计划执行器(预检槽位 + 逐文件安全替换)
     ingameVoice.ts    对局语音
     ingameLang.ts     对局语言
-    lobbyVoice.ts     大厅选人语音(默认关闭的能力)
+    lobbyVoice.ts     大厅选人语音(WAD 方案实现中, 默认关闭)
     lobbyLang.ts      大厅界面语言
     oneclick.ts       一键全套 / 一键还原
   tasks/manager.ts    任务队列、进度、取消、互斥
   server/             HTTP 路由 + REST API + 流式上传
-assets/pengu-plugin/  内置语音插件模板
 tests/                自动化测试(node:test)
 web/                  自带控制台
 docs/API.md           接口契约
@@ -180,14 +176,13 @@ docs/API.md           接口契约
 | `baseLocale` | 客户端基准语种（决定替换哪个槽位文件）。留空 = 自动探测 |
 | `defaultLocale` | 默认语音包语种 |
 | `supportedLocales` | 需要维护的语种列表（增量同步用） |
-| `penguLoaderDir` | 加载器目录（含 `core.dll`、`d3d9_stub.dll`） |
 | `manifestDownloader` / `bundleProxy` / `manifestId` | wad 增量下载工具与代理、官方清单 ID |
 | `autoRestartClient` | 切换/还原成功后是否自动重启客户端 UX |
-| `features.lobbyVoice` | 大厅选人语音（默认 `false`：界面与默认流程都不涉及，后端实现保留） |
+| `features.lobbyVoice` | 大厅选人语音（默认 `false`；改为 WAD 方案，实现中，未完成前不改客户端文件） |
 | `features.lobbyLang` | 大厅界面语言（改 `LeagueClientSettings.yaml`，与语音包无关） |
 | `server` | API 监听地址、端口、访问令牌、前端目录、上传上限 |
 
-也支持环境变量：`LEAGUE_VOICE_ROOT`、`LEAGUE_PATH`、`LEAGUE_VOICE_PENGU`、`LEAGUE_VOICE_CONFIG`、`LEAGUE_VOICE_HOME`。
+也支持环境变量：`LEAGUE_VOICE_ROOT`、`LEAGUE_PATH`、`LEAGUE_VOICE_CONFIG`、`LEAGUE_VOICE_HOME`。
 
 ## 10. 开发
 
