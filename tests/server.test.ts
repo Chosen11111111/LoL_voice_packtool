@@ -201,6 +201,18 @@ test("GET /api/events 建立 SSE 连接并推送进度", async () => {
   controller.abort();
 });
 
+test("静态托管: 前端路由刷新不 404(SPA 兜底), /api 未知路径仍返回 JSON 404", async () => {
+  const spa = await fetch(`${base}/some/frontend/route`);
+  assert.equal(spa.status, 200);
+  assert.match(String(spa.headers.get("content-type")), /text\/html/);
+  assert.match(await spa.text(), /语音包/);
+
+  const api404 = await fetch(`${base}/api/not-exist`);
+  assert.equal(api404.status, 404);
+  const payload = (await api404.json()) as { error?: string };
+  assert.equal(payload.error, "not_found");
+});
+
 test("错误处理: 未知任务返回 not_found, 非法 JSON 返回 400", async () => {
   const missing = await get("/api/tasks/not-a-task");
   assert.equal(missing.json.ok, false);

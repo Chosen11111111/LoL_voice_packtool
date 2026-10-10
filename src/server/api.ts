@@ -2,6 +2,7 @@
 import path from "node:path";
 import { APP_NAME, APP_NAME_CN, APP_VERSION, API_VERSION } from "../version.ts";
 import { loadConfig, appRoot, type AppConfig } from "../core/config.ts";
+import { isDirectory } from "../core/fsx.ts";
 import type { ModuleId } from "../core/types.ts";
 import { invalidateConfigCache } from "../core/config.ts";
 import { setLogLevel, type LogLevel } from "../core/logger.ts";
@@ -167,7 +168,9 @@ export interface ApiServerOptions {
 }
 
 /** 启动 API 服务(端口 0 = 随机分配, 便于测试)。 */
-export async function startApiServer(options: ApiServerOptions = {}): Promise<{ running: RunningServer; router: Router }> {
+export async function startApiServer(
+  options: ApiServerOptions = {}
+): Promise<{ running: RunningServer; router: Router; staticDir: string | null }> {
   const config = await loadConfig();
   const host = options.host ?? config.server.host;
   const port = options.port ?? config.server.port;
@@ -179,14 +182,20 @@ export async function startApiServer(options: ApiServerOptions = {}): Promise<{ 
     router.broadcast(event.type, event);
   });
 
+  // 前端目录: 绝对路径直接用, 相对路径相对项目根
+  const webDir = (config.server.webDir ?? "web").trim();
+  const staticDir = webDir ? (path.isAbsolute(webDir) ? webDir : path.join(appRoot(), webDir)) : "";
+  const hasWeb = staticDir ? await isDirectory(staticDir) : false;
+
   const running = await startHttpServer({
     host,
     port,
     token,
     router,
-    staticDir: path.join(appRoot(), "web")
+    staticDir: hasWeb ? staticDir : undefined,
+    spaFallback: hasWeb
   });
-  return { running, router };
+  return { running, router, staticDir: hasWeb ? staticDir : null };
 }
 
 /** 让 CLI 也能拿到一次完整状态(不启动服务)。 */

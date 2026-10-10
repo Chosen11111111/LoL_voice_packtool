@@ -13,7 +13,7 @@
 
 | 目的 | 命令 |
 | --- | --- |
-| 图形控制台（内置网页界面） | 双击 `start.cmd`，或 `npm run serve` |
+| 图形控制台（内置网页界面，占位版） | 双击 `start.cmd`，或 `npm run serve` |
 | 查看当前状态 | 双击 `status.cmd`，或 `npm run status` |
 | 增量同步语言包 | 双击 `update-packs.cmd`，或 `npm run start -- update run` |
 | 环境自检 | `npm run doctor` |
@@ -42,7 +42,16 @@ serve [--host] [--port]      启动后端服务(默认 http://127.0.0.1:43110)
 
 全局选项：`--json`（机器可读输出）、`--log debug|info|warn|error`。
 
-## 3. HTTP API
+## 3. 界面是可替换的
+
+内置的 `web/index.html` 只是一个**验证接口用的占位页面**（单文件、零依赖），不是既定视觉风格。
+
+- 换成自己的前端：把打包产物放进 `web/`，或在 `config.json` 里改 `"server": { "webDir": "dist" }`
+- 前端路由刷新不会 404（未命中的 GET 页面请求兜底到 `index.html`；`/api/*` 仍是 JSON 404）
+- 也可以完全独立：前端自己起服务（Vite / Electron），把 `http://127.0.0.1:43110` 当后端用即可（跨域已放开）
+- 后端不含任何 UI 假设：不注入 HTML、不读前端状态、不绑定框架。**唯一的约定是 [docs/API.md](docs/API.md)**
+
+## 4. HTTP API
 
 服务默认只监听 `127.0.0.1`；`server.token` 非空时所有请求都要带 `X-Auth-Token`。
 
@@ -65,7 +74,7 @@ serve [--host] [--port]      启动后端服务(默认 http://127.0.0.1:43110)
 
 长任务（切换/还原/同步）一律异步执行并返回 `task.id`，进度通过 SSE 或轮询 `/api/tasks/:id` 获取；同一时刻只会有一个"切换类"任务在跑。
 
-## 4. 目录结构
+## 5. 目录结构
 
 ```text
 src/
@@ -108,7 +117,7 @@ tests/                自动化测试(node:test)
 web/                  内置网页控制台
 ```
 
-## 5. 设计要点（从旧脚本继承的硬约束）
+## 6. 设计要点（从旧脚本继承的硬约束）
 
 1. **路径只解析一次**：开启/还原/状态查询共用同一次解析结果；配置路径与正在运行的客户端不一致时**直接报冲突停止**，绝不改错安装目录。
 2. **目标文件永不先删后写**：备份用硬链接（零拷贝），不支持硬链接时复制到 `<备份>.part`，复制完整后才原子改名为 `.chosen_bak`。中途被强杀只会留下 `.part`，状态查询与还原都只认正式备份名。
@@ -118,7 +127,7 @@ web/                  内置网页控制台
 6. **对局中禁止操作**：检测到 `League of Legends.exe` 直接拒绝切换/还原。
 7. **大厅语音可即时停用**：还原时写 `config.json` 的 `enabled=false`，即使插件已在内存里也立刻停止拦截音频。
 
-## 6. 配置
+## 7. 配置
 
 配置放在项目根目录的 `config.json`（不提交到仓库；可用 `config.example.json` 起步）。
 所有字段都有默认值，留空即"自动探测"：
@@ -137,7 +146,7 @@ web/                  内置网页控制台
 
 也支持环境变量：`LEAGUE_VOICE_ROOT`、`LEAGUE_PATH`、`LEAGUE_VOICE_PENGU`、`LEAGUE_VOICE_CONFIG`、`LEAGUE_VOICE_HOME`。
 
-## 7. 开发
+## 8. 开发
 
 ```bash
 npm run typecheck   # tsc 类型检查(仅类型, 不产出 JS)

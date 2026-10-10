@@ -11,6 +11,8 @@ export interface ServerConfig {
   port: number;
   /** 非回环监听时需要的访问令牌(空=不校验)。 */
   token: string;
+  /** 前端静态目录(相对项目根或绝对路径)。换成自己的 UI 时指到这里即可。 */
+  webDir: string;
 }
 
 export interface DownloadConfig {
@@ -62,7 +64,7 @@ const DEFAULT_CONFIG: AppConfig = {
   defaultLocale: "ja_JP",
   supportedLocales: ["ja_JP", "ko_KR", "en_US"],
   autoRestartClient: true,
-  server: { host: "127.0.0.1", port: 43110, token: "" },
+  server: { host: "127.0.0.1", port: 43110, token: "", webDir: "web" },
   download: { threads: 16, concurrency: 16, timeoutMs: 30000, retries: 3 },
   logLevel: "info"
 };

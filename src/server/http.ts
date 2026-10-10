@@ -108,8 +108,10 @@ export interface ServerOptions {
   port: number;
   token: string;
   router: Router;
-  /** 可选静态资源目录(未来的网页 UI)。 */
+  /** 可选静态资源目录(网页 UI)。 */
   staticDir?: string;
+  /** 前端路由兜底: 未命中的 GET 页面请求交给 index.html。 */
+  spaFallback?: boolean;
   bodyLimitBytes?: number;
 }
 
@@ -215,8 +217,11 @@ export async function startHttpServer(options: ServerOptions): Promise<RunningSe
 
       const matched = options.router.match(req.method ?? "GET", url.pathname);
       if (!matched) {
-        if (req.method === "GET" && options.staticDir) {
+        const isApi = url.pathname.startsWith("/api/");
+        if (req.method === "GET" && options.staticDir && !isApi) {
           if (await serveStatic(res, options.staticDir, url.pathname)) return;
+          // 交给前端路由(React/Vue 的 history 路由刷新不会 404)
+          if (options.spaFallback && (await serveStatic(res, options.staticDir, "/index.html"))) return;
         }
         jsonResponse(res, 404, { ok: false, error: "not_found", message: `未找到接口 ${req.method} ${url.pathname}` });
         return;
