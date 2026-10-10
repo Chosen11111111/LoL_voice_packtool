@@ -269,3 +269,24 @@ node src/index.ts lobby-live --locale ja_JP [--others]
 - 默认只播**自己**的选人/禁用；`--others` 或 API 的 `includeOthers` 可把别人的禁用也一起播；
 - 播放端就是工具窗口（Chromium 原生支持 ogg/vorbis，零解码依赖）；应用窗口启动时带 `--autoplay-policy=no-user-gesture-required`，不需要先点一下才出声。
 
+
+### 国服客户端的 LCU 凭据怎么拿（ACE 反作弊环境）
+
+国服客户端由 WeGame 以管理员权限启动，并受 ACE 反作弊（`ACE-BASE.sys` 内核驱动）保护：
+即使本工具提权，也读不到 `LeagueClientUx.exe` 的命令行与可执行路径，装好的 `lockfile` 还是空的。
+
+可用的来源是**客户端自己的日志**（启动时它会把命令行原样写进第一行）：
+
+```
+E:\WeGameApps\英雄联盟\LeagueClient\<时间戳>_<pid>_LeagueClientUx.log
+000000.000|   OKAY| Command line arguments: --riotclient-auth-token=… --riotclient-app-port=60990 --riotclient-tencent --region=TENCENT
+```
+
+凭据解析顺序（`src/core/win/processes.ts`）：
+
+1. `LeagueClientUx.exe` 命令行：`--app-port` + `--remoting-auth-token`（国际服）；
+2. 同上但只有 `--riotclient-app-port` + `--riotclient-auth-token`（国服走这套，日志里也带）；
+3. 都拿不到时读客户端日志（只读前 32KB，带 20 秒缓存）。
+
+这套办法**不需要提权、不碰反作弊**，纯文件读取。
+

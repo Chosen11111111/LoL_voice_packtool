@@ -3,6 +3,7 @@ import path from "node:path";
 import { appRoot, type AppConfig } from "../core/config.ts";
 import { resolveGamePaths, resolveVoiceRoot, type GamePathResolution } from "../core/paths.ts";
 import { detectBaseLocale, detectRegion } from "../packs/baselocale.ts";
+import { setClientDirHint } from "../core/win/processes.ts";
 import { createLogger } from "../core/logger.ts";
 
 const logger = createLogger("context");
@@ -53,6 +54,8 @@ export async function buildEnv(options: BuildEnvOptions): Promise<SwitchEnv> {
     configured: config.baseLocale
   });
   const region = detectRegion(resolution.leagueDir || null, resolution.sourceDetail);
+  // 国服客户端被 ACE 保护, 进程路径读不到 —— 把已知目录交给凭据探测做日志回退
+  setClientDirHint(resolution.leagueDir || null);
   logger.debug(`基准语种 ${base.locale}(${base.source}) 渠道 ${region}`);
   if (!voiceRootResolution.hasPacks) {
     logger.warn(`资源根目录下未发现任何语种包: ${voiceRootResolution.root}`);

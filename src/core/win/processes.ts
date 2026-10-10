@@ -1,4 +1,6 @@
 /** Windows 进程探测: 对局/客户端是否在跑、客户端安装目录、LCU 凭据。 */
+import fs from "node:fs/promises";
+import path from "node:path";
 import { run, runPowerShell } from "./shell.ts";
 import { log } from "../logger.ts";
 
@@ -111,25 +113,113 @@ export async function findClientExeDir(): Promise<string | null> {
   return dir || null;
 }
 
-/** 从 UX 进程命令行解析 LCU 端口与 token。 */
-export async function lcuCredentials(): Promise<LcuCredentials | null> {
-  const items = await processSnapshot(true);
-  const candidates = items.filter((item) => item.name.toLowerCase() === CLIENT_UX_EXE.toLowerCase());
-  for (const proc of candidates) {
-    let appPort = "";
-    let remoting = "";
-    let riotPort = "";
-    let riotToken = "";
-    for (const arg of proc.commandLine.split(/\s+/)) {
-      if (arg.startsWith("--app-port=")) appPort = arg.slice("--app-port=".length).trim();
-      else if (arg.startsWith("--remoting-auth-token=")) remoting = arg.slice("--remoting-auth-token=".length).trim();
-      else if (arg.startsWith("--riotclient-app-port=")) riotPort = arg.slice("--riotclient-app-port=".length).trim();
-      else if (arg.startsWith("--riotclient-auth-token=")) riotToken = arg.slice("--riotclient-auth-token=".length).trim();
+/** 从一段命令行文本里解析 LCU 连接信息(导出便于测试)。 */
+export function parseLcuCommandLine(commandLine: string): LcuCredentials | null {
+  let appPort = "";
+  let remoting = "";
+  let riotPort = "";
+  let riotToken = "";
+  for (const arg of commandLine.split(/\s+/)) {
+    if (arg.startsWith("--app-port=")) appPort = arg.slice("--app-port=".length).trim();
+    else if (arg.startsWith("--remoting-auth-token=")) remoting = arg.slice("--remoting-auth-token=".length).trim();
+    else if (arg.startsWith("--riotclient-app-port=")) riotPort = arg.slice("--riotclient-app-port=".length).trim();
+    else if (arg.startsWith("--riotclient-auth-token=")) riotToken = arg.slice("--riotclient-auth-token=".length).trim();
+  }
+  if (appPort && remoting) return { port: appPort, token: remoting, source: "app-port" };
+  // 国服(WeGame/TENCENT)没有 --app-port/--remoting-auth-token, LCU 复用 riotclient 的端口与令牌
+  if (riotPort && riotToken) return { port: riotPort, token: riotToken, source: "riotclient-app-port" };
+  return null;
+}
+
+/**
+ * 从客户端自己的日志里取 LCU 连接信息。
+ *
+ * 为什么需要这条路: 国服客户端由 WeGame 以管理员权限启动, 且被 ACE 反作弊(ACE-BASE.sys 内核驱动)
+ * 保护 —— 即使本工具提权, 也读不到 LeagueClientUx.exe 的命令行。
+ * 但客户端启动时会把命令行原样写进自己的日志第一行, 例如:
+ *   Command line arguments: --app-port=61193 --remoting-auth-token=… --riotclient-app-port=60990 …
+ * 于是"读日志"就成了既不需要提权、也不碰反作弊的可靠来源。
+ */
+async function credentialsFromLogs(): Promise<LcuCredentials | null> {
+  const dirs = [await findClientExeDir(), clientDirFromConfig ?? null];
+  const candidates: Array<{ file: string; at: number }> = [];
+  for (const dir of dirs) {
+    if (!dir) continue;
+    for (const folder of [dir, path.join(dir, "..", "Game", "Logs", "LeagueClient Logs")]) {
+      let names: string[] = [];
+      try {
+        names = await fs.readdir(folder);
+      } catch {
+        continue;
+      }
+      for (const name of names) {
+        if (!/LeagueClient(Ux)?\.log$/i.test(name)) continue;
+        const file = path.join(folder, name);
+        try {
+          const info = await fs.stat(file);
+          candidates.push({ file, at: info.mtimeMs });
+        } catch {
+          /* 忽略 */
+        }
+      }
     }
-    if (appPort && remoting) return { port: appPort, token: remoting, source: "app-port" };
-    if (riotPort && riotToken) return { port: riotPort, token: riotToken, source: "riotclient-app-port" };
+  }
+  candidates.sort((a, b) => b.at - a.at);
+  for (const candidate of candidates.slice(0, 4)) {
+    let head = "";
+    try {
+      // 命令行在第一行, 只读前 32KB 就够(日志可能上百 MB)
+      const handle = await fs.open(candidate.file, "r");
+      try {
+        const buffer = Buffer.alloc(32 * 1024);
+        const { bytesRead } = await handle.read(buffer, 0, buffer.length, 0);
+        head = buffer.subarray(0, bytesRead).toString("utf8");
+      } finally {
+        await handle.close();
+      }
+    } catch {
+      continue;
+    }
+    const parsed = parseLcuCommandLine(head);
+    if (parsed) {
+      logger.debug(`LCU 凭据来自日志 ${path.basename(candidate.file)}（${parsed.source}）`);
+      return parsed;
+    }
   }
   return null;
+}
+
+/** 由配置指定的客户端目录(日志回退时用, 因为受保护进程拿不到路径)。 */
+export function setClientDirHint(dir: string | null): void {
+  clientDirFromConfig = dir ? path.resolve(dir) : null;
+}
+
+let clientDirFromConfig: string | null = null;
+
+/** 缓存: 进程命令行读不到时改读日志, 但不必每次轮询都读盘。 */
+let credentialCache: { at: number; value: LcuCredentials | null } | null = null;
+const CREDENTIAL_TTL_MS = 20000;
+
+/** 清空 LCU 凭据缓存(客户端重启后调用)。 */
+export function clearCredentialCache(): void {
+  credentialCache = null;
+}
+
+/** LCU 端口与 token: 先读进程命令行(国际服), 失败则读客户端日志(国服)。 */
+export async function lcuCredentials(force = false): Promise<LcuCredentials | null> {
+  if (!force && credentialCache && Date.now() - credentialCache.at < CREDENTIAL_TTL_MS) {
+    return credentialCache.value;
+  }
+  let value: LcuCredentials | null = null;
+  const items = await processSnapshot(true);
+  for (const proc of items) {
+    if (proc.name.toLowerCase() !== CLIENT_UX_EXE.toLowerCase()) continue;
+    value = parseLcuCommandLine(proc.commandLine);
+    if (value) break;
+  }
+  if (!value) value = await credentialsFromLogs();
+  credentialCache = { at: Date.now(), value };
+  return value;
 }
 
 /** 结束客户端 UX(以及渲染进程), 由 LeagueClient.exe 的看门狗自动拉起新的干净 UX。 */
