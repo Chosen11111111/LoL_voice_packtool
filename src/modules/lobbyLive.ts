@@ -44,6 +44,8 @@ export interface LobbyLiveState {
   played: number;
   last_event: LobbyLiveEvent | null;
   history: LobbyLiveEvent[];
+  /** 最近一次选人会话摘要(排障用)。 */
+  last_session: Record<string, unknown> | null;
   message: string;
 }
 
@@ -61,6 +63,8 @@ export class LobbyLiveEngine {
   private played = 0;
   private history: LobbyLiveEvent[] = [];
   private message = "未启动";
+  /** 最近一次选人会话摘要(排障用: 看客户端到底给了什么结构)。 */
+  private lastSession: Record<string, unknown> | null = null;
 
   subscribe(listener: Listener): () => void {
     this.listeners.add(listener);
@@ -114,6 +118,21 @@ export class LobbyLiveEngine {
   private handleSession(session: ChampSelectSession): void {
     const options = this.options;
     if (!options) return;
+    // 摘要: 只留排障需要的关键字段, 避免状态接口太大
+    const actions = (session.actions ?? []).flat();
+    this.lastSession = {
+      localPlayerCellId: session.localPlayerCellId,
+      gameId: session.gameId,
+      timer_phase: session.timer?.phase,
+      action_count: actions.length,
+      actions: actions.slice(0, 12).map((item) => ({
+        actorCellId: item.actorCellId,
+        championId: item.championId,
+        type: item.type,
+        completed: item.completed,
+        isInProgress: item.isInProgress
+      }))
+    };
     const events = this.tracker.derive(null, session, { includeOthers: options.includeOthers });
     for (const event of events) {
       const payload: LobbyLiveEvent = {
@@ -165,6 +184,7 @@ export class LobbyLiveEngine {
       played: this.played,
       last_event: this.history[0] ?? null,
       history: this.history,
+      last_session: this.lastSession,
       message: this.message
     };
   }

@@ -140,9 +140,18 @@ export function parseLcuCommandLine(commandLine: string): LcuCredentials | null 
  *   Command line arguments: --app-port=61193 --remoting-auth-token=… --riotclient-app-port=60990 …
  * 于是"读日志"就成了既不需要提权、也不碰反作弊的可靠来源。
  */
-async function credentialsFromLogs(): Promise<LcuCredentials | null> {
-  const dirs = [await findClientExeDir(), clientDirFromConfig ?? null];
-  const candidates: Array<{ file: string; at: number }> = [];
+/** 先看的目录: 运行中客户端(拿得到时) + 配置里那台。 */
+async function fastCredentialRoots(): Promise<string[]> {
+  const roots = new Set<string>();
+  const running = await findClientExeDir();
+  if (running) roots.add(running);
+  if (clientDirFromConfig) roots.add(clientDirFromConfig);
+  return [...roots];
+}
+
+/** 收集这些安装目录下的客户端日志(含 Game/Logs/LeagueClient Logs)。 */
+async function collectClientLogs(dirs: Array<string | null>): Promise<Array<{ file: string; at: number }>> {
+  const found: Array<{ file: string; at: number }> = [];
   for (const dir of dirs) {
     if (!dir) continue;
     for (const folder of [dir, path.join(dir, "..", "Game", "Logs", "LeagueClient Logs")]) {
@@ -157,15 +166,52 @@ async function credentialsFromLogs(): Promise<LcuCredentials | null> {
         const file = path.join(folder, name);
         try {
           const info = await fs.stat(file);
-          candidates.push({ file, at: info.mtimeMs });
+          found.push({ file, at: info.mtimeMs });
         } catch {
           /* 忽略 */
         }
       }
     }
   }
+  return found;
+}
+
+/** 安装目录探测很重(注册表 + 常见目录 + 扫描), 缓存一段时间复用。 */
+let installDirCache: { at: number; dirs: string[] } | null = null;
+const INSTALL_DIR_TTL_MS = 5 * 60 * 1000;
+
+async function detectInstallDirs(): Promise<string[]> {
+  if (installDirCache && Date.now() - installDirCache.at < INSTALL_DIR_TTL_MS) return installDirCache.dirs;
+  const { detectCandidates } = await import("../paths.ts");
+  const dirs: string[] = [];
+  for (const candidate of await detectCandidates()) {
+    if (candidate.leagueDir) dirs.push(candidate.leagueDir);
+  }
+  installDirCache = { at: Date.now(), dirs };
+  if (dirs.length) logger.debug(`发现 ${dirs.length} 个客户端安装: ${dirs.join(" | ")}`);
+  return dirs;
+}
+
+async function credentialsFromLogs(): Promise<LcuCredentials | null> {
+  // 快路径: 配置/运行目录里有没有"正在写"的日志(客户端运行时会持续写日志)
+  const FRESH_MS = 10 * 60 * 1000;
+  let candidates = await collectClientLogs(await fastCredentialRoots());
   candidates.sort((a, b) => b.at - a.at);
-  for (const candidate of candidates.slice(0, 4)) {
+  let usable = candidates.filter((item) => Date.now() - item.at < FRESH_MS);
+  if (!usable.length) {
+    // 慢路径: 配置里那台其实没在跑(例如配置指向国际服、真正在跑的是国服) —— 扫一遍其它安装
+    try {
+      const other = await collectClientLogs(await detectInstallDirs());
+      candidates = [...candidates, ...other].sort((a, b) => b.at - a.at);
+      usable = candidates.filter((item) => Date.now() - item.at < FRESH_MS);
+    } catch (error) {
+      logger.debug(`兜底安装探测失败: ${String((error as Error).message ?? error)}`);
+    }
+  }
+  // 没有任何"新鲜"日志时也试一把最新的(可能刚启动/时钟差异), 交给上层用失败结果判断
+  const ordered = (usable.length ? usable : candidates).slice(0, 4);
+
+  for (const candidate of ordered) {
     let head = "";
     try {
       // 命令行在第一行, 只读前 32KB 就够(日志可能上百 MB)
@@ -233,5 +279,6 @@ export async function killClientUx(): Promise<{ ok: boolean; message: string }> 
     results.push(`${exe}: code=${result.code ?? "null"}`);
   }
   clearProcessCache();
+  clearCredentialCache();
   return { ok, message: results.join(", ") };
 }
