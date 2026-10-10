@@ -9,6 +9,7 @@ import { isDirectory } from "../core/fsx.ts";
 import type { ModuleId } from "../core/types.ts";
 import { invalidateConfigCache } from "../core/config.ts";
 import { createLogger, setLogLevel, type LogLevel } from "../core/logger.ts";
+import { clientVoiceState, setClientOriginalVoice } from "../modules/clientVoice.ts";
 
 const logger = createLogger("api");
 import { Router, startHttpServer, type RunningServer } from "./http.ts";
@@ -100,6 +101,17 @@ export function buildRouter(): Router {
       includeOthers: Boolean(body.includeOthers)
     });
     return { ok: result.ok, message: result.message, state: result.state, audio_base: `/api/lobby-audio` };
+  });
+
+  /** 客户端原版选人台词(音效/音乐不受影响)的开关状态。 */
+  router.get("/api/client-voice", async () => ({ ok: true, ...(await clientVoiceState()) }));
+
+  /** 静音/恢复客户端原版选人台词。 */
+  router.post("/api/client-voice", async (context) => {
+    const body = asRecord(context.body);
+    const suppress = body.suppressed !== false;
+    const result = await setClientOriginalVoice(suppress);
+    return { ok: result.ok, ...result.state, message: result.message };
   });
 
   /** 窗口把播放结果回报过来: 成功会记录, 失败会留下浏览器的原始错误码。 */

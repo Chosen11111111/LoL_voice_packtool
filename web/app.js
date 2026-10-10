@@ -696,8 +696,56 @@
   }
 
 
+  /* 客户端原版台词开关(关掉客户端自己念的原版台词, 保留音效与音乐) */
+  let clientVoice = { supported: false, suppressed: false, message: "" };
+
+  function applyClientVoiceLabel() {
+    const button = $("btnClientVoice");
+    if (!button) return;
+    if (!clientVoice.supported && !clientVoice.suppressed) {
+      button.textContent = "原版台词：不可用";
+      button.dataset.mode = "off";
+      button.title = clientVoice.message || "没读到客户端的音频设置（客户端没在运行？）";
+      return;
+    }
+    button.dataset.mode = clientVoice.suppressed ? "on" : "off";
+    button.textContent = clientVoice.suppressed ? "原版台词：已静音" : "原版台词：开着";
+    button.title = clientVoice.suppressed
+      ? "客户端自己念的原版台词已关闭（音效与音乐不受影响）。点一下恢复。"
+      : "客户端自己念的原版台词还开着，会和语音包台词叠在一起。点一下关闭。";
+  }
+
+  async function loadClientVoice() {
+    try {
+      const data = await request("/api/client-voice");
+      clientVoice = { supported: Boolean(data.supported), suppressed: Boolean(data.suppressed), message: data.message || "" };
+    } catch {
+      clientVoice = { supported: false, suppressed: false, message: "读取失败" };
+    }
+    applyClientVoiceLabel();
+  }
+
   function initHud() {
     applyVolume();
+    applyClientVoiceLabel();
+    void loadClientVoice();
+    const clientVoiceButton = $("btnClientVoice");
+    if (clientVoiceButton) {
+      clientVoiceButton.addEventListener("click", async () => {
+        const next = !clientVoice.suppressed;
+        clientVoiceButton.disabled = true;
+        try {
+          const data = await request("/api/client-voice", { method: "POST", body: { suppressed: next } });
+          clientVoice = { supported: Boolean(data.supported), suppressed: Boolean(data.suppressed), message: data.message || "" };
+          log(data.message || (next ? "已静音客户端原版台词" : "已恢复客户端原版台词"));
+        } catch (error) {
+          log("切换客户端原版台词失败：" + (error && error.message ? error.message : error), "warn");
+        } finally {
+          clientVoiceButton.disabled = false;
+          applyClientVoiceLabel();
+        }
+      });
+    }
     const slider = $("volumeSlider");
     if (slider) {
       slider.addEventListener("input", () => setVolume(Number(slider.value), true));
