@@ -113,6 +113,36 @@ export async function findClientExeDir(): Promise<string | null> {
   return dir || null;
 }
 
+/**
+ * 一段命令行文本里的**所有**候选连接信息, 按可信度排序。
+ *
+ * 国服要注意: LeagueClientUx 进程的命令行(WMI 可见的那份)往往只有 riotclient 那对参数,
+ * 而真正的 LCU 是 `--app-port` + `--remoting-auth-token`, 只出现在客户端日志的
+ * "Cef CommandLine" 行里。riotclient 那个端口是 **Riot 客户端**, 拿它访问 /lol-* 一律
+ * 返回 "Invalid URI format", 所以必须优先 app-port, 并且拿到后要探测验证。
+ */
+export function parseLcuCandidates(commandLine: string): LcuCredentials[] {
+  const found = parseLcuCommandLine(commandLine);
+  if (!found) return [];
+  const candidates: LcuCredentials[] = [found];
+
+  // 同一段文本里两对参数都出现时, 把另一对也作为候选(按可信度排在后面)
+  let appPort = "";
+  let remoting = "";
+  let riotPort = "";
+  let riotToken = "";
+  for (const arg of commandLine.split(/\s+/)) {
+    if (arg.startsWith("--app-port=")) appPort = arg.slice("--app-port=".length).trim();
+    else if (arg.startsWith("--remoting-auth-token=")) remoting = arg.slice("--remoting-auth-token=".length).trim();
+    else if (arg.startsWith("--riotclient-app-port=")) riotPort = arg.slice("--riotclient-app-port=".length).trim();
+    else if (arg.startsWith("--riotclient-auth-token=")) riotToken = arg.slice("--riotclient-auth-token=".length).trim();
+  }
+  if (riotPort && riotToken && !(appPort === riotPort && remoting === riotToken)) {
+    candidates.push({ port: riotPort, token: riotToken, source: "riotclient-app-port" });
+  }
+  return candidates;
+}
+
 /** 从一段命令行文本里解析 LCU 连接信息(导出便于测试)。 */
 export function parseLcuCommandLine(commandLine: string): LcuCredentials | null {
   let appPort = "";
@@ -192,7 +222,7 @@ async function detectInstallDirs(): Promise<string[]> {
   return dirs;
 }
 
-async function credentialsFromLogs(): Promise<LcuCredentials | null> {
+async function credentialsFromLogs(): Promise<LcuCredentials[]> {
   // 快路径: 配置/运行目录里有没有"正在写"的日志(客户端运行时会持续写日志)
   const FRESH_MS = 10 * 60 * 1000;
   let candidates = await collectClientLogs(await fastCredentialRoots());
@@ -211,6 +241,8 @@ async function credentialsFromLogs(): Promise<LcuCredentials | null> {
   // 没有任何"新鲜"日志时也试一把最新的(可能刚启动/时钟差异), 交给上层用失败结果判断
   const ordered = (usable.length ? usable : candidates).slice(0, 4);
 
+  const results: LcuCredentials[] = [];
+  const seen = new Set<string>();
   for (const candidate of ordered) {
     let head = "";
     try {
@@ -226,13 +258,15 @@ async function credentialsFromLogs(): Promise<LcuCredentials | null> {
     } catch {
       continue;
     }
-    const parsed = parseLcuCommandLine(head);
-    if (parsed) {
-      logger.debug(`LCU 凭据来自日志 ${path.basename(candidate.file)}（${parsed.source}）`);
-      return parsed;
+    for (const parsed of parseLcuCandidates(head)) {
+      const key = `${parsed.port}:${parsed.token}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      logger.debug(`LCU 候选来自日志 ${path.basename(candidate.file)}（${parsed.source}:${parsed.port}）`);
+      results.push(parsed);
     }
   }
-  return null;
+  return results;
 }
 
 /** 由配置指定的客户端目录(日志回退时用, 因为受保护进程拿不到路径)。 */
@@ -251,19 +285,71 @@ export function clearCredentialCache(): void {
   credentialCache = null;
 }
 
-/** LCU 端口与 token: 先读进程命令行(国际服), 失败则读客户端日志(国服)。 */
+/** 探测一组凭据是不是**英雄联盟**的 LCU(Riot 客户端会返回 Invalid URI format)。 */
+async function probesAsLeagueLcu(creds: LcuCredentials): Promise<boolean> {
+  try {
+    // 动态引入避免与 lcu.ts 形成模块循环
+    const { lcuRequest } = await import("./lcu.ts");
+    const response = await lcuRequest("GET", "/lol-gameflow/v1/gameflow-phase", { credentials: creds, timeoutMs: 3000 });
+    if (response.status === 200) return true;
+    // 端口对、令牌错 -> 401; 不是 LoL 的 LCU -> 404 Invalid URI format
+    return false;
+  } catch {
+    return false;
+  }
+}
+
+/** 依次探测候选, 返回第一个真的是英雄联盟 LCU 的(导出便于测试)。 */
+export async function pickVerifiedCredentials(
+  candidates: LcuCredentials[],
+  probe: (creds: LcuCredentials) => Promise<boolean>
+): Promise<LcuCredentials | null> {
+  for (const candidate of candidates) {
+    if (await probe(candidate)) return candidate;
+  }
+  return null;
+}
+
+/**
+ * LCU 端口与 token。
+ *
+ * 顺序: 客户端日志(国服的真实 app-port 在 "Cef CommandLine" 行里) → 进程命令行(国际服)。
+ * 每个候选都要探测验证, 因为国服进程命令行里那对 riotclient 参数指向的是 **Riot 客户端**,
+ * 用它访问 /lol-* 一律 "Invalid URI format"。
+ */
 export async function lcuCredentials(force = false): Promise<LcuCredentials | null> {
   if (!force && credentialCache && Date.now() - credentialCache.at < CREDENTIAL_TTL_MS) {
     return credentialCache.value;
   }
-  let value: LcuCredentials | null = null;
+  const candidates: LcuCredentials[] = [];
+  try {
+    candidates.push(...(await credentialsFromLogs()));
+  } catch (error) {
+    logger.debug(`日志凭据失败: ${String((error as Error).message ?? error)}`);
+  }
   const items = await processSnapshot(true);
   for (const proc of items) {
     if (proc.name.toLowerCase() !== CLIENT_UX_EXE.toLowerCase()) continue;
-    value = parseLcuCommandLine(proc.commandLine);
-    if (value) break;
+    candidates.push(...parseLcuCandidates(proc.commandLine));
   }
-  if (!value) value = await credentialsFromLogs();
+
+  const unique: LcuCredentials[] = [];
+  const seen = new Set<string>();
+  for (const candidate of candidates) {
+    const key = `${candidate.port}:${candidate.token}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    unique.push(candidate);
+  }
+
+  let value = await pickVerifiedCredentials(unique, probesAsLeagueLcu);
+  if (value) {
+    logger.debug(`LCU 连接已确认: 端口 ${value.port}（来自 ${value.source}）`);
+  } else if (unique.length) {
+    // 都探测不通时保留第一个, 让上层的错误信息反映真实情况
+    value = unique[0]!;
+    logger.warn(`LCU 候选都未通过验证, 暂用端口 ${value.port}（${value.source}）`);
+  }
   credentialCache = { at: Date.now(), value };
   return value;
 }
