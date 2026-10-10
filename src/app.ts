@@ -8,7 +8,7 @@ import { spawn, type ChildProcess } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { appRoot, loadConfig } from "./core/config.ts";
-import { createLogger, setLogLevel, type LogLevel } from "./core/logger.ts";
+import { createLogger, setLogFile, setLogLevel, type LogLevel } from "./core/logger.ts";
 import { startApiServer } from "./server/api.ts";
 
 const logger = createLogger("app");
@@ -96,6 +96,9 @@ async function main(): Promise<void> {
   const host = argValue("host") ?? config.server.host;
   const port = Number(argValue("port") ?? config.server.port) || config.server.port;
   const hideWindow = hasFlag("no-window");
+
+  // 应用模式下把日志落盘, 排障时可直接查看(窗口是独立进程, 控制台输出容易丢)
+  setLogFile(path.join(appRoot(), ".tmp", "app.log"));
 
   let running;
   try {

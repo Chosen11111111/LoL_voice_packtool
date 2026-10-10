@@ -277,8 +277,13 @@
     const lobbyLocaleName = lobbyLocaleObj ? lobbyLocaleObj.name : liveLocale;
     $("cardStatusLobby").classList.toggle("active", lobbyActive);
     $("tagStatusLobby").textContent = lobbyActive ? "实时播报" : "未开启";
+    const playbackNote = live.playback_failed
+      ? "｜播放失败 " + live.playback_failed + " 次：" + ((live.last_playback && live.last_playback.error) || "未知")
+      : live.playback_ok
+        ? "｜已播放 " + live.playback_ok + " 次"
+        : "";
     $("statusLobbyVoice").textContent = lobbyActive
-      ? "【监听中：" + (lobbyLocaleName || "默认语种") + "】" + (live.presence === "in" ? "选人进行中" : "等待进入选人")
+      ? "【监听中：" + (lobbyLocaleName || "默认语种") + "】" + (live.presence === "in" ? "选人进行中" : "等待进入选人") + "｜已播报 " + live.played + " 条" + playbackNote
       : "未开启（选语音包即自动开始监听）";
   }
 
@@ -656,9 +661,34 @@
   const lobbyAudio = new Audio();
   lobbyAudio.preload = "auto";
   let lobbyLiveLocale = "";
+  let lastVoice = { kind: "choose", championId: 0 };
+
+  /** 把播放结果回报给后端(排障: 能直接看到浏览器给的错误原因)。 */
+  function reportPlayback(ok, error, detail) {
+    try {
+      fetch("/api/lobby-live/report", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ok, error: error || "", detail: detail || "", kind: lastVoice.kind, championId: lastVoice.championId })
+      }).catch(() => undefined);
+    } catch {
+      /* ignore */
+    }
+  }
+
+  lobbyAudio.addEventListener("playing", () => {
+    reportPlayback(true, "", "playing");
+  });
+  lobbyAudio.addEventListener("error", () => {
+    const code = lobbyAudio.error ? lobbyAudio.error.code : 0;
+    const message = lobbyAudio.error ? String(lobbyAudio.error.message || "") : "";
+    reportPlayback(false, "media_error_" + code, message);
+    setStatus("播报音频加载失败（code " + code + " " + message + "）", "warn", 0);
+  });
 
   function playLobbyVoice(data) {
     if (!data || !data.url) return;
+    lastVoice = { kind: data.kind, championId: data.championId };
     // 换英雄时立刻切掉上一条, 避免两条台词叠在一起
     try {
       lobbyAudio.pause();
@@ -669,29 +699,35 @@
     lobbyAudio.src = data.url;
     const played = lobbyAudio.play();
     if (played && typeof played.catch === "function") {
-      played.catch(() => setStatus("浏览器拦下了自动播放，点一下窗口任意位置即可", "warn", 0));
+      played.catch((error) => {
+        reportPlayback(false, "play_" + (error && error.name ? error.name : "error"), error && error.message ? error.message : "");
+        setStatus("浏览器拦下了自动播放，点一下窗口任意位置即可", "warn", 0);
+      });
     }
     if (data.championId) {
       log("播放选人台词：" + data.kind + " 英雄 " + data.championId + "（" + data.phase + "）");
     }
   }
 
-  // 首次点击时解锁音频(浏览器自动播放策略)
-  document.addEventListener(
-    "click",
-    () => {
-      try {
-        lobbyAudio.muted = true;
-        lobbyAudio.play().then(() => {
+  // 首次交互时解锁音频(浏览器自动播放策略); 用 pointerdown 比 click 更早
+  const unlockAudio = () => {
+    try {
+      lobbyAudio.muted = true;
+      const started = lobbyAudio.play();
+      if (started && typeof started.then === "function") {
+        started.then(() => {
           lobbyAudio.pause();
           lobbyAudio.muted = false;
-        }).catch(() => undefined);
-      } catch {
-        /* ignore */
+        }).catch(() => {
+          lobbyAudio.muted = false;
+        });
       }
-    },
-    { once: true }
-  );
+    } catch {
+      /* ignore */
+    }
+  };
+  document.addEventListener("pointerdown", unlockAudio, { once: true });
+  document.addEventListener("click", unlockAudio, { once: true });
 
   /**
    * 让后端的监听跟随界面里选中的语种。
@@ -744,6 +780,11 @@
   } catch {
     /* ignore */
   }
+
+  // 排障用: 控制台里执行 __playVoice("choose", 266) 可手动触发一次播放, 排除"事件没来"的干扰
+  window.__playVoice = (kind, championId) => {
+    playLobbyVoice({ kind: kind || "choose", championId: Number(championId) || 0, phase: "test", url: "/api/lobby-audio/" + (kind || "choose") + "/" + championId + ".ogg?locale=" + (store.selected || "ja_JP") });
+  };
 
   setBusy(false);
   refresh()

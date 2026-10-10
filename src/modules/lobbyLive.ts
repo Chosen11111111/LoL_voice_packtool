@@ -34,6 +34,15 @@ export interface LobbyLiveOptions {
   watcher?: (options: Parameters<typeof watchChampSelect>[0]) => StopWatch;
 }
 
+export interface PlaybackReport {
+  at: number;
+  ok: boolean;
+  error: string;
+  detail: string;
+  kind: "choose" | "ban";
+  championId: number;
+}
+
 export interface LobbyLiveState {
   running: boolean;
   locale: string;
@@ -46,6 +55,10 @@ export interface LobbyLiveState {
   history: LobbyLiveEvent[];
   /** 最近一次选人会话摘要(排障用)。 */
   last_session: Record<string, unknown> | null;
+  /** 窗口回报的最近一次播放结果(排障用)。 */
+  last_playback: PlaybackReport | null;
+  playback_ok: number;
+  playback_failed: number;
   message: string;
 }
 
@@ -65,6 +78,20 @@ export class LobbyLiveEngine {
   private message = "未启动";
   /** 最近一次选人会话摘要(排障用: 看客户端到底给了什么结构)。 */
   private lastSession: Record<string, unknown> | null = null;
+  /** 窗口回报的播放结果。 */
+  private lastPlayback: PlaybackReport | null = null;
+  private playbackOk = 0;
+  private playbackFailed = 0;
+
+  /** 接收窗口的播放结果上报。 */
+  reportPlayback(report: Omit<PlaybackReport, "at">): void {
+    this.lastPlayback = { ...report, at: Date.now() };
+    if (report.ok) this.playbackOk += 1;
+    else {
+      this.playbackFailed += 1;
+      logger.warn(`窗口播放失败: ${report.error} ${report.detail}`);
+    }
+  }
 
   subscribe(listener: Listener): () => void {
     this.listeners.add(listener);
@@ -100,6 +127,9 @@ export class LobbyLiveEngine {
     this.presence = "offline";
     this.played = 0;
     this.history = [];
+    this.lastPlayback = null;
+    this.playbackOk = 0;
+    this.playbackFailed = 0;
     const watch = options.watcher ?? watchChampSelect;
     this.stopWatch = watch({
       fastIntervalMs: options.fastIntervalMs,
@@ -185,6 +215,9 @@ export class LobbyLiveEngine {
       last_event: this.history[0] ?? null,
       history: this.history,
       last_session: this.lastSession,
+      last_playback: this.lastPlayback,
+      playback_ok: this.playbackOk,
+      playback_failed: this.playbackFailed,
       message: this.message
     };
   }

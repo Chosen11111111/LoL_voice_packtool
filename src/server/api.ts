@@ -8,7 +8,9 @@ import { lobbyLive } from "../modules/lobbyLive.ts";
 import { isDirectory } from "../core/fsx.ts";
 import type { ModuleId } from "../core/types.ts";
 import { invalidateConfigCache } from "../core/config.ts";
-import { setLogLevel, type LogLevel } from "../core/logger.ts";
+import { createLogger, setLogLevel, type LogLevel } from "../core/logger.ts";
+
+const logger = createLogger("api");
 import { Router, startHttpServer, type RunningServer } from "./http.ts";
 import { taskManager, type TaskEvent } from "../tasks/manager.ts";
 import { SUPPORTED_EXTENSIONS } from "../packs/archive.ts";
@@ -75,6 +77,7 @@ export function buildRouter(): Router {
       context.res.end(JSON.stringify({ ok: false, error: "not_found", message: `语音包里没有 ${locale}/${kind}/${id}.ogg` }));
       return undefined;
     }
+    logger.info(`播报音频已被窗口取用: ${locale}/${kind}/${id}.ogg（${data.length} 字节）`);
     context.res.writeHead(200, {
       "Content-Type": "audio/ogg",
       "Content-Length": data.length,
@@ -97,6 +100,19 @@ export function buildRouter(): Router {
       includeOthers: Boolean(body.includeOthers)
     });
     return { ok: result.ok, message: result.message, state: result.state, audio_base: `/api/lobby-audio` };
+  });
+
+  /** 窗口把播放结果回报过来: 成功会记录, 失败会留下浏览器的原始错误码。 */
+  router.post("/api/lobby-live/report", (context) => {
+    const body = asRecord(context.body);
+    lobbyLive.reportPlayback({
+      ok: Boolean(body.ok),
+      error: body.error ? String(body.error) : "",
+      detail: body.detail ? String(body.detail) : "",
+      championId: Number(body.championId ?? 0) || 0,
+      kind: body.kind === "ban" ? "ban" : "choose"
+    });
+    return { ok: true };
   });
 
   router.post("/api/lobby-live/stop", async () => {

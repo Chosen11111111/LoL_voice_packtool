@@ -164,7 +164,13 @@ async function serveStatic(res: http.ServerResponse, staticDir: string, pathname
     const stat = await fs.stat(target);
     if (!stat.isFile()) return false;
     const data = await fs.readFile(target);
-    res.writeHead(200, { "Content-Type": MIME[path.extname(target).toLowerCase()] ?? "application/octet-stream" });
+    res.writeHead(200, {
+      "Content-Type": MIME[path.extname(target).toLowerCase()] ?? "application/octet-stream",
+      "Content-Length": data.length,
+      // 界面文件很小, 且应用窗口用的是持久化 profile —— 禁止缓存, 避免窗口一直跑旧的前端
+      "Cache-Control": "no-store, must-revalidate",
+      Expires: "0"
+    });
     res.end(data);
     return true;
   } catch {
