@@ -12,8 +12,12 @@ import type { ModuleId } from "../core/types.ts";
 
 export type ChampSelectVoiceKind = "choose" | "ban";
 
-/** 触发时机: hover = 悬停到新英雄就播; lock = 只有锁定(点确定)才播。 */
-export type ChampSelectTrigger = "hover" | "lock";
+/**
+ * 触发时机: **只支持锁定(点确定)**。
+ * 悬停触发实测噪音太大(每次划过都响, 且同一英雄反复响), 已移除。
+ */
+export type ChampSelectTrigger = "lock";
+export const VOICE_TRIGGER: ChampSelectTrigger = "lock";
 
 export interface ChampSelectAction {
   id?: number;
@@ -50,8 +54,6 @@ export interface DeriveOptions {
   /** 同一英雄同一类型的最小重播间隔(毫秒), 默认 8000。 */
   repeatCooldownMs?: number;
   now?: number;
-  /** 触发时机, 默认 hover(悬停即播)。 */
-  trigger?: ChampSelectTrigger;
 }
 
 interface SeenRecord {
@@ -63,14 +65,10 @@ export class ChampSelectTracker {
   private seen = new Map<string, SeenRecord>();
   private lastLocalPick = new Map<number, number>();
   private lastLocalBan = new Map<number, number>();
-  /** 兜底信号: 本队阵容里该玩家当前显示的英雄。 */
-  private lastTeamChampion = new Map<number, number>();
-
   reset(): void {
     this.seen.clear();
     this.lastLocalPick.clear();
     this.lastLocalBan.clear();
-    this.lastTeamChampion.clear();
   }
 
   /**
@@ -83,7 +81,6 @@ export class ChampSelectTracker {
   derive(previous: ChampSelectSession | null, session: ChampSelectSession, options: DeriveOptions = {}): ChampSelectVoiceEvent[] {
     const now = options.now ?? Date.now();
     const cooldown = options.repeatCooldownMs ?? 8000;
-    const trigger = options.trigger ?? "hover";
     const localCell = session.localPlayerCellId ?? previous?.localPlayerCellId;
     if (localCell === undefined || localCell === null) return [];
 
@@ -117,29 +114,33 @@ export class ChampSelectTracker {
       const kind: ChampSelectVoiceKind | null = type === "ban" ? "ban" : type === "pick" || type === "ten_bans_reveal" ? "choose" : null;
       if (!kind) continue;
 
-      // 只要锁定的模式下, 悬停不播
-      if (trigger === "lock" && !action.completed) continue;
+      // 只有锁定(点确定)才播; 悬停不播
+      if (!action.completed) continue;
 
       const lastMap = kind === "choose" ? this.lastLocalPick : this.lastLocalBan;
       const previousChampion = lastMap.get(action.actorCellId) ?? 0;
       if (action.championId === previousChampion) continue; // 同一动作没有变化
       lastMap.set(action.actorCellId, action.championId);
-      emit(kind, action.championId, action.completed ? "lock" : "hover", action.actorCellId, "action");
-    }
-
-    // 兜底: 有些客户端版本/模式下, 悬停变化先出现在本队阵容里而不是动作数组里
-    const mine = (session.myTeam ?? []).find((item) => item.cellId === localCell);
-    const teamChampion = Number(mine?.championId ?? 0);
-    if (teamChampion > 0) {
-      const previous = this.lastTeamChampion.get(localCell) ?? 0;
-      if (teamChampion !== previous) {
-        this.lastTeamChampion.set(localCell, teamChampion);
-        // emit 自带冷却去重, 所以动作路径已经播过时不会重复
-        emit("choose", teamChampion, "hover", localCell, "team");
-      }
+      emit(kind, action.championId, "lock", action.actorCellId, "action");
     }
 
     return events;
+  }
+
+  /**
+   * 基线: 把"已经锁定过的动作"记为已播, 不发声。
+   * 用于刚进入选人/刚重启监听时, 避免把当前已经锁好的英雄又播一遍。
+   */
+  baseline(session: ChampSelectSession): void {
+    const localCell = session.localPlayerCellId;
+    if (localCell === undefined || localCell === null) return;
+    for (const action of (session.actions ?? []).flat()) {
+      if (!action.completed || !action.championId) continue;
+      const kind: ChampSelectVoiceKind = String(action.type).toLowerCase() === "ban" ? "ban" : "choose";
+      const lastMap = kind === "choose" ? this.lastLocalPick : this.lastLocalBan;
+      lastMap.set(action.actorCellId, action.championId);
+      this.seen.set(`${kind}:${action.championId}`, { at: Date.now() });
+    }
   }
 }
 

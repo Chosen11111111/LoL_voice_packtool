@@ -283,7 +283,7 @@
         ? "｜已播放 " + live.playback_ok + " 次"
         : "";
     $("statusLobbyVoice").textContent = lobbyActive
-      ? "【监听中：" + (lobbyLocaleName || "默认语种") + "·" + (live.trigger === "lock" ? "锁定才播" : "悬停即播") + "】" +
+      ? "【监听中：" + (lobbyLocaleName || "默认语种") +  + "】" +
         (live.presence === "in" ? "选人进行中" : "等待进入选人") + "｜已播报 " + live.played + " 条" + playbackNote
       : "未开启（选语音包即自动开始监听）";
   }
@@ -667,9 +667,7 @@
   /* --------------------------------- 播报音量 / 触发方式(右上角) */
 
   const VOLUME_KEY = "leagueVoice.volume";
-  const TRIGGER_KEY = "leagueVoice.trigger";
 
-  let triggerMode = localStorage.getItem(TRIGGER_KEY) === "lock" ? "lock" : "hover";
   let volume = Number(localStorage.getItem(VOLUME_KEY));
   if (!Number.isFinite(volume)) volume = 60;
   let volumeBeforeMute = volume > 0 ? volume : 60;
@@ -697,16 +695,9 @@
     applyVolume();
   }
 
-  function applyTriggerLabel() {
-    const button = $("btnTriggerMode");
-    if (!button) return;
-    button.dataset.mode = triggerMode;
-    button.textContent = triggerMode === "lock" ? "锁定才播" : "悬停即播";
-  }
 
   function initHud() {
     applyVolume();
-    applyTriggerLabel();
     const slider = $("volumeSlider");
     if (slider) {
       slider.addEventListener("input", () => setVolume(Number(slider.value), true));
@@ -714,22 +705,6 @@
     const mute = $("btnMuteToggle");
     if (mute) {
       mute.addEventListener("click", () => setVolume(volume === 0 ? volumeBeforeMute : 0, true));
-    }
-    const trigger = $("btnTriggerMode");
-    if (trigger) {
-      trigger.addEventListener("click", () => {
-        triggerMode = triggerMode === "lock" ? "hover" : "lock";
-        try {
-          localStorage.setItem(TRIGGER_KEY, triggerMode);
-        } catch {
-          /* ignore */
-        }
-        applyTriggerLabel();
-        log("触发方式已切换为：" + (triggerMode === "lock" ? "锁定（点确定）才播" : "悬停即播"));
-        // 让后端按新方式重新开始监听
-        lobbyLiveLocale = "";
-        void syncLobbyLive();
-      });
     }
   }
 
@@ -813,7 +788,7 @@
       const response = await fetch("/api/lobby-live/start", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ locale, trigger: triggerMode })
+        body: JSON.stringify({ locale })
       });
       const data = await response.json();
       if (data && data.ok) {

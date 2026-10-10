@@ -14,9 +14,9 @@ import { isDirectory, isFile } from "../core/fsx.ts";
 import { watchChampSelect, type ChampSelectPresence, type StopWatch } from "../core/win/lcuEvents.ts";
 import {
   ChampSelectTracker,
+  VOICE_TRIGGER,
   voiceRelativePath,
   type ChampSelectSession,
-  type ChampSelectTrigger,
   type ChampSelectVoiceEvent
 } from "./champSelect.ts";
 
@@ -33,8 +33,6 @@ export interface LobbyLiveOptions {
   locale: string;
   /** 是否也播别人的禁用/选人台词。 */
   includeOthers?: boolean;
-  /** 触发时机: hover = 悬停即播(默认); lock = 只有锁定(点确定)才播。 */
-  trigger?: ChampSelectTrigger;
   /** 轮询间隔(测试用)。 */
   fastIntervalMs?: number;
   idleIntervalMs?: number;
@@ -55,7 +53,7 @@ export interface LobbyLiveState {
   running: boolean;
   locale: string;
   include_others: boolean;
-  trigger: ChampSelectTrigger;
+  trigger: string;
   presence: ChampSelectPresence;
   /** 本地语音包里该语种的音频数量。 */
   available: number;
@@ -90,6 +88,8 @@ export class LobbyLiveEngine {
   /** 最近一次选人会话摘要(排障用: 看客户端到底给了什么结构)。 */
   private lastSession: Record<string, unknown> | null = null;
   private sessionLog: Array<Record<string, unknown>> = [];
+  /** 本轮选人是否已经建立基线(建立后才有事件)。 */
+  private baselined = false;
   /** 窗口回报的播放结果。 */
   private lastPlayback: PlaybackReport | null = null;
   private playbackOk = 0;
@@ -127,6 +127,10 @@ export class LobbyLiveEngine {
   }
 
   async start(options: LobbyLiveOptions): Promise<{ ok: boolean; message: string; state: LobbyLiveState }> {
+    // 已经在用同一个语种监听: 直接返回, 不重启(重启会重新建基线, 也不会重播)
+    if (this.stopWatch && this.options?.locale === options.locale && Boolean(this.options?.includeOthers) === Boolean(options.includeOthers)) {
+      return { ok: true, message: this.message, state: this.state() };
+    }
     await this.stop();
     const chooseDir = path.join(options.voiceRoot, options.locale, "assets", "champion-choose-vo");
     if (!(await isDirectory(chooseDir))) {
@@ -144,19 +148,22 @@ export class LobbyLiveEngine {
     this.playbackFailed = 0;
     this.sessionLog = [];
     this.lastSession = null;
+    this.baselined = false;
     const watch = options.watcher ?? watchChampSelect;
     this.stopWatch = watch({
       fastIntervalMs: options.fastIntervalMs,
       idleIntervalMs: options.idleIntervalMs,
       onPresence: (presence) => {
         this.presence = presence;
-        if (presence !== "in") this.tracker.reset();
+        if (presence !== "in") {
+          // 离开选人: 清空去重状态, 下一局重新建基线
+          this.tracker.reset();
+          this.baselined = false;
+        }
       },
       onSession: (session, presence) => this.handleSession(session, presence)
     });
-    this.message =
-      `正在监听选人流程，使用 ${options.locale} 的语音包（${this.available} 个音频，` +
-      `${(options.trigger ?? "hover") === "lock" ? "锁定才播" : "悬停即播"}）`;
+    this.message = `正在监听选人流程，使用 ${options.locale} 的语音包（${this.available} 个音频，锁定才播）`;
     logger.info(this.message);
     return { ok: true, message: this.message, state: this.state() };
   }
@@ -189,7 +196,13 @@ export class LobbyLiveEngine {
         this.sessionLog = [snapshot, ...this.sessionLog].slice(0, 10);
       }
     }
-    const events = this.tracker.derive(null, session, { includeOthers: options.includeOthers, trigger: options.trigger });
+    // 刚进入选人(或刚重启监听)时先建立基线: 已经锁好的英雄不再补播
+    if (!this.baselined) {
+      this.tracker.baseline(session);
+      this.baselined = true;
+      return;
+    }
+    const events = this.tracker.derive(null, session, { includeOthers: options.includeOthers });
     for (const event of events) {
       const payload: LobbyLiveEvent = {
         ...event,
@@ -235,7 +248,7 @@ export class LobbyLiveEngine {
       running: this.isRunning(),
       locale: this.options?.locale ?? "",
       include_others: Boolean(this.options?.includeOthers),
-      trigger: this.options?.trigger ?? "hover",
+      trigger: VOICE_TRIGGER,
       presence: this.presence,
       available: this.available,
       played: this.played,

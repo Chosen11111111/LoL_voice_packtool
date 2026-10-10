@@ -1,4 +1,4 @@
-/** 选人语音事件推导的自测(纯逻辑, 不需要客户端)。 */
+/** 选人语音事件推导的自测(纯逻辑, 不需要客户端)。**只支持"锁定才播"**。 */
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { ChampSelectTracker, voiceRelativePath, type ChampSelectSession } from "../src/modules/champSelect.ts";
@@ -11,37 +11,44 @@ function pickAction(actorCellId: number, championId: number, completed: boolean)
   return { id: actorCellId * 10, actorCellId, championId, type: "pick", completed };
 }
 
-test("悬停到英雄 -> 播选人台词; 换英雄 -> 再播一次", () => {
+test("悬停(未锁定)永远不播", () => {
   const tracker = new ChampSelectTracker();
-  const first = tracker.derive(null, session({ actions: [[pickAction(0, 103, false)]] }), { now: 1000 });
-  assert.deepEqual(first.map((item) => [item.kind, item.championId, item.phase]), [["choose", 103, "hover"]]);
+  const hover = tracker.derive(null, session({ actions: [[pickAction(0, 103, false)]] }), { now: 1000 });
+  assert.equal(hover.length, 0);
 
-  const second = tracker.derive(null, session({ actions: [[pickAction(0, 104, false)]] }), { now: 2000 });
-  assert.deepEqual(second.map((item) => [item.championId, item.phase]), [[104, "hover"]]);
+  // 连续划过多个英雄也不播
+  const sweep = tracker.derive(
+    null,
+    session({ actions: [[pickAction(0, 104, false)], [pickAction(0, 157, false)]] }),
+    { now: 2000 }
+  );
+  assert.equal(sweep.length, 0);
 });
 
-test("同一英雄没有变化时不重复播; 冷却时间内也不重复", () => {
-  const tracker = new ChampSelectTracker();
-  tracker.derive(null, session({ actions: [[pickAction(0, 103, false)]] }), { now: 1000 });
-  const same = tracker.derive(null, session({ actions: [[pickAction(0, 103, false)]] }), { now: 1500 });
-  assert.equal(same.length, 0);
-
-  // 换走再换回来: 冷却期内不播
-  tracker.derive(null, session({ actions: [[pickAction(0, 104, false)]] }), { now: 2000 });
-  const back = tracker.derive(null, session({ actions: [[pickAction(0, 103, false)]] }), { now: 3000 });
-  assert.equal(back.length, 0);
-  // 冷却过后可以再播
-  const later = tracker.derive(null, session({ actions: [[pickAction(0, 105, false)]] }), { now: 20000 });
-  assert.equal(later[0]!.championId, 105);
-});
-
-test("直接锁定(hover 与 lock 同帧变化)-> lock", () => {
+test("锁定(点确定)才播, phase 是 lock", () => {
   const tracker = new ChampSelectTracker();
   const events = tracker.derive(null, session({ actions: [[pickAction(0, 103, true)]] }), { now: 1000 });
-  assert.deepEqual(events.map((item) => item.phase), ["lock"]);
+  assert.deepEqual(
+    events.map((item) => [item.kind, item.championId, item.phase, item.source]),
+    [["choose", 103, "lock", "action"]]
+  );
 });
 
-test("禁用动作 -> 播禁用台词", () => {
+test("同一英雄锁定后不重复播", () => {
+  const tracker = new ChampSelectTracker();
+  tracker.derive(null, session({ actions: [[pickAction(0, 103, true)]] }), { now: 1000 });
+  const again = tracker.derive(null, session({ actions: [[pickAction(0, 103, true)]] }), { now: 1500 });
+  assert.equal(again.length, 0);
+});
+
+test("换英雄再锁定会播新的", () => {
+  const tracker = new ChampSelectTracker();
+  tracker.derive(null, session({ actions: [[pickAction(0, 103, true)]] }), { now: 1000 });
+  const next = tracker.derive(null, session({ actions: [[pickAction(0, 104, true)]] }), { now: 20000 });
+  assert.deepEqual(next.map((item) => item.championId), [104]);
+});
+
+test("禁用锁定 -> 播禁用台词", () => {
   const tracker = new ChampSelectTracker();
   const events = tracker.derive(
     null,
@@ -51,39 +58,37 @@ test("禁用动作 -> 播禁用台词", () => {
   assert.deepEqual(events.map((item) => [item.kind, item.championId]), [["ban", 24]]);
 });
 
-test("默认只播自己的: 别人的 pick/ban 不触发", () => {
-  const tracker = new ChampSelectTracker();
-  const events = tracker.derive(
-    null,
-    session({
-      localPlayerCellId: 0,
-      actions: [[pickAction(1, 103, false), { id: 2, actorCellId: 2, championId: 24, type: "ban", completed: true }]]
-    }),
-    { now: 1000 }
-  );
-  assert.equal(events.length, 0);
+test("默认只播自己的; includeOthers 才播别人的", () => {
+  const shared = {
+    localPlayerCellId: 0,
+    actions: [[pickAction(1, 103, true), { id: 2, actorCellId: 2, championId: 24, type: "ban", completed: true }]]
+  };
+  assert.equal(new ChampSelectTracker().derive(null, session(shared), { now: 1000 }).length, 0);
 
-  const withOthers = new ChampSelectTracker().derive(
-    null,
-    session({
-      localPlayerCellId: 0,
-      actions: [[pickAction(1, 103, false), { id: 2, actorCellId: 2, championId: 24, type: "ban", completed: true }]]
-    }),
-    { now: 1000, includeOthers: true }
-  );
+  const withOthers = new ChampSelectTracker().derive(null, session(shared), { now: 1000, includeOthers: true });
   assert.deepEqual(withOthers.map((item) => item.kind).sort(), ["ban", "choose"]);
 });
 
-test("换局(gameId 变化)会清空历史", () => {
+test("换局(gameId 变化)会清空历史, 同英雄可以再播", () => {
   const tracker = new ChampSelectTracker();
-  tracker.derive(null, session({ gameId: 1, actions: [[pickAction(0, 103, false)]] }), { now: 1000 });
+  tracker.derive(null, session({ gameId: 1, actions: [[pickAction(0, 103, true)]] }), { now: 1000 });
   const next = tracker.derive(
-    session({ gameId: 1, actions: [[pickAction(0, 103, false)]] }),
-    session({ gameId: 2, actions: [[pickAction(0, 103, false)]] }),
+    session({ gameId: 1, actions: [[pickAction(0, 103, true)]] }),
+    session({ gameId: 2, actions: [[pickAction(0, 103, true)]] }),
     { now: 1500 }
   );
   assert.equal(next.length, 1);
   assert.equal(next[0]!.championId, 103);
+});
+
+test("baseline: 刚进入选人/刚重启监听时, 已经锁好的英雄不补播", () => {
+  const tracker = new ChampSelectTracker();
+  const current = session({ actions: [[pickAction(0, 103, true)]] });
+  tracker.baseline(current);
+  assert.equal(tracker.derive(null, current, { now: 1000 }).length, 0, "基线内的锁定不该重播");
+
+  const locked = tracker.derive(null, session({ actions: [[pickAction(0, 104, true)]] }), { now: 20000 });
+  assert.deepEqual(locked.map((item) => item.championId), [104]);
 });
 
 test("voiceRelativePath: 选人/禁用对应语音包内的两个目录", () => {
@@ -93,45 +98,5 @@ test("voiceRelativePath: 选人/禁用对应语音包内的两个目录", () => 
 
 test("没有本地玩家信息时不产生事件", () => {
   const tracker = new ChampSelectTracker();
-  const events = tracker.derive(
-    null,
-    { actions: [[pickAction(0, 103, false)]] },
-    { now: 1000 }
-  );
-  assert.equal(events.length, 0);
+  assert.equal(tracker.derive(null, { actions: [[pickAction(0, 103, true)]] }, { now: 1000 }).length, 0);
 });
-test("trigger=lock: 悬停不播, 只有锁定(点确定)才播", () => {
-  const tracker = new ChampSelectTracker();
-  const hover = tracker.derive(null, session({ actions: [[pickAction(0, 103, false)]] }), { now: 1000, trigger: "lock" });
-  assert.equal(hover.length, 0, "悬停不该播");
-
-  const locked = tracker.derive(null, session({ actions: [[pickAction(0, 103, true)]] }), { now: 2000, trigger: "lock" });
-  assert.deepEqual(locked.map((item) => [item.championId, item.phase]), [[103, "lock"]]);
-});
-
-test("兜底: 动作数组没变化时, 本队阵容里的英雄变化也会触发(来源 team)", () => {
-  const tracker = new ChampSelectTracker();
-  // 动作数组始终为空(某些客户端/模式下悬停只体现在阵容里)
-  const first = tracker.derive(null, session({ myTeam: [{ cellId: 0, championId: 104 }], actions: [[]] }), { now: 1000 });
-  assert.deepEqual(first.map((item) => [item.championId, item.source]), [[104, "team"]]);
-
-  const second = tracker.derive(null, session({ myTeam: [{ cellId: 0, championId: 157 }], actions: [[]] }), { now: 3000 });
-  assert.deepEqual(second.map((item) => [item.championId, item.source]), [[157, "team"]]);
-
-  // 没变化则不重复
-  const same = tracker.derive(null, session({ myTeam: [{ cellId: 0, championId: 157 }], actions: [[]] }), { now: 4000 });
-  assert.equal(same.length, 0);
-});
-
-test("动作路径已播过时, 兜底不会重复播(冷却去重)", () => {
-  const tracker = new ChampSelectTracker();
-  const events = tracker.derive(
-    null,
-    session({ myTeam: [{ cellId: 0, championId: 103 }], actions: [[pickAction(0, 103, false)]] }),
-    { now: 1000 }
-  );
-  assert.equal(events.length, 1);
-  assert.equal(events[0]!.source, "action");
-});
-
-

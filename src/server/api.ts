@@ -97,8 +97,7 @@ export function buildRouter(): Router {
     const result = await lobbyLive.start({
       voiceRoot: root,
       locale,
-      includeOthers: Boolean(body.includeOthers),
-      trigger: body.trigger === "lock" ? "lock" : "hover"
+      includeOthers: Boolean(body.includeOthers)
     });
     return { ok: result.ok, message: result.message, state: result.state, audio_base: `/api/lobby-audio` };
   });
