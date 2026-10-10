@@ -143,7 +143,7 @@ src/
     applyPlan.ts      替换计划执行器(预检槽位 + 逐文件安全替换)
     ingameVoice.ts    对局语音
     ingameLang.ts     对局语言
-    lobbyVoice.ts     大厅选人语音(WAD 方案实现中, 默认关闭)
+    lobbyVoice.ts     大厅选人语音(客户端资源包 WAD 方案, 默认关闭)
     lobbyLang.ts      大厅界面语言
     oneclick.ts       一键全套 / 一键还原
   tasks/manager.ts    任务队列、进度、取消、互斥
@@ -178,7 +178,7 @@ docs/API.md           接口契约
 | `supportedLocales` | 需要维护的语种列表（增量同步用） |
 | `manifestDownloader` / `bundleProxy` / `manifestId` | wad 增量下载工具与代理、官方清单 ID |
 | `autoRestartClient` | 切换/还原成功后是否自动重启客户端 UX |
-| `features.lobbyVoice` | 大厅选人语音（默认 `false`；改为 WAD 方案，实现中，未完成前不改客户端文件） |
+| `features.lobbyVoice` | 大厅选人语音（默认 `false`；客户端资源包 WAD 方案，已可用） |
 | `features.lobbyLang` | 大厅界面语言（改 `LeagueClientSettings.yaml`，与语音包无关） |
 | `server` | API 监听地址、端口、访问令牌、前端目录、上传上限 |
 
@@ -195,3 +195,44 @@ node src/index.ts serve --port 43110
 
 测试策略：全部在项目内 `.tmp/tests/` 下造"假游戏安装 + 假加载器"，覆盖替换/还原/槽位缺失/跨语种隔离/国服外服槽位跟随/压缩包导入/HTTP 全链路，
 **不会触碰真实游戏文件**。
+
+## 大厅选人语音（不注入进程）
+
+选人/禁用台词由客户端自带的资源包提供：
+
+```
+LeagueClient\Plugins\rcp-be-lol-game-data\<客户端语种>-assets.wad
+```
+
+工具直接**替换资源包内对应条目的音频数据**，不注入任何进程、不改 d3d9、不装插件。
+
+实测确认的 WAD 结构（RW 3.4）：
+
+| 偏移 | 内容 |
+| --- | --- |
+| 0..3 | `RW` + 版本 |
+| 4..267 | 256 字节签名块 + 8 字节校验 |
+| 268..271 | 条目数 u32 |
+| 272.. | TOC：每条 32 字节（`+8`=数据偏移，`+12`/`+16`=大小，`+24`=路径哈希） |
+| TOC 之后 | 数据区 |
+
+补丁方式：
+
+1. 首次补丁前把原文件整体备份为 `<wad>.chosen_bak`（永不覆盖）；
+2. 新音频按 16 字节对齐**追加到文件末尾**；
+3. 只更新对应条目的偏移与大小，签名块、条目顺序、条目数一律不动；
+4. 先写 `<wad>.chosen_new` 再原子改名，中途失败不会破坏原文件。
+
+条目与英雄的对应关系用**内容指纹**建立（路径哈希算法未公开）：从 CommunityDragon 取该客户端语种的原始音频，与条目数据比对；结果缓存在 `.tmp/wad-map-<包名>.json`，可断点续跑。
+
+命令行：
+
+```
+node src/index.ts lobby status  [--league <客户端目录>]
+node src/index.ts lobby apply   [--locale ja_JP] [--league <客户端目录>]
+node src/index.ts lobby restore [--league <客户端目录>]
+```
+
+> 替换时客户端必须完全退出（文件被占用无法替换，工具会明确拒绝而不是硬来）。
+> 国服 `zh_CN-assets.wad` 里有 351 个 ogg（173 选人 + 173 禁用）；
+> 国际服当前渠道的语种包里没有选人语音（`zh_TW-assets.wad` 只有 5 个 ogg）。

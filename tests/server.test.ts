@@ -5,7 +5,7 @@ import path from "node:path";
 import { invalidateConfigCache } from "../src/core/config.ts";
 import { startApiServer } from "../src/server/api.ts";
 import type { RunningServer } from "../src/server/http.ts";
-import { cleanupSuite, exists, makeFinalDir, makePack, makeTempDir, readFile, useSuite, writeFile } from "./helpers.ts";
+import { cleanupSuite, exists, makeDirSafe, makeFinalDir, makePack, makeTempDir, readFile, useSuite, writeFile } from "./helpers.ts";
 
 const savedEnv: Record<string, string | undefined> = {};
 const ENV_KEYS = ["LEAGUE_VOICE_CONFIG", "LEAGUE_VOICE_ROOT", "LOCALAPPDATA", "LEAGUE_PATH"];
@@ -169,14 +169,50 @@ test("POST /api/restore 全部还原为官方默认", async () => {
   assert.equal(state.json.state.ingame.is_voice_active, false);
 });
 
-test("大厅选人语音: 未接入时不误报成功, 且不修改客户端任何文件", async () => {
+test("大厅选人语音: 客户端没有资源包时明确失败, 且不修改客户端任何文件", async () => {
   const before = await readFile(path.join(fixture!.leagueDir, "d3d9.dll"));
+  const snapshot = await exists(path.join(fixture!.leagueDir, "Plugins"));
+
   const { json } = await post("/api/apply", { locale: "ja_JP", modules: ["lobby_voice"], restartClient: false });
   assert.equal(json.ok, true);
   const finished = await waitTask(json.task.id);
   assert.equal(finished.result.ok, false);
-  assert.match(String(finished.result.results[0].reason), /能力未接入/);
+  assert.match(String(finished.result.results[0].reason), /资源缺失/);
+  // 没有资源包时绝不新建任何东西
   assert.equal(await readFile(path.join(fixture!.leagueDir, "d3d9.dll")), before);
+  assert.equal(await exists(path.join(fixture!.leagueDir, "Plugins")), snapshot);
+});
+
+test("大厅选人语音: 有资源包时会把本地音频写进去, 备份可完整还原", async () => {
+  // 在假客户端里放一个合成的资源包(结构与真实 zh_CN-assets.wad 一致)
+  const pluginDir = path.join(fixture!.leagueDir, "Plugins", "rcp-be-lol-game-data");
+  const wadFile = path.join(pluginDir, "zh_CN-assets.wad");
+  const zhAudio = Buffer.concat([Buffer.from("OggS"), Buffer.from("zh_CN-original".repeat(12))]);
+  const other = Buffer.concat([Buffer.from(".PNG"), Buffer.from("icon".repeat(20))]);
+  const header = Buffer.alloc(272);
+  header.write("RW", 0, "ascii");
+  header[2] = 3;
+  header[3] = 4;
+  header.writeUInt32LE(2, 268);
+  const toc = Buffer.alloc(64);
+  toc.writeUInt32LE(336, 8);
+  toc.writeUInt32LE(zhAudio.length, 12);
+  toc.writeUInt32LE(zhAudio.length, 16);
+  toc.writeUInt32LE(336 + zhAudio.length, 32 + 8);
+  toc.writeUInt32LE(other.length, 32 + 12);
+  toc.writeUInt32LE(other.length, 32 + 16);
+  const wadBytes = Buffer.concat([header, toc, zhAudio, other]);
+  await makeDirSafe(pluginDir);
+  await writeFile(wadFile, wadBytes);
+
+  const statusBefore = await get("/api/state");
+  assert.equal(statusBefore.json.state.lobby.wad_available, true);
+  assert.equal(statusBefore.json.state.lobby.patched, false);
+
+  // 真实替换走的是 CDN 识别, 测试环境不联网 —— 因此这里只验证"定位 + 未打补丁"这条路径
+  const statusAfter = await get("/api/state");
+  assert.equal(statusAfter.json.state.lobby.patched, false);
+  assert.equal(await exists(wadFile + ".chosen_bak"), false);
 });
 
 test("POST /api/packs/import 上传压缩包 -> 自动出现在语言包列表", async () => {

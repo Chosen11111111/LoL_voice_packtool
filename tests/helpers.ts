@@ -17,6 +17,11 @@ export function useSuite(name: string): void {
   suite = name;
 }
 
+/** 建目录(测试里多处要用)。 */
+export async function makeDirSafe(dir: string): Promise<void> {
+  await fs.mkdir(dir, { recursive: true });
+}
+
 export async function makeTempDir(prefix = "case"): Promise<string> {
   counter += 1;
   const dir = path.join(tmpRoot, suite, `${prefix}-${process.pid}-${counter}`);
@@ -34,7 +39,7 @@ export async function cleanupTempRoot(): Promise<void> {
   await fs.rm(tmpRoot, { recursive: true, force: true }).catch(() => undefined);
 }
 
-export async function writeFile(file: string, content: string): Promise<void> {
+export async function writeFile(file: string, content: string | Buffer): Promise<void> {
   await fs.mkdir(path.dirname(file), { recursive: true });
   await fs.writeFile(file, content, "utf8");
 }

@@ -1,23 +1,58 @@
 /**
- * 客户端自带资源包(WAD)的定位与解析。
+ * 客户端自带资源包(WAD)的定位、解析与补丁。
  *
- * 已实测确认的格式(RW 3.4, 以 LeagueClient\\Plugins\\rcp-be-lol-game-data\\zh_CN-assets.wad 为例):
+ * 格式(以 LeagueClient\\Plugins\\rcp-be-lol-game-data\\zh_CN-assets.wad 实测确认):
  *   0..3      magic "RW" + 版本(3.4)
- *   4..259    256 字节签名块
- *   260..267  8 字节校验/摘要
- *   268..271  条目数(u32)
- *   272..     TOC: 每条 32 字节, [+8]=数据偏移(u32) [+12]/[+16]=大小(u32) [+24]=路径哈希(u64)
- *   TOC 之后 数据区(条目按偏移指向)
+ *   4..259    256 字节签名块(实测数据, 本模块不改动它)
+ *   260..267  8 字节校验/摘要(同上, 不改动)
+ *   268..271  条目数 u32
+ *   272..     TOC: 每条 32 字节;  [+0]=?, [+4]=?, [+8]=数据偏移, [+12]=大小, [+16]=大小(重复), [+20]=0, [+24]=路径哈希(u64)
+ *   TOC 之后为数据区, 条目按偏移指向各自数据。
+ *
+ * 补丁策略: **只追加、只改这两条记录里的偏移与大小** —— 不动签名块、条目顺序与条目数,
+ * 因此补丁后文件结构与原文件逐字节兼容, 只是被替换的条目指向新追加的数据。
+ *
+ * 条目与具体资源的对应关系: 路径哈希算法未公开, 因此用**内容指纹**建立映射
+ * (拿已知路径的原文件与之比对), 不依赖哈希算法。
  */
+import fs from "node:fs/promises";
 import path from "node:path";
-import { isFile, isDirectory, listNames } from "../core/fsx.ts";
+import { isDirectory, isFile, listNames, removeQuietly } from "../core/fsx.ts";
 import { createLogger } from "../core/logger.ts";
 
 const logger = createLogger("wadfile");
 
 export const GAME_DATA_PLUGIN = "rcp-be-lol-game-data";
-export const WAD_HEADER_SIZE = 268;
-export const WAD_ENTRY_SIZE = 32;
+export const WAD_MAGIC = "RW";
+export const HEADER_SIZE = 268;
+export const COUNT_OFFSET = 268;
+export const TOC_OFFSET = 272;
+export const ENTRY_SIZE = 32;
+
+export const FIELD_OFFSET = 8;
+export const FIELD_SIZE = 12;
+export const FIELD_SIZE2 = 16;
+export const FIELD_HASH = 24;
+
+/** 追加数据时的对齐(实测原文件条目偏移均为 16 字节对齐)。 */
+export const APPEND_ALIGN = 16;
+
+export interface WadEntry {
+  index: number;
+  offset: number;
+  size: number;
+  size2: number;
+  hash: bigint;
+}
+
+export interface WadFile {
+  path: string;
+  version: string;
+  count: number;
+  dataStart: number;
+  entries: WadEntry[];
+  buffer: Buffer;
+}
 
 export interface WadLocation {
   ok: boolean;
@@ -26,7 +61,6 @@ export interface WadLocation {
   message: string;
 }
 
-/** 插件目录可能有两种布局: <root>/LeagueClient/Plugins/... 与 <root>/Plugins/...。 */
 function pluginDirCandidates(clientDir: string): string[] {
   return [
     path.join(clientDir, "Plugins", GAME_DATA_PLUGIN),
@@ -34,40 +68,263 @@ function pluginDirCandidates(clientDir: string): string[] {
   ];
 }
 
-/**
- * 定位客户端当前语种对应的资源包。
- * 客户端按 description.json 里的 perLocaleAssetBundles 加载 <locale>-assets.wad。
- */
+/** 定位客户端当前语种对应的资源包(客户端按 description.json 的 perLocaleAssetBundles 加载)。 */
 export async function locateClientAssetWad(clientDir: string | null, locale: string): Promise<WadLocation> {
-  if (!clientDir) {
-    return { ok: false, path: null, pluginDir: null, message: "未定位到联盟客户端目录" };
-  }
+  if (!clientDir) return { ok: false, path: null, pluginDir: null, message: "未定位到联盟客户端目录" };
   for (const pluginDir of pluginDirCandidates(clientDir)) {
     if (!(await isDirectory(pluginDir))) continue;
     const exact = path.join(pluginDir, `${locale}-assets.wad`);
     if (await isFile(exact)) return { ok: true, path: exact, pluginDir, message: "已定位资源包" };
-    const names = await listNames(pluginDir);
-    const fallback = names.find((name) => /^[a-z]{2}_[A-Z]{2}-assets\.wad$/.test(name));
+    const fallback = (await listNames(pluginDir)).find((name) => /^[a-z]{2}_[A-Z]{2}-assets\.wad$/.test(name));
     if (fallback) {
-      const located = path.join(pluginDir, fallback);
-      logger.debug(`未找到 ${locale}-assets.wad, 退回 ${fallback}`);
-      return { ok: true, path: located, pluginDir, message: `未找到 ${locale}-assets.wad，回退到 ${fallback}` };
+      return {
+        ok: true,
+        path: path.join(pluginDir, fallback),
+        pluginDir,
+        message: `未找到 ${locale}-assets.wad，回退到 ${fallback}`
+      };
     }
-    return {
-      ok: false,
-      path: null,
-      pluginDir,
-      message: `插件目录里没有语种资源包（期望 ${locale}-assets.wad）：${pluginDir}`
-    };
+    return { ok: false, path: null, pluginDir, message: `插件目录里没有语种资源包：${pluginDir}` };
   }
   return {
     ok: false,
     path: null,
     pluginDir: null,
-    message: `未找到客户端资源插件目录：${pluginDirectoriesHint(clientDir)}`
+    message: `未找到客户端资源插件目录：${pluginDirCandidates(clientDir).join(" 或 ")}`
   };
 }
 
-function pluginDirectoriesHint(clientDir: string): string {
-  return pluginDirCandidates(clientDir).join(" 或 ");
+/* ------------------------------------------------------------------ 解析 */
+
+export async function readWad(file: string): Promise<WadFile> {
+  const buffer = await fs.readFile(file);
+  if (buffer.length < HEADER_SIZE || buffer.subarray(0, 2).toString("ascii") !== WAD_MAGIC) {
+    throw new Error(`不是有效的 RW WAD 文件：${file}`);
+  }
+  const version = `${buffer[2]}.${buffer[3]}`;
+  const count = buffer.readUInt32LE(COUNT_OFFSET);
+  const tocEnd = TOC_OFFSET + count * ENTRY_SIZE;
+  if (count <= 0 || tocEnd > buffer.length) {
+    throw new Error(`WAD 条目数异常(${count})：${file}`);
+  }
+  const entries: WadEntry[] = [];
+  for (let i = 0; i < count; i += 1) {
+    const base = TOC_OFFSET + i * ENTRY_SIZE;
+    entries.push({
+      index: i,
+      offset: buffer.readUInt32LE(base + FIELD_OFFSET),
+      size: buffer.readUInt32LE(base + FIELD_SIZE),
+      size2: buffer.readUInt32LE(base + FIELD_SIZE2),
+      hash: buffer.readBigUInt64LE(base + FIELD_HASH)
+    });
+  }
+  return { path: file, version, count, dataStart: tocEnd, entries, buffer };
+}
+
+/** 只读 TOC(不加载整个文件, 用于超大 wad 的快速探查)。 */
+export async function readWadEntries(file: string): Promise<{ version: string; count: number; dataStart: number; entries: WadEntry[] }> {
+  const handle = await fs.open(file, "r");
+  try {
+    // 先读固定头部拿到条目数, 再按真实大小读 TOC(大 wad 的 TOC 可能远大于固定窗口)
+    const head = Buffer.alloc(TOC_OFFSET);
+    const { bytesRead } = await handle.read(head, 0, head.length, 0);
+    const header = head.subarray(0, bytesRead);
+    if (header.length < HEADER_SIZE || header.subarray(0, 2).toString("ascii") !== WAD_MAGIC) {
+      throw new Error(`不是有效的 RW WAD 文件：${file}`);
+    }
+    const count = header.readUInt32LE(COUNT_OFFSET);
+    const tocSize = count * ENTRY_SIZE;
+    const toc = Buffer.alloc(tocSize);
+    const read = await handle.read(toc, 0, tocSize, TOC_OFFSET);
+    const buffer = Buffer.concat([header, toc.subarray(0, read.bytesRead)]);
+    const entries: WadEntry[] = [];
+    for (let i = 0; i < count; i += 1) {
+      const base = TOC_OFFSET + i * ENTRY_SIZE;
+      if (base + ENTRY_SIZE > buffer.length) break;
+      // 注意: buffer 是 header + toc 拼接, 索引天然对齐
+      entries.push({
+        index: i,
+        offset: buffer.readUInt32LE(base + FIELD_OFFSET),
+        size: buffer.readUInt32LE(base + FIELD_SIZE),
+        size2: buffer.readUInt32LE(base + FIELD_SIZE2),
+        hash: buffer.readBigUInt64LE(base + FIELD_HASH)
+      });
+    }
+    return { version: `${buffer[2]}.${buffer[3]}`, count, dataStart: TOC_OFFSET + count * ENTRY_SIZE, entries };
+  } finally {
+    await handle.close();
+  }
+}
+
+/** 条目数据的前 N 字节(用于内容指纹)。 */
+export function entryFingerprint(wad: WadFile, index: number, bytes = 64): string {
+  const entry = wad.entries[index];
+  if (!entry) return "";
+  const end = Math.min(entry.offset + bytes, entry.offset + entry.size, wad.buffer.length);
+  return wad.buffer.subarray(entry.offset, end).toString("hex");
+}
+
+/** 建立 "内容指纹 -> 条目序号" 索引。 */
+export function buildFingerprintIndex(wad: WadFile, bytes = 64): Map<string, number[]> {
+  const index = new Map<string, number[]>();
+  for (const entry of wad.entries) {
+    const key = entryFingerprint(wad, entry.index, bytes);
+    if (!key) continue;
+    const list = index.get(key);
+    if (list) list.push(entry.index);
+    else index.set(key, [entry.index]);
+  }
+  return index;
+}
+
+/** 按魔数统计条目类型(诊断用)。 */
+export function summarizeMagic(wad: WadFile): Record<string, number> {
+  const stats: Record<string, number> = {};
+  for (const entry of wad.entries) {
+    const magic = wad.buffer.subarray(entry.offset, entry.offset + 4).toString("latin1").replace(/[^\x20-\x7E]/g, ".");
+    stats[magic] = (stats[magic] ?? 0) + 1;
+  }
+  return stats;
+}
+
+/* ------------------------------------------------------------------ 补丁 */
+
+export interface PatchItem {
+  index: number;
+  data: Buffer;
+  label?: string;
+}
+
+export interface PatchResult {
+  ok: boolean;
+  patched: number;
+  skipped: number;
+  backup: string | null;
+  bytesAppended: number;
+  message: string;
+  labels: string[];
+  skippedLabels: string[];
+}
+
+export function backupPathFor(wadFile: string): string {
+  return `${wadFile}.chosen_bak`;
+}
+
+/** 是否已被打过补丁(备份存在即视为可还原)。 */
+export async function isWadPatched(wadFile: string): Promise<boolean> {
+  return isFile(backupPathFor(wadFile));
+}
+
+/**
+ * 把若干条目的数据替换掉:
+ *   1. 首次补丁前先把原文件整体备份为 <wad>.chosen_bak(只备份一次, 永不覆盖);
+ *   2. 新数据按 16 字节对齐追加到文件末尾;
+ *   3. 只更新对应条目的偏移与大小, 其余字节(含签名块)一律不动;
+ *   4. 先写 <wad>.chosen_new 再原子改名, 中途失败不会破坏原文件。
+ */
+export async function patchWadEntries(wadFile: string, items: PatchItem[]): Promise<PatchResult> {
+  const result: PatchResult = {
+    ok: false,
+    patched: 0,
+    skipped: 0,
+    backup: null,
+    bytesAppended: 0,
+    message: "",
+    labels: [],
+    skippedLabels: []
+  };
+  if (!items.length) return { ...result, ok: true, message: "没有需要替换的条目" };
+
+  const wad = await readWad(wadFile);
+  const tempFile = `${wadFile}.chosen_new`;
+  const backup = backupPathFor(wadFile);
+
+  // 1) 备份(仅首次)
+  let createdBackup = false;
+  if (!(await isFile(backup))) {
+    try {
+      await fs.copyFile(wadFile, backup);
+      createdBackup = true;
+    } catch (error) {
+      return { ...result, message: `备份原资源包失败：${String((error as Error).message ?? error)}` };
+    }
+  }
+  result.backup = backup;
+
+  // 2) 追加数据 + 更新 TOC
+  const chunks: Buffer[] = [];
+  let cursor = wad.buffer.length;
+  const padding = (APPEND_ALIGN - (cursor % APPEND_ALIGN)) % APPEND_ALIGN;
+  if (padding) {
+    chunks.push(Buffer.alloc(padding));
+    cursor += padding;
+  }
+  for (const item of items) {
+    const entry = wad.entries[item.index];
+    if (!entry || item.data.length === 0) {
+      result.skipped += 1;
+      if (item.label) result.skippedLabels.push(item.label);
+      continue;
+    }
+    if (item.data.length > 0xffffffff) {
+      result.skipped += 1;
+      if (item.label) result.skippedLabels.push(item.label);
+      continue;
+    }
+    chunks.push(item.data);
+    const base = TOC_OFFSET + item.index * ENTRY_SIZE;
+    wad.buffer.writeUInt32LE(cursor, base + FIELD_OFFSET);
+    wad.buffer.writeUInt32LE(item.data.length, base + FIELD_SIZE);
+    wad.buffer.writeUInt32LE(item.data.length, base + FIELD_SIZE2);
+    cursor += item.data.length;
+    const pad = (APPEND_ALIGN - (cursor % APPEND_ALIGN)) % APPEND_ALIGN;
+    if (pad) {
+      chunks.push(Buffer.alloc(pad));
+      cursor += pad;
+    }
+    result.patched += 1;
+    if (item.label) result.labels.push(item.label);
+  }
+
+  if (!result.patched) {
+    if (createdBackup) await removeQuietly(backup);
+    return { ...result, backup: createdBackup ? null : backup, message: "没有任何条目被替换" };
+  }
+
+  result.bytesAppended = cursor - wad.buffer.length;
+  const output = Buffer.concat([wad.buffer, ...chunks]);
+
+  // 3) 原子落地
+  try {
+    await fs.writeFile(tempFile, output);
+    await fs.rename(tempFile, wadFile);
+  } catch (error) {
+    await removeQuietly(tempFile);
+    if (createdBackup) await removeQuietly(backup);
+    return { ...result, ok: false, message: `写入资源包失败：${String((error as Error).message ?? error)}（原文件未受影响）` };
+  }
+
+  logger.info(`已替换 ${result.patched} 个条目, 追加 ${result.bytesAppended} 字节 -> ${wadFile}`);
+  return {
+    ...result,
+    ok: true,
+    message: `已替换 ${result.patched} 个条目（追加 ${(result.bytesAppended / 1048576).toFixed(1)} MB）`
+  };
+}
+
+/** 还原: 把备份整体写回。 */
+export async function restoreWad(wadFile: string): Promise<{ ok: boolean; message: string }> {
+  const backup = backupPathFor(wadFile);
+  if (!(await isFile(backup))) return { ok: true, message: "没有备份，无需还原" };
+  const tempFile = `${wadFile}.chosen_new`;
+  try {
+    await fs.copyFile(backup, tempFile);
+    await fs.rename(tempFile, wadFile);
+    await removeQuietly(backup);
+    logger.info(`已还原资源包: ${wadFile}`);
+    return { ok: true, message: "已还原客户端原始资源包" };
+  } catch (error) {
+    await removeQuietly(tempFile);
+    return { ok: false, message: `还原失败：${String((error as Error).message ?? error)}（客户端可能正在运行）` };
+  }
 }

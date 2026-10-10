@@ -9,8 +9,9 @@ import type { ModuleId } from "./core/types.ts";
 import { wadSuffix } from "./packs/baselocale.ts";
 import { scanLocales } from "./packs/locales.ts";
 import { getIngameStatus } from "./packs/inventory.ts";
-import { getLobbyStatus } from "./modules/lobbyVoice.ts";
+import { applyLobbyVoice, getLobbyStatus, restoreLobbyVoice } from "./modules/lobbyVoice.ts";
 import { getLobbyLangState } from "./modules/lobbyLang.ts";
+import { buildEnv } from "./modules/context.ts";
 import { buildEnvFromConfig, doctor, getLocales, inspectPaths, planSwitch, startApplyTask, startRestoreTask, startUpdateCheckTask, startUpdateRunTask, updateConfig } from "./service.ts";
 import { taskManager } from "./tasks/manager.ts";
 import { startApiServer } from "./server/api.ts";
@@ -34,6 +35,65 @@ interface ParsedArgs {
 
 /** 纯布尔开关(后面跟的值不会被当成参数值)。 */
 const BOOLEAN_FLAGS = new Set(["json", "force", "help", "h", "stats", "verbose"]);
+
+/** 大厅选人语音(客户端资源包 WAD 方案): 可指定 --league 直接作用于某一台客户端。 */
+async function runLobbyCommand(args: ParsedArgs): Promise<number> {
+  const action = (args.positionals[0] ?? "status").toLowerCase();
+  const leagueOverride = flagString(args, "league");
+  const voiceRootOverride = flagString(args, "root");
+  const base = await loadConfig();
+  const config = leagueOverride ? { ...base, leaguePath: leagueOverride } : base;
+  const env = await buildEnv({ config, appDir: appRoot(), voiceRoot: voiceRootOverride, skipProcess: false });
+
+  print(`客户端目录: ${env.leagueDir ?? "(未定位)"}`);
+  print(`基准语种: ${env.baseLocale}（${env.baseLocaleSource}）  渠道: ${env.region === "cn" ? "国服" : "外服"}`);
+  print(`资源根: ${env.voiceRoot}`);
+
+  if (action === "status") {
+    const status = await getLobbyStatus(env);
+    print(`资源包: ${status.wad_file ?? "(未定位)"}`);
+    print(`可打补丁: ${status.wad_available ? "是" : "否"}`);
+    print(`当前状态: ${status.voice}`);
+    if (status.backup) print(`备份: ${status.backup}`);
+    print(status.message);
+    return status.wad_available ? 0 : 1;
+  }
+
+  if (action === "apply") {
+    const locale = flagString(args, "locale") ?? base.defaultLocale;
+    if (!locale) {
+      print("[-] 需要指定语音包: --locale ja_JP");
+      return 1;
+    }
+    print(`开始写入 ${locale} 的选人/禁用台词 …`);
+    let step = "";
+    const result = await applyLobbyVoice(locale, env, {
+      progress: (done, total, current) => {
+        const line = `${done}/${total} ${current ?? ""}`;
+        if (current && current !== step) {
+          step = current;
+          if (done % 20 === 0 || done === total) print(`  ${line}`);
+        }
+      }
+    });
+    print(`${result.ok ? "[+]" : "[-]"} ${result.message}`);
+    if (result.detail) {
+      const detail = result.detail as { wad_file?: string; backup?: string; notes?: string[] };
+      for (const note of detail.notes ?? []) print(`    ${note}`);
+      if (detail.backup) print(`    备份: ${detail.backup}`);
+    }
+    return result.ok ? 0 : 1;
+  }
+
+  if (action === "restore") {
+    const result = await restoreLobbyVoice(env, {});
+    print(`${result.ok ? "[+]" : "[-]"} ${result.message}`);
+    return result.ok ? 0 : 1;
+  }
+
+  print("[-] 未知子命令, 可用: apply | restore | status");
+  return 1;
+}
 
 function parseArgs(argv: string[]): ParsedArgs {
   const positionals: string[] = [];
@@ -327,6 +387,8 @@ export async function runCli(argv = process.argv.slice(2)): Promise<number> {
         }
         return await runTask(jsonMode, () => startUpdateCheckTask());
       }
+      case "lobby":
+        return await runLobbyCommand(args);
       case "serve":
         return await commandServe(args);
       case "doctor": {
