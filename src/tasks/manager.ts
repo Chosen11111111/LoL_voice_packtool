@@ -14,6 +14,7 @@ export type TaskKind =
   | "oneclick_restore"
   | "update_check"
   | "update_run"
+  | "pack_import"
   | "plugin_install";
 
 export type TaskStatus = "pending" | "running" | "succeeded" | "failed" | "cancelled";

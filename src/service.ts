@@ -4,13 +4,16 @@
 import path from "node:path";
 import { APP_NAME_CN, APP_VERSION } from "./version.ts";
 import { appRoot, loadConfig, saveConfig, type AppConfig } from "./core/config.ts";
+import { removeQuietly } from "./core/fsx.ts";
 import { createLogger } from "./core/logger.ts";
 import { summarize, type ModuleResult } from "./core/result.ts";
 import type { ModuleId } from "./core/types.ts";
 import { detectCandidates, resolveGamePaths } from "./core/paths.ts";
 import { isClientRunning, isGameRunning } from "./core/win/processes.ts";
 import { checkModuleResources, estimateSpaceRequirement, getIngameStatus, type IngameStatus, type ResourceCheck, type SpaceEstimate } from "./packs/inventory.ts";
+import { wadSuffix } from "./packs/baselocale.ts";
 import { scanLocales } from "./packs/locales.ts";
+import { importArchive } from "./packs/archive.ts";
 import { checkRemoteVersion, inventorySnapshot, syncLocale, writeVersionFile } from "./packs/updater.ts";
 import { applyLobbyLangEn } from "./modules/lobbyLang.ts";
 import { applyAll, restoreAll } from "./modules/oneclick.ts";
@@ -43,6 +46,18 @@ export function pathsPayload(env: SwitchEnv): PathsPayload {
     sourceDetail: env.resolution.sourceDetail,
     mismatch: env.resolution.mismatch,
     message: env.resolution.message
+  };
+}
+
+/** 客户端语种与渠道(界面用来显示"国服/外服"与目标槽位)。 */
+export function clientInfoPayload(env: SwitchEnv) {
+  return {
+    region: env.region,
+    region_label: env.region === "cn" ? "国服" : "外服",
+    base_locale: env.baseLocale,
+    base_locale_source: env.baseLocaleSource,
+    base_locale_detail: env.baseLocaleDetail,
+    target_suffix: wadSuffix(env.baseLocale)
   };
 }
 
@@ -168,7 +183,8 @@ export async function planSwitch(options: { locale: string; modules?: ModuleId[]
     modules: modules.filter((module) => module === "ingame_voice" || module === "ingame_lang"),
     locale: options.locale,
     voiceRoot: env.voiceRoot,
-    finalDir: env.finalDir
+    finalDir: env.finalDir,
+    baseSuffix: wadSuffix(env.baseLocale)
   });
   if (!space.ok) blockers.push(space.message);
   else if (space.message) warnings.push(space.message);
@@ -258,9 +274,9 @@ export function startApplyTask(request: ApplyRequest): TaskSnapshot {
       if (module === "lobby_voice") {
         results.push(await applyLobbyVoice(locale, env, { progress: handle.progress, signal: handle.signal }));
       } else if (module === "ingame_voice") {
-        results.push(await applyIngameVoice(locale, { voiceRoot: env.voiceRoot, finalDir: env.finalDir, leagueDir: env.leagueDir, progress: handle.progress, signal: handle.signal }));
+        results.push(await applyIngameVoice(locale, { voiceRoot: env.voiceRoot, finalDir: env.finalDir, leagueDir: env.leagueDir, baseLocale: env.baseLocale, progress: handle.progress, signal: handle.signal }));
       } else if (module === "ingame_lang") {
-        results.push(await applyIngameLang(locale, { voiceRoot: env.voiceRoot, finalDir: env.finalDir, leagueDir: env.leagueDir, progress: handle.progress, signal: handle.signal }));
+        results.push(await applyIngameLang(locale, { voiceRoot: env.voiceRoot, finalDir: env.finalDir, leagueDir: env.leagueDir, baseLocale: env.baseLocale, progress: handle.progress, signal: handle.signal }));
       }
     }
     if (request.lobbyLang === "en_US") results.push(await applyLobbyLangEn(env));
@@ -302,9 +318,9 @@ export function startRestoreTask(request: RestoreRequest = {}): TaskSnapshot {
     if (only === "lobby_voice") {
       results.push(await restoreLobbyVoice(env, { progress: handle.progress, signal: handle.signal }));
     } else if (only === "ingame_voice") {
-      results.push(await restoreIngameVoice({ voiceRoot: env.voiceRoot, finalDir: env.finalDir, leagueDir: env.leagueDir, progress: handle.progress, signal: handle.signal }));
+      results.push(await restoreIngameVoice({ voiceRoot: env.voiceRoot, finalDir: env.finalDir, leagueDir: env.leagueDir, baseLocale: env.baseLocale, progress: handle.progress, signal: handle.signal }));
     } else if (only === "ingame_lang") {
-      results.push(await restoreIngameLang({ voiceRoot: env.voiceRoot, finalDir: env.finalDir, leagueDir: env.leagueDir, progress: handle.progress, signal: handle.signal }));
+      results.push(await restoreIngameLang({ voiceRoot: env.voiceRoot, finalDir: env.finalDir, leagueDir: env.leagueDir, baseLocale: env.baseLocale, progress: handle.progress, signal: handle.signal }));
     } else if (only === "lobby_lang") {
       const { restoreLobbyLangZh } = await import("./modules/lobbyLang.ts");
       results.push(await restoreLobbyLangZh(env));
@@ -318,6 +334,39 @@ export function startRestoreTask(request: RestoreRequest = {}): TaskSnapshot {
       summary,
       results
     };
+  });
+}
+
+export interface ImportRequest {
+  /** 压缩包路径(上传落盘的临时文件, 或用户直接给的本地路径)。 */
+  archive: string;
+  locale?: string;
+  overwrite?: boolean;
+  /** 导入结束后删除压缩包(上传的临时文件用)。 */
+  deleteAfter?: boolean;
+}
+
+/** 导入语音包压缩包: 解压 -> 识别语种 -> 装进资源目录(完成后自动出现在语音包列表)。 */
+export function startImportTask(request: ImportRequest): TaskSnapshot {
+  return taskManager.startSnapshot("pack_import", `导入语音包 ${path.basename(request.archive)}`, async (handle) => {
+    const config = await loadConfig();
+    const env = await buildEnvFromConfig(config, { skipProcess: true });
+    try {
+      const result = await importArchive({
+        archive: request.archive,
+        locale: request.locale,
+        voiceRoot: env.voiceRoot,
+        overwrite: request.overwrite,
+        onLog: (line) => handle.log(line),
+        onProgress: (phase, percent) => handle.progress(Math.round(percent), 100, phase)
+      });
+      handle.progress(100, 100, "完成");
+      if (!result.ok) throw new Error(result.message);
+      const locales = await scanLocales(env.voiceRoot, { withCounts: true });
+      return { ...result, locales, voiceRoot: env.voiceRoot };
+    } finally {
+      if (request.deleteAfter) await removeQuietly(request.archive);
+    }
   });
 }
 

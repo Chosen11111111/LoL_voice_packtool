@@ -21,6 +21,8 @@ export interface ApplyPlanOptions {
   description: string;
   progress?: ProgressReporter;
   signal?: AbortSignal;
+  /** 目标槽位后缀(默认国服 .zh_CN.wad.client, 国际服按客户端实际语种)。 */
+  baseSuffix?: string;
 }
 
 export async function applyPlan(
@@ -29,6 +31,7 @@ export async function applyPlan(
   groups: PlanGroup[],
   options: ApplyPlanOptions
 ): Promise<ModuleResult> {
+  const suffix = options.baseSuffix || ".zh_CN.wad.client";
   const planTotal = groups.reduce((sum, group) => sum + group.sources.length, 0);
   const failures: FailureItem[] = [];
   let success = 0;
@@ -43,8 +46,8 @@ export async function applyPlan(
     if (!usable) {
       for (const src of group.sources) {
         done += 1;
-        failures.push({ file: targetFileName(src), reason: why });
-        options.progress?.(done, planTotal, targetFileName(src));
+        failures.push({ file: targetFileName(src, suffix), reason: why });
+        options.progress?.(done, planTotal, targetFileName(src, suffix));
       }
       continue;
     }
@@ -53,7 +56,7 @@ export async function applyPlan(
         cancelled = true;
         break;
       }
-      const dst = path.join(group.destDir, targetFileName(src));
+      const dst = path.join(group.destDir, targetFileName(src, suffix));
       done += 1;
       // 目标槽位必须是游戏里本来就有的(备份还在也算: 说明只是当前文件缺了, 可以补回)
       if (!(await pathExists(dst)) && !(await pathExists(backupPath(dst)))) {

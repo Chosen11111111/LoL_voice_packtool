@@ -1,17 +1,22 @@
-/** 对局端: 游戏内文本语言包切换/还原(目标固定为 Localized/Global.zh_CN.wad.client)。 */
+/** 对局端: 游戏内文本语言包切换/还原(目标槽位跟随客户端基准语种)。 */
 import path from "node:path";
-import { backupPath, pathExists, replaceFile, restoreFileVerbose, targetDirState } from "../core/fsx.ts";
+import { backupPath, pathExists, replaceFile, restoreFileVerbose, targetDirState, walkFiles } from "../core/fsx.ts";
 import { makeResult, SLOT_MISSING_REASON, type ModuleResult } from "../core/result.ts";
 import type { ModuleContext } from "../core/types.ts";
 import { isGameRunning } from "../core/win/processes.ts";
+import { wadSuffix } from "../packs/baselocale.ts";
 import { localeDisplayName } from "../packs/locales.ts";
 import { langSources } from "../packs/wad.ts";
 
 const MODULE = "ingame_lang" as const;
-const TARGET_NAME = "Global.zh_CN.wad.client";
 
-function targetPath(finalDir: string): string {
-  return path.join(finalDir, "Localized", TARGET_NAME);
+/** 目标文件: Localized/Global.<基准语种>.wad.client(国服 zh_CN, 国际服按实际语种)。 */
+function targetName(context: ModuleContext): string {
+  return `Global${wadSuffix(context.baseLocale)}`;
+}
+
+function targetPath(finalDir: string, context: ModuleContext): string {
+  return path.join(finalDir, "Localized", targetName(context));
 }
 
 /** 切换游戏内文本语言包。 */
@@ -40,7 +45,8 @@ export async function applyIngameLang(locale: string, context: ModuleContext): P
   }
 
   const destDir = path.join(context.finalDir, "Localized");
-  const dst = targetPath(context.finalDir);
+  const dst = targetPath(context.finalDir, context);
+  const name = targetName(context);
   context.progress?.(0, 1);
 
   const [usable, why] = await targetDirState(destDir);
@@ -51,7 +57,7 @@ export async function applyIngameLang(locale: string, context: ModuleContext): P
       failed: 1,
       reason: `替换失败 1 个：${why}`,
       message: `替换失败 1 个：${why}`,
-      errors: [`${TARGET_NAME}: ${why}`]
+      errors: [`${name}: ${why}`]
     });
   }
 
@@ -61,19 +67,20 @@ export async function applyIngameLang(locale: string, context: ModuleContext): P
       success: 0,
       failed: 1,
       reason: `替换失败 1 个：${SLOT_MISSING_REASON}`,
-      message: `游戏内没有对应的国服文件：${dst}`,
-      errors: [`${TARGET_NAME}: ${SLOT_MISSING_REASON}`]
+      message: `游戏内没有本客户端语种对应的文本文件（${name}），请确认客户端路径与语种设置。`,
+      errors: [`${name}: ${SLOT_MISSING_REASON}`]
     });
   }
 
   const [ok, reason] = await replaceFile(sources[0]!, dst);
-  context.progress?.(1, 1, TARGET_NAME);
+  context.progress?.(1, 1, name);
   if (ok) {
     return makeResult(MODULE, true, {
       planned: 1,
       success: 1,
       failed: 0,
-      message: `游戏内语言 1/1 已切换为 ${localeDisplayName(locale)}`
+      message: `游戏内语言 1/1 已切换为 ${localeDisplayName(locale)}`,
+      detail: { target: dst, base_locale: context.baseLocale }
     });
   }
   return makeResult(MODULE, false, {
@@ -82,11 +89,11 @@ export async function applyIngameLang(locale: string, context: ModuleContext): P
     failed: 1,
     reason: `替换失败 1 个：${reason}`,
     message: `替换失败 1 个：${reason}`,
-    errors: [`${TARGET_NAME}: ${reason}`]
+    errors: [`${name}: ${reason}`]
   });
 }
 
-/** 还原游戏内文本为国服中文原版。 */
+/** 还原游戏内文本为客户端原版(匹配任意语种的文本备份)。 */
 export async function restoreIngameLang(context: ModuleContext): Promise<ModuleResult> {
   if (await isGameRunning()) {
     return makeResult(MODULE, false, {
@@ -98,9 +105,13 @@ export async function restoreIngameLang(context: ModuleContext): Promise<ModuleR
   if (!context.finalDir) {
     return makeResult(MODULE, false, { action: "restore", reason: "游戏路径未就绪", message: "未能解析游戏文件目录 Game\\DATA\\FINAL。" });
   }
-  const dst = targetPath(context.finalDir);
-  context.progress?.(0, 1);
-  if (!(await pathExists(backupPath(dst)))) {
+
+  const destDir = path.join(context.finalDir, "Localized");
+  const targets = (await walkFiles(destDir, { match: (file) => file.endsWith(".wad.client.chosen_bak") }))
+    .filter((file) => path.basename(file).startsWith("Global."))
+    .sort();
+  context.progress?.(0, targets.length || 1);
+  if (!targets.length) {
     context.progress?.(1, 1);
     return makeResult(MODULE, true, {
       action: "restore",
@@ -110,24 +121,34 @@ export async function restoreIngameLang(context: ModuleContext): Promise<ModuleR
       message: "未发现需要还原的语言包备份文件"
     });
   }
-  const [ok, reason] = await restoreFileVerbose(dst);
-  context.progress?.(1, 1);
-  if (ok) {
-    return makeResult(MODULE, true, {
+
+  let success = 0;
+  let done = 0;
+  const errors: string[] = [];
+  for (const bak of targets) {
+    const original = bak.slice(0, -".chosen_bak".length);
+    const [ok, reason] = await restoreFileVerbose(original);
+    done += 1;
+    if (ok) success += 1;
+    else errors.push(`${path.basename(original)}: ${reason}`);
+    context.progress?.(done, targets.length, path.basename(original));
+  }
+  if (errors.length) {
+    return makeResult(MODULE, false, {
       action: "restore",
-      planned: 1,
-      success: 1,
-      failed: 0,
-      message: "游戏内文本已恢复为国服默认简中"
+      planned: targets.length,
+      success,
+      failed: errors.length,
+      reason: `还原失败 ${errors.length} 个`,
+      message: `还原失败 ${errors.length} 个`,
+      errors
     });
   }
-  return makeResult(MODULE, false, {
+  return makeResult(MODULE, true, {
     action: "restore",
-    planned: 1,
-    success: 0,
-    failed: 1,
-    reason: `还原失败 1 个：${reason}`,
-    message: `还原失败 1 个：${reason}`,
-    errors: [`${TARGET_NAME}: ${reason}`]
+    planned: targets.length,
+    success,
+    failed: 0,
+    message: targets.length > 1 ? `已还原 ${success} 个文本文件` : "游戏内文本已恢复为客户端原版"
   });
 }

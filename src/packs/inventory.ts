@@ -5,6 +5,7 @@ import {
   candidateNeedsCopy,
   countBackups,
   fileSize,
+  hasAnyFile,
   freeSpaceBytes,
   hasBackup,
   humanBytes,
@@ -137,15 +138,21 @@ export interface PendingRestores {
 }
 
 /** 未勾选模块需要还原的工作量(用于进度总数)。 */
+/** 统计任意语种的 wad 备份(不绑定 zh_CN)。 */
+async function countWadBackups(directory: string): Promise<number> {
+  const files = await walkFiles(directory, { match: (name) => name.endsWith(`.wad.client${BAK_SUFFIX}`) });
+  return files.length;
+}
+
 export async function countPendingRestores(finalDir: string | null): Promise<PendingRestores> {
   const counts: PendingRestores = { lobby_voice: 1, lobby_lang: 1, ingame_voice: 0, ingame_lang: 0 };
   if (!finalDir) return counts;
   const [champions, maps] = await Promise.all([
-    countBackups(path.join(finalDir, "Champions")),
-    countBackups(path.join(finalDir, "Maps", "Shipping"))
+    countWadBackups(path.join(finalDir, "Champions")),
+    countWadBackups(path.join(finalDir, "Maps", "Shipping"))
   ]);
   counts.ingame_voice = champions + maps;
-  counts.ingame_lang = (await hasBackup(path.join(finalDir, "Localized"))) ? 1 : 0;
+  counts.ingame_lang = (await countWadBackups(path.join(finalDir, "Localized"))) > 0 ? 1 : 0;
   return counts;
 }
 
@@ -197,10 +204,10 @@ export async function getIngameStatus(options: {
   }
 
   const final = options.finalDir;
-  const langBak = backupPath(path.join(final, "Localized", `Global${CN_WAD_SUFFIX}`));
+  // 备份识别不绑定语种: 客户端语种变过或历史遗留的备份都要能被状态查询与还原发现
   const [voiceBackups, langBackup] = await Promise.all([
     countBackups(path.join(final, "Champions")).then(async (count) => count + (await countBackups(path.join(final, "Maps", "Shipping")))),
-    isFile(langBak)
+    hasAnyFile(path.join(final, "Localized"), (name) => name.endsWith(`.wad.client${BAK_SUFFIX}`))
   ]);
   const voiceActive = voiceBackups > 0;
   return {
@@ -241,6 +248,8 @@ export async function estimateSpaceRequirement(options: {
   locale: string;
   voiceRoot: string;
   finalDir: string | null;
+  /** 目标槽位后缀(默认国服 .zh_CN.wad.client)。 */
+  baseSuffix?: string;
 }): Promise<SpaceEstimate> {
   const result: SpaceEstimate = {
     ok: true,
@@ -261,11 +270,12 @@ export async function estimateSpaceRequirement(options: {
   let backupBytes = 0;
   let tempBytes = 0;
 
+  const baseSuffix = options.baseSuffix || CN_WAD_SUFFIX;
   const measure = async (sources: string[], destDir: string) => {
     if (!sources.length) return;
     if (!linkable) {
       for (const src of sources) {
-        const dst = path.join(destDir, `${wadStemOf(src)}${CN_WAD_SUFFIX}`);
+        const dst = path.join(destDir, `${wadStemOf(src)}${baseSuffix}`);
         if ((await isFile(dst)) && !(await isFile(backupPath(dst)))) {
           backupBytes += await fileSize(dst);
         }
@@ -323,10 +333,11 @@ function wadStemOf(file: string): string {
   return withoutExt.split(".")[0] ?? withoutExt;
 }
 
-/** 目标目录里需要被替换的国服槽位数量(资源缺失时显示 0/N)。 */
-export async function destSlotCount(directory: string): Promise<number> {
-  const files = await walkFiles(directory, { match: isWadFile });
-  return files.filter((file) => path.basename(file).endsWith(CN_WAD_SUFFIX)).length || (await targetSlotCount(directory));
+/** 目标目录里需要被替换的槽位数量(资源缺失时显示 0/N)。suffix 为空则统计所有语种槽位。 */
+export async function destSlotCount(directory: string, suffix = ""): Promise<number> {
+  const explicit = await targetSlotCount(directory, suffix || CN_WAD_SUFFIX);
+  if (explicit) return explicit;
+  return targetSlotCount(directory);
 }
 
 /** 组装"资源缺失"的模块结果(供 apply/restore 复用)。 */

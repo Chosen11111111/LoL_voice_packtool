@@ -87,6 +87,24 @@
 }
 ```
 
+### GET /api/client —— 客户端渠道与基准语种
+
+```json
+{ "ok": true,
+  "region": "cn",                  // cn = 国服(WeGame/Tencent), global = 国际服(Riot)
+  "region_label": "国服",
+  "base_locale": "zh_CN",          // 客户端当前语种 = 要替换哪个槽位文件
+  "base_locale_source": "game-files",   // config | game-files | client-settings | default
+  "base_locale_detail": "游戏文件里 zh_CN 共 351 个",
+  "target_suffix": ".zh_CN.wad.client"
+}
+```
+
+> `target_suffix` 是替换的关键：国服是 `.zh_CN.wad.client`，国际服按客户端实际语种
+> （例如 `E:\Riot Games\...` 那台是 `.zh_TW.wad.client`）。**目标槽位永远跟随 `base_locale`，
+> 所以国服和外服走同一套流程，不需要前端做任何特殊处理。**
+> 探测顺序：配置 `baseLocale` > 游戏文件里的语种多数票 > 客户端设置 `locale` > `zh_CN`。
+
 ### GET /api/locales?stats=0|1
 `stats=0` 跳过逐项文件统计（快）。`stats=1`（默认）附带文件数。
 ```json
@@ -170,6 +188,40 @@
 - `check` → `result`: `{ info: { remoteVersion, localVersion, hasUpdate, missingItems, detail, offline }, inventory: [...], voiceRoot }`
 - `run` 请求体 `{ "locales": ["ja_JP","ko_KR"] }`（省略=配置里的 `supportedLocales`）
   → `result`: `{ ok, results: [{ code, ok, message, wads, lobby }], inventory, remote }`
+
+### POST /api/packs/import —— 导入语音包压缩包
+
+两种用法（都会解压 → 识别语种 → 装进资源目录 → **自动出现在 `GET /api/locales` 里，下拉栏直接可选**）：
+
+**A. 上传文件内容**（浏览器只能这样：拿不到本地路径）
+```js
+await fetch("/api/packs/import?name=" + encodeURIComponent(file.name), {
+  method: "POST",
+  headers: { "Content-Type": "application/octet-stream" },
+  body: file                    // 直接传 File 对象
+});
+// 可选参数: &locale=ja_JP（手动指定语种）、&overwrite=1（已存在同语种时覆盖，旧目录改名保留不删）
+```
+请求体是流式落盘的，**不占内存、不限制大小**（受 `server.maxUploadBytes` 约束，默认不限）。
+
+**B. 本机已有文件**（几个 GB 的包用这个最快，不需要上传）
+```json
+{ "path": "E:\\packs\\jp.zip", "locale": "", "overwrite": false }
+```
+
+返回 `{ ok: true, task }`（长任务）。任务成功后 `result`：
+```json
+{ "ok": true, "code": "ja_JP", "name": "日服 (ja_JP)",
+  "message": "已导入语音包「日服 (ja_JP)」（对局语音 174 个 / 选人语音 173 个）",
+  "locale_source": "archive-name",     // explicit | archive-name | pack-name | file-suffix | fallback
+  "installed": true, "target": "E:\\ChosenSkin2.0\\voice\\ja_JP",
+  "stats": { "champions": 174, "maps": 6, "localized": 1, "lobby": 173 },
+  "locales": [ /* 导入后的完整语言包列表，可直接拿来刷新下拉栏 */ ] }
+```
+
+语种识别顺序：`?locale=` 显式指定 > 压缩包文件名（含 `ja_JP`/`日语`/`japanese` 等）> 包内目录名 > 包内 wad 文件的语种后缀 > 用压缩包名当自定义包名。
+支持的格式：`zip` / `tar` / `tar.gz` / `tgz`（系统自带工具解压）；`7z` / `rar` 需要本机装 7-Zip 或 WinRAR，没装会返回明确提示。
+压缩包内部只要有 `DATA/FINAL`（Champions / Maps / Localized）或 `assets/champion-choose-vo` 即可，外层多套一层目录也能自动找到。
 
 ### POST /api/plugin/install
 请求 `{ "force": false }` → `{ ok, message, plugin_dir }`。把内置的 `Chosen-VoiceSync` 装到 Pengu Loader。

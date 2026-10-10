@@ -73,7 +73,7 @@ function openAppWindow(browser: string, url: string): ChildProcess {
       "--no-first-run",
       "--no-default-browser-check",
       "--disable-features=msEdgeSidebarV2,msSmartScreenProtection",
-      "--window-size=1220,880"
+      "--window-size=800,600"
     ],
     { stdio: "ignore", windowsHide: false }
   );

@@ -2,6 +2,7 @@
 import path from "node:path";
 import { appRoot, type AppConfig } from "../core/config.ts";
 import { resolveGamePaths, resolveVoiceRoot, type GamePathResolution } from "../core/paths.ts";
+import { detectBaseLocale, detectRegion } from "../packs/baselocale.ts";
 import { detectPenguLoaderDir } from "../pengu/loader.ts";
 import { voicePluginDir } from "../pengu/plugin.ts";
 import { createLogger } from "../core/logger.ts";
@@ -18,6 +19,12 @@ export interface SwitchEnv {
   resolution: GamePathResolution;
   finalDir: string | null;
   leagueDir: string | null;
+  /** 客户端当前语种: 决定要替换哪个槽位文件(国服 zh_CN, 国际服按实际)。 */
+  baseLocale: string;
+  baseLocaleSource: string;
+  baseLocaleDetail: string;
+  /** 客户端渠道。 */
+  region: "cn" | "global";
 }
 
 export interface BuildEnvOptions {
@@ -46,6 +53,14 @@ export async function buildEnv(options: BuildEnvOptions): Promise<SwitchEnv> {
 
   const penguDir = await detectPenguLoaderDir({ configured: config.penguLoaderDir, appDir });
   const pluginDir = penguDir ? voicePluginDir(penguDir) : null;
+
+  const base = await detectBaseLocale({
+    finalDir: resolution.finalDir,
+    leagueDir: resolution.leagueDir || null,
+    configured: config.baseLocale
+  });
+  const region = detectRegion(resolution.leagueDir || null, resolution.sourceDetail);
+  logger.debug(`基准语种 ${base.locale}(${base.source}) 渠道 ${region}`);
   if (!voiceRootResolution.hasPacks) {
     logger.warn(`资源根目录下未发现任何语种包: ${voiceRootResolution.root}`);
   }
@@ -58,7 +73,11 @@ export async function buildEnv(options: BuildEnvOptions): Promise<SwitchEnv> {
     pluginDir,
     resolution,
     finalDir: resolution.finalDir,
-    leagueDir: resolution.leagueDir || null
+    leagueDir: resolution.leagueDir || null,
+    baseLocale: base.locale,
+    baseLocaleSource: base.source,
+    baseLocaleDetail: base.detail,
+    region
   };
 }
 

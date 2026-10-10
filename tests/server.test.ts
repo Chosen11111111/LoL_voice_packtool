@@ -29,6 +29,11 @@ async function post(pathname: string, body?: unknown): Promise<{ status: number;
   return { status: response.status, json: await response.json().catch(() => null) };
 }
 
+async function readFileBuffer(file: string): Promise<Buffer> {
+  const fs = await import("node:fs/promises");
+  return fs.readFile(file);
+}
+
 async function get(pathname: string): Promise<{ status: number; json: any }> {
   const response = await fetch(`${base}${pathname}`);
   return { status: response.status, json: await response.json().catch(() => null) };
@@ -177,6 +182,56 @@ test("POST /api/restore 全部还原为官方默认", async () => {
   const state = await get("/api/state");
   assert.equal(state.json.state.ingame.is_voice_active, false);
   assert.equal(state.json.state.lobby.enabled, false);
+});
+
+test("POST /api/packs/import 上传压缩包 -> 自动出现在语言包列表", async () => {
+  const packRoot = path.join(fixture!.root, "incoming");
+  const staging = path.join(packRoot, "staging");
+  const { makePack } = await import("./helpers.ts");
+  await makePack(staging, "ko_KR", { champions: ["Ahri"], maps: [], lobby: 2 });
+  const zip = path.join(packRoot, "英雄联盟_ko_KR.zip");
+  const { run } = await import("../src/core/win/shell.ts");
+  const zipped = await run("tar", ["-a", "-cf", zip, "-C", staging, "ko_KR"]);
+  assert.equal(zipped.ok, true, zipped.stderr || zipped.error);
+
+  const bytes = await readFileBuffer(zip);
+  const response = await fetch(`${base}/api/packs/import?name=${encodeURIComponent("英雄联盟_ko_KR.zip")}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/octet-stream" },
+    body: bytes
+  });
+  assert.equal(response.status, 200);
+  const payload = (await response.json()) as { ok: boolean; task: { id: string } };
+  assert.equal(payload.ok, true);
+
+  const finished = await waitTask(payload.task.id);
+  assert.equal(finished.task.status, "succeeded", JSON.stringify(finished.result));
+  assert.equal(finished.result.code, "ko_KR");
+  assert.equal(finished.result.installed, true);
+
+  // 装完必须直接出现在语言包列表里(下拉栏的数据源)
+  const locales = await get("/api/locales?stats=1");
+  const codes = locales.json.locales.map((item: any) => item.code);
+  assert.ok(codes.includes("ko_KR"), "导入的语音包要出现在列表里: " + codes.join(","));
+  assert.ok(await exists(path.join(fixture!.voiceRoot, "ko_KR", "DATA", "FINAL", "Champions", "Ahri.ko_KR.wad.client")));
+
+  // 而且能直接用来切换
+  const applied = await post("/api/apply", { locale: "ko_KR", modules: ["ingame_voice"], restartClient: false });
+  const appliedDone = await waitTask(applied.json.task.id);
+  assert.equal(appliedDone.result.ok, true, JSON.stringify(appliedDone.result.summary));
+  assert.equal(await readFile(path.join(fixture!.finalDir, "Champions", "Ahri.zh_CN.wad.client")), "ko_KR-Ahri");
+  await post("/api/restore", { modules: ["ingame_voice"], restartClient: false }).then((r) => waitTask(r.json.task.id));
+});
+
+test("POST /api/packs/import 不支持的格式直接报错", async () => {
+  const response = await fetch(`${base}/api/packs/import?name=pack.txt`, {
+    method: "POST",
+    headers: { "Content-Type": "application/octet-stream" },
+    body: Buffer.from("not an archive")
+  });
+  const payload = (await response.json()) as { ok: boolean; message?: string };
+  assert.equal(payload.ok, false);
+  assert.match(String(payload.message), /不支持的格式/);
 });
 
 test("PUT /api/config 修改默认语种并持久化", async () => {

@@ -5,6 +5,7 @@ import { makeResult, shortReason, type FailureItem, type ModuleResult } from "..
 import type { ModuleContext } from "../core/types.ts";
 import { isGameRunning } from "../core/win/processes.ts";
 import { checkModuleResources, destSlotCount } from "../packs/inventory.ts";
+import { wadSuffix } from "../packs/baselocale.ts";
 import { voiceGroups } from "../packs/wad.ts";
 import { applyPlan } from "./applyPlan.ts";
 
@@ -22,15 +23,17 @@ export async function applyIngameVoice(locale: string, context: ModuleContext): 
     return makeResult(MODULE, false, { reason: "游戏路径未就绪", message: "未能解析游戏文件目录 Game\\DATA\\FINAL。" });
   }
 
+  const suffix = wadSuffix(context.baseLocale);
   const groups = await voiceGroups(locale, context.voiceRoot, context.finalDir);
   const sources = groups.reduce((sum, group) => sum + group.sources.length, 0);
   if (!sources) {
     const [champSlots, mapSlots] = await Promise.all([
-      destSlotCount(path.join(context.finalDir, "Champions")),
-      destSlotCount(path.join(context.finalDir, "Maps", "Shipping"))
+      destSlotCount(path.join(context.finalDir, "Champions"), suffix),
+      destSlotCount(path.join(context.finalDir, "Maps", "Shipping"), suffix)
     ]);
     const slots = champSlots + mapSlots;
     const resFinal = path.join(context.voiceRoot, locale, "DATA", "FINAL");
+    const suffixHint = wadSuffix(context.baseLocale);
     return makeResult(MODULE, false, {
       planned: slots,
       success: 0,
@@ -39,14 +42,16 @@ export async function applyIngameVoice(locale: string, context: ModuleContext): 
       reason: "资源缺失",
       message:
         `未找到可匹配的 ${locale} 英雄语音或系统播报员文件（仅有大厅选人语音的包不能用于对局语音）。\n` +
-        `期望目录：${path.join(resFinal, "Champions")} 或 ${path.join(resFinal, "Maps", "Shipping")}`
+        `期望目录：${path.join(resFinal, "Champions")} 或 ${path.join(resFinal, "Maps", "Shipping")}\n` +
+        `目标槽位语种：${suffixHint}（客户端基准语种 ${context.baseLocale}）`
     });
   }
 
   return applyPlan(MODULE, locale, groups, {
     description: "游戏内语音",
     progress: context.progress,
-    signal: context.signal
+    signal: context.signal,
+    baseSuffix: suffix
   });
 }
 
@@ -68,7 +73,8 @@ export async function restoreIngameVoice(context: ModuleContext): Promise<Module
   const backups: string[] = [];
   for (const directory of directories) {
     partialCleaned += await cleanPartialBackups(directory);
-    const found = await walkFiles(directory, { match: (name) => name.endsWith(`.zh_CN.wad.client.chosen_bak`) });
+    // 匹配任意语种的备份: 客户端语种变过, 或历史遗留的备份都要能还原
+    const found = await walkFiles(directory, { match: (name) => name.endsWith(`.wad.client.chosen_bak`) });
     backups.push(...found.sort());
   }
 

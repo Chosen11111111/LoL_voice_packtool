@@ -17,7 +17,7 @@ export function wadStem(input: string): string {
   return withoutExt.split(".")[0] ?? withoutExt;
 }
 
-/** 目标文件名统一写成国服槽位: <资源名>.zh_CN.wad.client */
+/** 目标文件名: <资源名>.<基准语种>.wad.client(国服是 .zh_CN, 国际服是客户端实际语种)。 */
 export function targetFileName(src: string, suffix = ".zh_CN.wad.client"): string {
   return `${wadStem(src)}${suffix}`;
 }
@@ -52,9 +52,14 @@ export async function matchLocaleFiles(directory: string, locale: string, option
     .map((key) => merged.get(key)!);
 }
 
-/** 某个分组的目标槽位数量(资源缺失时界面显示 0/N 用)。 */
-export async function targetSlotCount(directory: string): Promise<number> {
-  const files = await walkFiles(directory, { match: (name) => name.endsWith(".zh_CN.wad.client") });
+/**
+ * 目标槽位数量(资源缺失时界面显示 0/N 用)。
+ * suffix 为空时统计所有带语种后缀的槽位, 便于跨语种诊断。
+ */
+export async function targetSlotCount(directory: string, suffix = ""): Promise<number> {
+  const files = await walkFiles(directory, {
+    match: (name) => (suffix ? name.endsWith(suffix) : /\.[a-z]{2}_[A-Z]{2}\.wad\.client$/.test(name))
+  });
   return files.length;
 }
 

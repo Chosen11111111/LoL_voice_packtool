@@ -50,6 +50,8 @@ export interface AppConfig {
   cdnBase: string;
   /** 默认语种。 */
   defaultLocale: string;
+  /** 客户端基准语种(决定替换哪个槽位文件)。留空 = 自动探测。 */
+  baseLocale: string;
   /** 需要维护的语种列表。 */
   supportedLocales: string[];
   /** 应用/还原后是否自动重启客户端 UX。 */
@@ -71,6 +73,7 @@ const DEFAULT_CONFIG: AppConfig = {
   bundleProxy: "https://gh.chosen.cc.cd/channels/public/bundles",
   cdnBase: "https://raw.communitydragon.org/latest",
   defaultLocale: "ja_JP",
+  baseLocale: "",
   supportedLocales: ["ja_JP", "ko_KR", "en_US"],
   autoRestartClient: true,
   features: { lobbyVoice: false, lobbyLang: true },

@@ -2,6 +2,7 @@
   "voiceRoot": "E:\\\\ChosenSkin2.0\\\\voice",
   "leaguePath": "",
   "gamePath": "",
+  "baseLocale": "",
   "penguLoaderDir": "",
   "manifestDownloader": "ManifestDownloader.exe",
   "manifestId": "37D5BB71755990B9",
@@ -14,11 +15,16 @@
     "en_US"
   ],
   "autoRestartClient": true,
+  "features": {
+    "lobbyVoice": false,
+    "lobbyLang": true
+  },
   "server": {
     "host": "127.0.0.1",
     "port": 43110,
     "token": "",
-    "webDir": "web"
+    "webDir": "web",
+    "maxUploadBytes": 0
   },
   "download": {
     "threads": 16,

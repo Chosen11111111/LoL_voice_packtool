@@ -81,9 +81,9 @@ export async function applyAll(env: SwitchEnv, options: RunOptions): Promise<Run
     if (module === "lobby_voice") {
       results.push(await applyLobbyVoice(options.locale, env, { progress, signal: options.signal }));
     } else if (module === "ingame_voice") {
-      results.push(await applyIngameVoice(options.locale, { voiceRoot: env.voiceRoot, finalDir: env.finalDir, leagueDir: env.leagueDir, progress, signal: options.signal }));
+      results.push(await applyIngameVoice(options.locale, { voiceRoot: env.voiceRoot, finalDir: env.finalDir, leagueDir: env.leagueDir, baseLocale: env.baseLocale, progress, signal: options.signal }));
     } else if (module === "ingame_lang") {
-      results.push(await applyIngameLang(options.locale, { voiceRoot: env.voiceRoot, finalDir: env.finalDir, leagueDir: env.leagueDir, progress, signal: options.signal }));
+      results.push(await applyIngameLang(options.locale, { voiceRoot: env.voiceRoot, finalDir: env.finalDir, leagueDir: env.leagueDir, baseLocale: env.baseLocale, progress, signal: options.signal }));
     }
     base += size;
   }
@@ -151,6 +151,7 @@ export async function restoreAll(env: SwitchEnv, options: Omit<RunOptions, "loca
       voiceRoot: env.voiceRoot,
       finalDir: env.finalDir,
       leagueDir: env.leagueDir,
+      baseLocale: env.baseLocale,
       progress: offsetProgress(options.progress, baseVoice, total),
       signal: options.signal
     }),
@@ -158,6 +159,7 @@ export async function restoreAll(env: SwitchEnv, options: Omit<RunOptions, "loca
       voiceRoot: env.voiceRoot,
       finalDir: env.finalDir,
       leagueDir: env.leagueDir,
+      baseLocale: env.baseLocale,
       progress: offsetProgress(options.progress, baseLang, total),
       signal: options.signal
     })

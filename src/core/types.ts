@@ -29,6 +29,8 @@ export interface ModuleContext {
   voiceRoot: string;
   finalDir: string | null;
   leagueDir: string | null;
+  /** 客户端当前语种: 决定替换哪个槽位文件。 */
+  baseLocale: string;
   progress?: ProgressReporter;
   signal?: AbortSignal;
 }

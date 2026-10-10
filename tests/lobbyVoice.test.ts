@@ -74,7 +74,11 @@ async function buildFixture(prefix: string): Promise<Fixture> {
     pluginDir: pengu.pluginDir,
     resolution,
     finalDir,
-    leagueDir
+    leagueDir,
+    baseLocale: "zh_CN",
+    baseLocaleSource: "default",
+    baseLocaleDetail: "测试",
+    region: "cn"
   };
   process.env.LEAGUE_VOICE_PENGU = pengu.penguDir;
   return { root, voiceRoot, penguDir: pengu.penguDir, pluginDir: pengu.pluginDir, leagueDir, finalDir, env };

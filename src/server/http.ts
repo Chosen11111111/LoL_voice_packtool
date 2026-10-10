@@ -15,6 +15,9 @@ export interface RequestContext {
   query: URLSearchParams;
   body: unknown;
   rawBody: string;
+  contentType: string;
+  /** 二进制上传时落盘的临时文件(处理完由服务端清理)。 */
+  rawFile?: string;
 }
 
 export type Handler = (context: RequestContext) => Promise<unknown> | unknown;
@@ -23,6 +26,8 @@ interface Route {
   method: string;
   segments: string[];
   handler: Handler;
+  /** 原始请求体路由: 二进制直接落盘(用于上传压缩包), 不按 JSON 解析。 */
+  raw?: boolean;
 }
 
 export interface SseClient {
@@ -45,6 +50,11 @@ export class Router {
 
   post(pattern: string, handler: Handler): void {
     this.add("POST", pattern, handler);
+  }
+
+  /** 二进制上传路由(Content-Type 不是 JSON 时把请求体流式写入临时文件)。 */
+  postRaw(pattern: string, handler: Handler): void {
+    this.routes.push({ method: "POST", segments: pattern.split("/").filter(Boolean), handler, raw: true });
   }
 
   put(pattern: string, handler: Handler): void {
@@ -112,6 +122,10 @@ export interface ServerOptions {
   staticDir?: string;
   /** 前端路由兜底: 未命中的 GET 页面请求交给 index.html。 */
   spaFallback?: boolean;
+  /** 上传体积上限(字节); 0 或未设置 = 不限制。 */
+  maxUploadBytes?: number;
+  /** 上传临时目录(默认 <cwd>/.tmp/uploads)。 */
+  uploadDir?: string;
   bodyLimitBytes?: number;
 }
 
@@ -227,8 +241,45 @@ export async function startHttpServer(options: ServerOptions): Promise<RunningSe
         return;
       }
 
+      const contentType = String(req.headers["content-type"] ?? "");
+
+      // 二进制上传: 直接落盘, 不进内存(语音包压缩包可能有好几个 GB)
+      let rawFile: string | undefined;
+      if (matched.route.raw && !contentType.includes("application/json")) {
+        const uploadDir = options.uploadDir ?? path.join(process.cwd(), ".tmp", "uploads");
+        await fs.mkdir(uploadDir, { recursive: true }).catch(() => undefined);
+        rawFile = path.join(uploadDir, `upload-${Date.now()}-${Math.random().toString(36).slice(2, 8)}.bin`);
+        const limit = options.maxUploadBytes ?? 0;
+        let size = 0;
+        let tooLarge = false;
+        const handle = await fs.open(rawFile, "w");
+        try {
+          for await (const chunk of req) {
+            const buffer = chunk as Buffer;
+            size += buffer.length;
+            if (limit > 0 && size > limit) {
+              tooLarge = true;
+              break;
+            }
+            await handle.write(buffer);
+          }
+        } finally {
+          await handle.close().catch(() => undefined);
+        }
+        if (tooLarge) {
+          await fs.rm(rawFile, { force: true }).catch(() => undefined);
+          jsonResponse(res, 413, { ok: false, error: "payload_too_large", message: `上传体积超过上限（${limit} 字节）` });
+          return;
+        }
+        if (size === 0) {
+          await fs.rm(rawFile, { force: true }).catch(() => undefined);
+          jsonResponse(res, 400, { ok: false, error: "empty_body", message: "没有收到文件内容" });
+          return;
+        }
+      }
+
       let rawBody = "";
-      if (req.method !== "GET" && req.method !== "HEAD") {
+      if (req.method !== "GET" && req.method !== "HEAD" && rawFile === undefined) {
         const chunks: Buffer[] = [];
         let size = 0;
         let overflow = false;
@@ -266,7 +317,9 @@ export async function startHttpServer(options: ServerOptions): Promise<RunningSe
         params: matched.params,
         query: url.searchParams,
         body,
-        rawBody
+        rawBody,
+        contentType,
+        rawFile
       };
 
       try {
@@ -283,6 +336,9 @@ export async function startHttpServer(options: ServerOptions): Promise<RunningSe
         const message = String((error as Error).message ?? error);
         logger.warn(`接口异常 ${req.method} ${url.pathname}: ${message}`);
         jsonResponse(res, 500, { ok: false, error: "internal_error", message });
+      } finally {
+        // 上传的临时文件: 处理器若已把它移交给后台任务会先移走, 这里只清理残留
+        if (rawFile) await fs.rm(rawFile, { force: true }).catch(() => undefined);
       }
     })().catch((error) => {
       logger.error(`请求处理失败: ${String((error as Error).message ?? error)}`);

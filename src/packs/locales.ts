@@ -85,7 +85,6 @@ export async function countLocaleFiles(root: string, code: string): Promise<{
 export async function isLocaleFolder(dir: string, root: string, name = path.basename(dir)): Promise<boolean> {
   if (!(await isDirectory(dir))) return false;
   if (name.startsWith(".") || name.startsWith("_") || EXCLUDED_DIRS.has(name)) return false;
-  if (!isLocaleCode(name)) return false;
 
   const final = path.join(dir, "DATA", "FINAL");
   const [hasChamp, hasLoc, hasMap, hasLobby] = await Promise.all([
