@@ -226,14 +226,47 @@ async function commandPlan(args: ParsedArgs, jsonMode: boolean): Promise<number>
   return 0;
 }
 
+/** 打开系统默认浏览器(打不开也不影响服务)。 */
+async function openBrowser(url: string): Promise<void> {
+  const { spawn } = await import("node:child_process");
+  try {
+    const command = process.platform === "win32" ? "cmd" : process.platform === "darwin" ? "open" : "xdg-open";
+    const child =
+      process.platform === "win32"
+        ? spawn(command, ["/c", "start", "", url], { detached: true, stdio: "ignore", windowsHide: true })
+        : spawn(command, [url], { detached: true, stdio: "ignore" });
+    child.unref();
+  } catch {
+    /* 忽略 */
+  }
+}
+
 async function commandServe(args: ParsedArgs): Promise<number> {
   const config = await loadConfig();
   const host = flagString(args, "host") ?? config.server.host;
   const port = Number(flagString(args, "port") ?? config.server.port);
-  const { running } = await startApiServer({ host, port });
+  let started;
+  try {
+    started = await startApiServer({ host, port });
+  } catch (error) {
+    const message = String((error as Error).message ?? error);
+    if (/EADDRINUSE/i.test(message)) {
+      print(`[-] 端口 ${port} 已被占用：可能已经有一个本工具在运行。`);
+      print(`    请直接打开 http://${host}:${port}/ ，或换一个端口：node src/index.ts serve --port 43111 --open`);
+    } else {
+      print(`[-] 启动服务失败: ${message}`);
+    }
+    return 1;
+  }
+  const { running } = started;
   print(`[+] API 服务已启动: http://${running.host}:${running.port}`);
   print(`    状态: GET /api/state   语言包: GET /api/locales   事件: GET /api/events`);
   print("    按 Ctrl+C 退出");
+  if (flagBool(args, "open")) {
+    const url = `http://${running.host === "0.0.0.0" ? "127.0.0.1" : running.host}:${running.port}/`;
+    print(`    正在打开控制台: ${url}`);
+    void openBrowser(url);
+  }
   await new Promise<void>((resolve) => {
     const shutdown = () => {
       void running.close().then(() => resolve());

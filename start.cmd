@@ -1,17 +1,25 @@
 @echo off
-rem 英雄联盟 语音包/语言包 切换器 —— 图形控制台(内置网页界面)
-title League Voice Tool
+rem League Voice - graphical console (built-in web UI)
 chcp 65001 >nul
 cd /d "%~dp0"
+title League Voice Tool
 
-where node >nul 2>nul
-if errorlevel 1 (
-  echo [x] 未检测到 Node.js，请先安装 Node.js 20.11 或更高版本: https://nodejs.org/
-  pause
-  exit /b 1
-)
+set "NODE=node"
+where node >nul 2>nul && goto run
+if exist "%ProgramFiles%\nodejs\node.exe" set "NODE=%ProgramFiles%\nodejs\node.exe" && goto run
+if exist "%LOCALAPPDATA%\Programs\nodejs\node.exe" set "NODE=%LOCALAPPDATA%\Programs\nodejs\node.exe" && goto run
+if exist "%ProgramFiles(x86)%\nodejs\node.exe" set "NODE=%ProgramFiles(x86)%\nodejs\node.exe" && goto run
+echo [x] Node.js not found. Please install Node.js 20.11 or newer:
+echo     https://nodejs.org/
+echo.
+pause
+exit /b 1
 
-echo [*] 正在启动后端服务...
-start "" http://127.0.0.1:43110/
-node "%~dp0src\index.ts" serve --port 43110
-if errorlevel 1 pause
+:run
+echo [*] Starting League Voice backend (port 43110) ...
+echo [*] The console page will open automatically in your browser.
+echo.
+"%NODE%" "%~dp0src\index.ts" serve --port 43110 --open
+echo.
+echo [!] Server stopped. Press any key to close.
+pause >nul

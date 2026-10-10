@@ -1,7 +1,8 @@
 @echo off
-rem 查看当前语音/语言包状态(只读)
-title League Voice Status
+rem League Voice - show current status (read only)
 chcp 65001 >nul
 cd /d "%~dp0"
+title League Voice Status
 node "%~dp0src\index.ts" status
-pause
+echo.
+pause >nul
