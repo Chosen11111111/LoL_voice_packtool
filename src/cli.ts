@@ -10,6 +10,7 @@ import { wadSuffix } from "./packs/baselocale.ts";
 import { scanLocales } from "./packs/locales.ts";
 import { getIngameStatus } from "./packs/inventory.ts";
 import { applyLobbyVoice, getLobbyStatus, restoreLobbyVoice } from "./modules/lobbyVoice.ts";
+import { locateClientAssetWad } from "./packs/wadfile.ts";
 import { getLobbyLangState } from "./modules/lobbyLang.ts";
 import { lobbyLive } from "./modules/lobbyLive.ts";
 import { buildEnv } from "./modules/context.ts";
@@ -71,9 +72,13 @@ async function runLobbyLiveCommand(args: ParsedArgs): Promise<number> {
   return 0;
 }
 
-/** 大厅选人语音(客户端资源包 WAD 方案): 可指定 --league 直接作用于某一台客户端。 */
+/**
+ * 对局前选人语音: LCU 监听 + 本地播报(不改客户端文件)。
+ * 子命令: on | off | status | wad-restore(回滚早期"改写资源包"留下的补丁)
+ */
 async function runLobbyCommand(args: ParsedArgs): Promise<number> {
-  const action = (args.positionals[0] ?? "status").toLowerCase();
+  const raw = (args.positionals[0] ?? "status").toLowerCase();
+  const action = raw === "apply" ? "on" : raw === "restore" ? "off" : raw;
   const leagueOverride = flagString(args, "league");
   const voiceRootOverride = flagString(args, "root");
   const base = await loadConfig();
@@ -86,47 +91,42 @@ async function runLobbyCommand(args: ParsedArgs): Promise<number> {
 
   if (action === "status") {
     const status = await getLobbyStatus(env);
-    print(`资源包: ${status.wad_file ?? "(未定位)"}`);
-    print(`可打补丁: ${status.wad_available ? "是" : "否"}`);
-    print(`当前状态: ${status.voice}`);
-    if (status.backup) print(`备份: ${status.backup}`);
+    print(`${status.voice}`);
+    print(`监听中: ${status.listening ? "是" : "否"}  选人状态: ${status.presence}  已播报: ${status.played} 条`);
+    print(`语音包音频: ${status.available} 个`);
+    print(`客户端运行中: ${status.client_running ? "是" : "否"}`);
+    if (status.legacy_wad_patch) print(`[!] 检测到旧的资源包补丁, 执行 lobby wad-restore 可回滚`);
     print(status.message);
-    return status.wad_available ? 0 : 1;
+    return 0;
   }
 
-  if (action === "apply") {
+  if (action === "on" || action === "off") {
     const locale = flagString(args, "locale") ?? base.defaultLocale;
-    if (!locale) {
-      print("[-] 需要指定语音包: --locale ja_JP");
-      return 1;
-    }
-    print(`开始写入 ${locale} 的选人/禁用台词 …`);
-    let step = "";
-    const result = await applyLobbyVoice(locale, env, {
-      progress: (done, total, current) => {
-        const line = `${done}/${total} ${current ?? ""}`;
-        if (current && current !== step) {
-          step = current;
-          if (done % 20 === 0 || done === total) print(`  ${line}`);
-        }
-      }
-    });
+    print(action === "on" ? `开启选人语音实时播报(${locale}) …` : "关闭选人语音实时播报 …");
+    const result =
+      action === "on"
+        ? await applyLobbyVoice(locale, env, { includeOthers: Boolean(flagBool(args, "others")) })
+        : await restoreLobbyVoice(env, {});
     print(`${result.ok ? "[+]" : "[-]"} ${result.message}`);
     if (result.detail) {
-      const detail = result.detail as { wad_file?: string; backup?: string; notes?: string[] };
-      for (const note of detail.notes ?? []) print(`    ${note}`);
-      if (detail.backup) print(`    备份: ${detail.backup}`);
+      for (const note of ((result.detail as { notes?: string[] }).notes ?? [])) print(`    ${note}`);
     }
     return result.ok ? 0 : 1;
   }
 
-  if (action === "restore") {
-    const result = await restoreLobbyVoice(env, {});
+  if (action === "wad-restore") {
+    const { restoreLobbyVoiceWad } = await import("./packs/lobbyWad.ts");
+    const located = await locateClientAssetWad(env.leagueDir, env.baseLocale);
+    if (!located.ok || !located.path) {
+      print(`[-] ${located.message}`);
+      return 1;
+    }
+    const result = await restoreLobbyVoiceWad(located.path);
     print(`${result.ok ? "[+]" : "[-]"} ${result.message}`);
     return result.ok ? 0 : 1;
   }
 
-  print("[-] 未知子命令, 可用: apply | restore | status");
+  print("[-] 未知子命令, 可用: on | off | status | wad-restore");
   return 1;
 }
 
@@ -273,7 +273,7 @@ async function commandStatus(jsonMode: boolean): Promise<number> {
   print("-".repeat(60));
   print(`  【对局端】语音/播报: ${ingame.voice} | 语言: ${ingame.lang}`);
   print(`  【大厅端】选人语音: ${lobby.voice} | 语言: ${lobbyLang.label}`);
-  print(`  选人语音资源包: ${lobby.wad_available ? lobby.wad_file : "未定位"}`);
+  print(`  选人语音: 语音包音频 ${lobby.available} 个 | 选人状态 ${lobby.presence}${lobby.legacy_wad_patch ? " | [!] 有旧资源包补丁待回滚" : ""}`);
   print("=".repeat(60));
   return 0;
 }
@@ -506,8 +506,8 @@ export function printHelp(): void {
   print("  oneclick apply|restore     一键全套 / 一键还原");
   print("  update check|run           检查更新 / 增量同步语言包 [--locales ja_JP,ko_KR]");
   print("  lobby-live [--locale ja_JP] [--others]   选人语音实时播报(LCU 监听, 音频由工具窗口播放)");
-  print("  lobby [apply|restore|status] [--locale ja_JP] [--league <客户端目录>]");
-  print("                             大厅选人语音(客户端资源包方案)");
+  print("  lobby [on|off|status|wad-restore] [--locale ja_JP] [--others] [--league <目录>]");
+  print("                             对局前选人语音(LCU 监听 + 本地播报, 不改客户端)");
   print("  paths                      探测所有可能的游戏安装路径");
   print("  doctor                     环境自检(路径/进程/语种/语言包)");
   print("  config [get|set k=v|path]  查看或修改配置");

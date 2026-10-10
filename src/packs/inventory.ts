@@ -101,11 +101,11 @@ export async function checkModuleResources(
     }
     return {
       ...base,
-      ok: false,
-      planned: oggs.length,
+      ok: true,
+      planned: 1,
       missing: false,
-      reason: "能力未接入",
-      message: "大厅选人语音的 WAD 方案尚未接入完成（不会修改客户端文件）"
+      reason: "",
+      message: `选人语音 ${oggs.length} 个（LCU 监听 + 本地播报，不改客户端文件）`
     };
   }
 

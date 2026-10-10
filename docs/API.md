@@ -75,14 +75,16 @@
       "voice_backups": 180, "lang_backup": false
     },
     "lobby": {
-      "ok": true, "voice": "官方默认|已替换为自定义选人语音", "lang": "未知", "enabled": false, "locale": "zh_CN",
-      "mechanism": "wad",                       // 走客户端自带的资源包, 不注入进程
-      "wad_file": "…\\Plugins\\rcp-be-lol-game-data\\zh_CN-assets.wad",
-      "wad_available": true,
-      "patched": false,                                  // 是否已把自定义选人语音写进资源包
-      "backup": null,                                    // 备份路径(存在即可还原)
-      "message": "资源包：…"
-    },
+      "ok": true, "voice": "未开启|已开启实时播报（日服 (ja_JP)）", "lang": "未知", "enabled": false, "locale": "ja_JP",
+      "mechanism": "lcu-live",              // LCU 监听 + 本地播报, 不注入也不改客户端文件
+      "available": 346,                     // 语音包里该语种的选人/禁用音频数量
+      "listening": false,                   // 是否正在监听选人流程
+      "presence": "offline",                // in(正在选人) / out(不在选人) / offline(客户端没起来)
+      "played": 0,                          // 本次已播报条数
+      "client_running": false,
+      "legacy_wad_patch": false,            // 是否还挂着早期改写资源包留下的备份(还原可回滚)
+      "wad_file": "...\\Plugins\\rcp-be-lol-game-data\\zh_CN-assets.wad",
+      "message": "未开启"
     "processes": { "game_running": false, "client_running": true },
     "tasks": [ /* 任务快照数组，最新的在前 */ ],
     "busy": { "switch": "9f1c…" }      // 互斥组 -> 占用它的任务 id
@@ -180,7 +182,7 @@
 
 ### POST /api/restore
 ```json
-{ "modules": ["lobby_voice","lobby_lang","ingame_voice","ingame_lang"], "restartClient": true, "skinsOn": false }
+{ "modules": ["lobby_voice","lobby_lang","ingame_voice","ingame_lang"], "restartClient": true }
 ```
 `modules` 只给一个时是"细分还原"；给多个/省略时走一键还原（内部按工作量汇总进度）。
 

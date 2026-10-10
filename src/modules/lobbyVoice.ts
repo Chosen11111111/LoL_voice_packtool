@@ -1,28 +1,25 @@
 /**
- * 大厅选人语音(客户端自带资源包 WAD 方案, 不注入任何进程)。
+ * 大厅选人语音("对局前选人语音")。
  *
- * 实测结论:
- *   - 选人/禁用台词存放在 LeagueClient\\Plugins\\rcp-be-lol-game-data\\<客户端语种>-assets.wad;
- *   - 国服 zh_CN-assets.wad 里有 351 个 ogg(≈173 选人 + 173 禁用);
- *   - 国际服 zh_TW-assets.wad 里只有 5 个 ogg(该渠道的选人语音不在语种包里)。
+ * 机制: **LCU 监听 + 本地播报** —— 客户端一个字节都不改。
  *
- * 补丁方式: 备份原 wad → 把本地语音包的音频按 16 字节对齐追加到文件尾部 →
- * 只改动对应条目的偏移与大小(签名块、条目顺序、条目数都不动) → 原子改名落地。
+ * 为什么不是改客户端资源包: 客户端对 Plugins/rcp-be-lol-game-data/<语种>-assets.wad
+ * 有严格的内容校验(日志: WadFile chunk verification failed), 校验值是私有的, 实测
+ * 40 种常见算法全部不匹配; 连"数据一字不改、只把数据挪到文件尾部"都会让客户端黑屏。
+ * 因此选人台词改成: 用 LCU 监听选人流程 -> 在工具窗口里播语音包里的音频。
+ *
+ * 兼容: 如果之前用旧方案(改写资源包)打过补丁, 这里会在开启/还原时自动把备份写回去。
  */
-import fsp from "node:fs/promises";
 import path from "node:path";
 import { makeResult, type ModuleResult } from "../core/result.ts";
 import { isClientRunning } from "../core/win/processes.ts";
-import { isFile, walkFiles } from "../core/fsx.ts";
+import { isDirectory } from "../core/fsx.ts";
 import { createLogger } from "../core/logger.ts";
 import { localeDisplayName } from "../packs/locales.ts";
-import { CHAMPION_BAN, CHAMPION_CHOOSE, extractIds } from "../packs/championIds.ts";
+import { CHAMPION_BAN, CHAMPION_CHOOSE } from "../packs/championIds.ts";
 import { locateClientAssetWad } from "../packs/wadfile.ts";
-import {
-  applyLobbyVoiceWad,
-  lobbyPatchState,
-  restoreLobbyVoiceWad
-} from "../packs/lobbyWad.ts";
+import { lobbyPatchState, restoreLobbyVoiceWad } from "../packs/lobbyWad.ts";
+import { lobbyLive } from "./lobbyLive.ts";
 import type { SwitchEnv } from "./context.ts";
 
 const logger = createLogger("lobby_voice");
@@ -31,133 +28,108 @@ const MODULE = "lobby_voice" as const;
 export interface LobbyVoiceOptions {
   progress?: import("../core/types.ts").ProgressReporter;
   signal?: AbortSignal;
+  /** 是否连别人的禁用台词一起播。 */
+  includeOthers?: boolean;
 }
 
-/** 扫描本地语音包里可用的英雄 ID。 */
-async function localChampionIds(voiceRoot: string, locale: string, type: string): Promise<number[]> {
-  const dir = path.join(voiceRoot, locale, "assets", type);
-  const files = await walkFiles(dir, { match: (name) => name.toLowerCase().endsWith(".ogg") });
-  const ids = new Set<number>();
-  for (const file of files) {
-    const id = Number.parseInt(path.basename(file, path.extname(file)), 10);
-    if (Number.isFinite(id) && id > 0) ids.add(id);
-  }
-  return [...ids].sort((a, b) => a - b);
+/** 本地语音包里该语种的音频目录。 */
+function assetsDir(env: SwitchEnv, locale: string, type: string): string {
+  return path.join(env.voiceRoot, locale, "assets", type);
 }
 
-function clientRunningMessage(): string {
-  return "英雄联盟客户端正在运行，资源包被占用无法替换。请先完全退出客户端（含右下角托盘图标），再切换大厅语音。";
+async function hasLocalAudio(env: SwitchEnv, locale: string): Promise<boolean> {
+  return isDirectory(assetsDir(env, locale, CHAMPION_CHOOSE));
 }
 
-/** 开启大厅选人语音: 把目标语种的选人/禁用台词写入客户端资源包。 */
-export async function applyLobbyVoice(locale: string, env: SwitchEnv, options: LobbyVoiceOptions = {}): Promise<ModuleResult> {
-  const progress = options.progress;
-  progress?.(0, 1, "定位客户端资源包");
-
+/** 旧方案(改写客户端资源包)留下的补丁: 有备份就写回去。 */
+async function cleanupLegacyPatch(env: SwitchEnv): Promise<string | null> {
   const located = await locateClientAssetWad(env.leagueDir, env.baseLocale);
-  if (!located.ok || !located.path) {
-    return makeResult(MODULE, false, {
-      planned: 0,
-      success: 0,
-      failed: 0,
-      missing: true,
-      reason: "资源缺失",
-      message: located.message
-    });
-  }
+  if (!located.ok || !located.path) return null;
+  const state = await lobbyPatchState(located.path);
+  if (!state.patched) return null;
   if (await isClientRunning()) {
-    return makeResult(MODULE, false, {
-      planned: 0,
-      success: 0,
-      failed: 0,
-      reason: "客户端运行中",
-      message: clientRunningMessage()
-    });
-  }
-
-  const chooseIds = await localChampionIds(env.voiceRoot, locale, CHAMPION_CHOOSE);
-  const banIds = await localChampionIds(env.voiceRoot, locale, CHAMPION_BAN);
-  const ids = [...new Set([...chooseIds, ...banIds])];
-  if (!ids.length) {
-    return makeResult(MODULE, false, {
-      planned: 0,
-      success: 0,
-      failed: 0,
-      missing: true,
-      reason: "资源缺失",
-      message:
-        `本地语音包里没有选人/禁用台词：` +
-        `${path.join(env.voiceRoot, locale, "assets", CHAMPION_CHOOSE)} 与 .../${CHAMPION_BAN}`
-    });
-  }
-
-  logger.info(`开始写入大厅选人语音: ${locale} -> ${located.path}（${ids.length} 个英雄）`);
-  const result = await applyLobbyVoiceWad({
-    wadFile: located.path,
-    voiceRoot: env.voiceRoot,
-    locale,
-    appDir: env.appDir,
-    cdnBase: env.config.cdnBase,
-    clientLocale: env.baseLocale,
-    ids,
-    signal: options.signal,
-    onLog: (line) => logger.info(line),
-    onProgress: (done, total, current) => {
-      // 识别阶段占前 80%, 写入阶段收尾
-      progress?.(Math.min(done, total), Math.max(total, 1) * 1, current);
-      progress?.(Math.round((done / Math.max(total, 1)) * 80), 100, current);
-    }
-  });
-  progress?.(100, 100, "完成");
-
-  return makeResult(MODULE, result.ok, {
-    planned: result.mapping.choose + result.mapping.ban,
-    success: result.patched,
-    failed: result.ok ? 0 : 1,
-    missing: result.missing > 0,
-    message: result.message,
-    detail: {
-      locale,
-      wad_file: result.wad_file,
-      backup: result.backup,
-      mapping: result.mapping,
-      notes: result.detail
-    }
-  });
-}
-
-/** 还原: 写回客户端原始资源包。 */
-export async function restoreLobbyVoice(env: SwitchEnv, options: LobbyVoiceOptions = {}): Promise<ModuleResult> {
-  options.progress?.(0, 1, "检查备份");
-  const located = await locateClientAssetWad(env.leagueDir, env.baseLocale);
-  if (!located.ok || !located.path) {
-    return makeResult(MODULE, true, {
-      action: "restore",
-      planned: 0,
-      success: 0,
-      failed: 0,
-      message: located.message
-    });
-  }
-  if (await isClientRunning()) {
-    return makeResult(MODULE, false, {
-      action: "restore",
-      planned: 0,
-      success: 0,
-      failed: 0,
-      reason: "客户端运行中",
-      message: clientRunningMessage()
-    });
+    logger.warn("检测到旧的资源包补丁, 但客户端正在运行 —— 请退出客户端后再还原");
+    return `检测到旧的资源包补丁(${located.path}), 客户端退出后请重新执行还原`;
   }
   const result = await restoreLobbyVoiceWad(located.path);
-  options.progress?.(1, 1, "完成");
-  return makeResult(MODULE, result.ok, {
+  logger.info(`已回滚旧的资源包补丁: ${result.message}`);
+  return `已回滚旧的资源包补丁(${result.message})`;
+}
+
+/** 开启: 启动 LCU 监听, 之后选人时由工具窗口播报语音包里的台词。 */
+export async function applyLobbyVoice(locale: string, env: SwitchEnv, options: LobbyVoiceOptions = {}): Promise<ModuleResult> {
+  const progress = options.progress;
+  progress?.(0, 2, "检查语音包");
+
+  if (!(await hasLocalAudio(env, locale))) {
+    return makeResult(MODULE, false, {
+      planned: 0,
+      success: 0,
+      failed: 0,
+      missing: true,
+      reason: "资源缺失",
+      message: `语音包里没有 ${localeDisplayName(locale)} 的选人语音：${assetsDir(env, locale, CHAMPION_CHOOSE)}`
+    });
+  }
+
+  const notes: string[] = [];
+  const legacy = await cleanupLegacyPatch(env);
+  if (legacy) notes.push(legacy);
+
+  progress?.(1, 2, "启动监听");
+  const started = await lobbyLive.start({
+    voiceRoot: env.voiceRoot,
+    locale,
+    includeOthers: options.includeOthers
+  });
+  if (!started.ok) {
+    return makeResult(MODULE, false, {
+      planned: 1,
+      success: 0,
+      failed: 1,
+      reason: "启动失败",
+      message: started.message,
+      detail: { notes }
+    });
+  }
+
+  const clientRunning = await isClientRunning();
+  if (!clientRunning) notes.push("客户端当前没有运行 —— 启动客户端后会自动开始监听, 无需再次操作");
+  progress?.(2, 2, "完成");
+
+  return makeResult(MODULE, true, {
+    planned: 1,
+    success: 1,
+    failed: 0,
+    message: `已开启选人语音实时播报（${localeDisplayName(locale)}）${clientRunning ? "" : "，等待客户端启动"}`,
+    detail: {
+      mechanism: "lcu-live",
+      locale,
+      available: started.state.available,
+      client_running: clientRunning,
+      notes
+    }
+  });
+}
+
+/** 关闭: 停止监听; 若存在旧的资源包补丁, 一并回滚。 */
+export async function restoreLobbyVoice(env: SwitchEnv, options: LobbyVoiceOptions = {}): Promise<ModuleResult> {
+  const progress = options.progress;
+  progress?.(0, 2, "停止监听");
+  const wasRunning = lobbyLive.isRunning();
+  await lobbyLive.stop();
+  progress?.(1, 2, "检查历史补丁");
+  const notes: string[] = [];
+  const legacy = await cleanupLegacyPatch(env);
+  if (legacy) notes.push(legacy);
+  progress?.(2, 2, "完成");
+  return makeResult(MODULE, true, {
     action: "restore",
-    planned: result.ok ? 1 : 0,
-    success: result.ok ? 1 : 0,
-    failed: result.ok ? 0 : 1,
-    message: result.message,
-    detail: { wad_file: result.wad_file }
+    planned: 1,
+    success: 1,
+    failed: 0,
+    message: wasRunning ? "已关闭选人语音实时播报" : "选人语音实时播报本来就未开启",
+    detail: { mechanism: "lcu-live", stopped: wasRunning, notes }
   });
 }
 
@@ -167,35 +139,56 @@ export interface LobbyStatus {
   lang: string;
   enabled: boolean;
   locale: string;
-  /** 实现机制: 客户端自带资源包, 不注入进程。 */
-  mechanism: "wad";
+  /** 实现机制: LCU 监听 + 本地播报, 不注入、不改客户端文件。 */
+  mechanism: "lcu-live";
+  /** 本地语音包里该语种的选人/禁用音频数量。 */
+  available: number;
+  /** 是否正在监听选人流程。 */
+  listening: boolean;
+  /** 选人流程状态: in(正在选人) / out(不在选人) / offline(客户端没起来)。 */
+  presence: string;
+  played: number;
+  client_running: boolean;
+  /** 旧方案(资源包补丁)是否还挂着备份, 需要回滚。 */
+  legacy_wad_patch: boolean;
   wad_file: string | null;
-  wad_available: boolean;
-  patched: boolean;
-  backup: string | null;
   message: string;
 }
 
-/** 大厅端状态: 定位资源包 + 判断是否已打补丁。 */
+/** 大厅端状态(界面顶部"对局前选人语音"卡片用)。 */
 export async function getLobbyStatus(env: SwitchEnv): Promise<LobbyStatus> {
-  const located = await locateClientAssetWad(env.leagueDir, env.baseLocale);
-  const state = await lobbyPatchState(located.path);
-  const total = located.path ? await fsp.stat(located.path).then((info) => info.size).catch(() => 0) : 0;
+  const state = lobbyLive.state();
+  const [clientRunning, located] = await Promise.all([
+    isClientRunning(),
+    locateClientAssetWad(env.leagueDir, env.baseLocale)
+  ]);
+  const legacy = located.path ? (await lobbyPatchState(located.path)).patched : false;
+  const locale = state.locale || env.config.defaultLocale;
+  const parts: string[] = [];
+  if (state.running) {
+    parts.push(`监听中（${localeDisplayName(locale)}）`);
+    parts.push(state.presence === "in" ? "选人进行中" : state.presence === "out" ? "等待进入选人" : "客户端未启动");
+    parts.push(`已播报 ${state.played} 条`);
+  } else {
+    parts.push("未开启");
+  }
+  if (legacy) parts.push("检测到旧资源包补丁, 还原即可回滚");
   return {
     ok: true,
-    voice: state.patched ? "已替换为自定义选人语音" : "官方默认",
+    voice: state.running ? `已开启实时播报（${localeDisplayName(locale)}）` : "未开启",
     lang: "未知",
-    enabled: state.patched,
-    locale: env.baseLocale,
-    mechanism: "wad",
+    enabled: state.running,
+    locale,
+    mechanism: "lcu-live",
+    available: state.available,
+    listening: state.running,
+    presence: state.presence,
+    played: state.played,
+    client_running: clientRunning,
+    legacy_wad_patch: legacy,
     wad_file: located.path,
-    wad_available: located.ok,
-    patched: state.patched,
-    backup: state.backup,
-    message: located.ok
-      ? `${located.path}${total ? `（${(total / 1048576).toFixed(1)} MB）` : ""}${state.patched ? " — 已打补丁" : ""}`
-      : located.message
+    message: parts.join(" · ")
   };
 }
 
-export { extractIds, localeDisplayName, isFile };
+export { CHAMPION_BAN, CHAMPION_CHOOSE };

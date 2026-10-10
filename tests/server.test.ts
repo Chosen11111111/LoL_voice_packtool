@@ -169,50 +169,46 @@ test("POST /api/restore 全部还原为官方默认", async () => {
   assert.equal(state.json.state.ingame.is_voice_active, false);
 });
 
-test("大厅选人语音: 客户端没有资源包时明确失败, 且不修改客户端任何文件", async () => {
-  const before = await readFile(path.join(fixture!.leagueDir, "d3d9.dll"));
-  const snapshot = await exists(path.join(fixture!.leagueDir, "Plugins"));
+test("大厅选人语音: 开启后走 LCU 监听(不改客户端文件), 关闭能停掉", async () => {
+  const d3d9Before = await readFile(path.join(fixture!.leagueDir, "d3d9.dll"));
+  const pluginDirExists = await exists(path.join(fixture!.leagueDir, "Plugins"));
 
   const { json } = await post("/api/apply", { locale: "ja_JP", modules: ["lobby_voice"], restartClient: false });
   assert.equal(json.ok, true);
   const finished = await waitTask(json.task.id);
-  assert.equal(finished.result.ok, false);
-  assert.match(String(finished.result.results[0].reason), /资源缺失/);
-  // 没有资源包时绝不新建任何东西
-  assert.equal(await readFile(path.join(fixture!.leagueDir, "d3d9.dll")), before);
-  assert.equal(await exists(path.join(fixture!.leagueDir, "Plugins")), snapshot);
+  assert.equal(finished.result.ok, true, JSON.stringify(finished.result.summary));
+  assert.equal(finished.result.results[0].detail.mechanism, "lcu-live");
+  assert.equal(finished.result.results[0].detail.locale, "ja_JP");
+
+  // 状态与监听引擎一致
+  const state = await get("/api/state");
+  assert.equal(state.json.state.lobby.enabled, true);
+  assert.equal(state.json.state.lobby.mechanism, "lcu-live");
+  assert.equal(state.json.state.lobby_live.running, true);
+  assert.equal(state.json.state.lobby_live.locale, "ja_JP");
+  assert.equal(state.json.state.lobby_live.available, 2);
+
+  // 客户端目录一个字节都没动、也没有新建目录
+  assert.equal(await readFile(path.join(fixture!.leagueDir, "d3d9.dll")), d3d9Before);
+  assert.equal(await exists(path.join(fixture!.leagueDir, "Plugins")), pluginDirExists);
+
+  // 关闭后引擎停止
+  const closed = await post("/api/restore", { modules: ["lobby_voice"], restartClient: false });
+  const closedTask = await waitTask(closed.json.task.id);
+  assert.equal(closedTask.result.ok, true);
+  const after = await get("/api/state");
+  assert.equal(after.json.state.lobby_live.running, false);
+  assert.equal(after.json.state.lobby.enabled, false);
 });
 
-test("大厅选人语音: 有资源包时会把本地音频写进去, 备份可完整还原", async () => {
-  // 在假客户端里放一个合成的资源包(结构与真实 zh_CN-assets.wad 一致)
-  const pluginDir = path.join(fixture!.leagueDir, "Plugins", "rcp-be-lol-game-data");
-  const wadFile = path.join(pluginDir, "zh_CN-assets.wad");
-  const zhAudio = Buffer.concat([Buffer.from("OggS"), Buffer.from("zh_CN-original".repeat(12))]);
-  const other = Buffer.concat([Buffer.from(".PNG"), Buffer.from("icon".repeat(20))]);
-  const header = Buffer.alloc(272);
-  header.write("RW", 0, "ascii");
-  header[2] = 3;
-  header[3] = 4;
-  header.writeUInt32LE(2, 268);
-  const toc = Buffer.alloc(64);
-  toc.writeUInt32LE(336, 8);
-  toc.writeUInt32LE(zhAudio.length, 12);
-  toc.writeUInt32LE(zhAudio.length, 16);
-  toc.writeUInt32LE(336 + zhAudio.length, 32 + 8);
-  toc.writeUInt32LE(other.length, 32 + 12);
-  toc.writeUInt32LE(other.length, 32 + 16);
-  const wadBytes = Buffer.concat([header, toc, zhAudio, other]);
-  await makeDirSafe(pluginDir);
-  await writeFile(wadFile, wadBytes);
-
-  const statusBefore = await get("/api/state");
-  assert.equal(statusBefore.json.state.lobby.wad_available, true);
-  assert.equal(statusBefore.json.state.lobby.patched, false);
-
-  // 真实替换走的是 CDN 识别, 测试环境不联网 —— 因此这里只验证"定位 + 未打补丁"这条路径
-  const statusAfter = await get("/api/state");
-  assert.equal(statusAfter.json.state.lobby.patched, false);
-  assert.equal(await exists(wadFile + ".chosen_bak"), false);
+test("大厅选人语音: 语音包里没有该语种时明确失败", async () => {
+  const { json } = await post("/api/apply", { locale: "ko_KR", modules: ["lobby_voice"], restartClient: false });
+  assert.equal(json.ok, true);
+  const finished = await waitTask(json.task.id);
+  assert.equal(finished.result.ok, false);
+  assert.match(String(finished.result.results[0].reason), /资源缺失/);
+  const state = await get("/api/state");
+  assert.equal(state.json.state.lobby_live.running, false);
 });
 
 test("POST /api/packs/import 上传压缩包 -> 自动出现在语言包列表", async () => {

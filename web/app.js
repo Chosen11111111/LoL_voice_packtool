@@ -197,6 +197,7 @@
     emptyOpt.onclick = () => {
       closeCustomDropdown();
       selectLocaleValue("", true);
+      void stopLobbyLive();
     };
     menu.appendChild(emptyOpt);
 
@@ -268,13 +269,17 @@
     $("tagStatusLang").textContent = langActive ? "语音包" : "原版";
     $("statusIngameLang").textContent = cleanStatusDetail(ingame.lang, langActive, ingame.active_locale);
 
-    // 3. 对局前选人语音
-    const lobbyActive = Boolean(lobby.enabled);
-    const lobbyLocaleObj = store.locales.find((item) => item.code === lobby.locale);
-    const lobbyLocaleName = lobbyLocaleObj ? lobbyLocaleObj.name : lobby.locale;
+    // 3. 对局前选人语音: 走 "LCU 监听 + 本地播放", 状态以后端的监听引擎为准
+    const live = store.state.lobby_live || {};
+    const lobbyActive = Boolean(live.running);
+    const liveLocale = live.locale || lobby.locale || "";
+    const lobbyLocaleObj = store.locales.find((item) => item.code === liveLocale);
+    const lobbyLocaleName = lobbyLocaleObj ? lobbyLocaleObj.name : liveLocale;
     $("cardStatusLobby").classList.toggle("active", lobbyActive);
-    $("tagStatusLobby").textContent = lobbyActive ? "语音包" : "原版";
-    $("statusLobbyVoice").textContent = cleanStatusDetail(lobby.voice, lobbyActive, lobbyLocaleName);
+    $("tagStatusLobby").textContent = lobbyActive ? "实时播报" : "未开启";
+    $("statusLobbyVoice").textContent = lobbyActive
+      ? "【监听中：" + (lobbyLocaleName || "默认语种") + "】" + (live.presence === "in" ? "选人进行中" : "等待进入选人")
+      : "未开启（选语音包即自动开始监听）";
   }
 
   async function refresh() {
@@ -688,9 +693,14 @@
     { once: true }
   );
 
-  /** 让后端的监听跟随界面里选中的语种。 */
+  /**
+   * 让后端的监听跟随界面里选中的语种。
+   * 没选语音包时回退到配置里的默认语种 —— 打开工具就自动开始监听, 不用手动点。
+   */
   async function syncLobbyLive() {
-    const locale = store.selected || "";
+    const configured = store.config && store.config.defaultLocale;
+    const fallback = configured || (store.locales[0] && store.locales[0].code) || "";
+    const locale = store.selected || fallback;
     if (!locale || locale === lobbyLiveLocale) return;
     lobbyLiveLocale = locale;
     try {
@@ -701,13 +711,27 @@
       });
       const data = await response.json();
       if (data && data.ok) {
-        log("选人语音监听已启动：" + data.message);
+        log("选人语音监听已启动：" + data.message + (store.selected ? "" : "（未选语音包，用默认语种）"));
+        renderStatusRow();
       } else if (data) {
         lobbyLiveLocale = "";
         log("选人语音监听未启动：" + (data.message || ""));
       }
-    } catch {
+    } catch (error) {
       lobbyLiveLocale = "";
+      log("选人语音监听启动失败：" + error.message);
+    }
+  }
+
+  /** 显式停止监听(用户主动选"未选中语音包"时)。 */
+  async function stopLobbyLive() {
+    if (!lobbyLiveLocale) return;
+    lobbyLiveLocale = "";
+    try {
+      await fetch("/api/lobby-live/stop", { method: "POST" });
+      log("选人语音监听已停止");
+    } catch {
+      /* ignore */
     }
   }
 
@@ -722,9 +746,9 @@
   }
 
   setBusy(false);
-  void syncLobbyLive();
   refresh()
     .then(() => {
+      void syncLobbyLive();
       log("已连接后端服务 v" + store.state.app.version);
       setStatus("就绪", "ok", 0);
     })

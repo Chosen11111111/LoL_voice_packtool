@@ -20,6 +20,7 @@ import { applyAll, restoreAll } from "./modules/oneclick.ts";
 import { applyIngameLang, restoreIngameLang } from "./modules/ingameLang.ts";
 import { applyIngameVoice, restoreIngameVoice } from "./modules/ingameVoice.ts";
 import { applyLobbyVoice, getLobbyStatus, restoreLobbyVoice, type LobbyStatus } from "./modules/lobbyVoice.ts";
+import { lobbyLive } from "./modules/lobbyLive.ts";
 import { buildEnv, type SwitchEnv } from "./modules/context.ts";
 import { taskManager, type TaskSnapshot } from "./tasks/manager.ts";
 
@@ -219,8 +220,8 @@ export function defaultApplyModules(config: AppConfig): ModuleId[] {
 /** 默认还原范围: 大厅能力关闭时, 只在大厅确实处于开启状态才把它加回来(避免残留)。 */
 async function defaultRestoreModules(config: AppConfig, env: SwitchEnv): Promise<ModuleId[]> {
   const modules: ModuleId[] = [];
-  // 大厅选人语音(WAD 方案)未接入完成前, 默认还原流程不包含它
-  if (config.features.lobbyVoice) modules.push("lobby_voice");
+  // 选人语音现在是"LCU 监听 + 本地播报": 只要监听还在跑就必须带上, 否则一键还原关不掉它
+  if (config.features.lobbyVoice || lobbyLive.isRunning()) modules.push("lobby_voice");
   if (config.features.lobbyLang) modules.push("lobby_lang");
   modules.push("ingame_voice", "ingame_lang");
   return modules;
@@ -441,7 +442,16 @@ export async function doctor(): Promise<Record<string, unknown>> {
     config: { path: path.join(env.appDir, "config.json"), voiceRoot: env.voiceRoot, voiceRootSource: env.voiceRootSource, baseLocale: env.baseLocale, region: env.region },
     paths: pathsPayload(env),
     processes: { game_running: gameRunning, client_running: clientRunning },
-    lobby: { mechanism: lobby.mechanism, enabled: lobby.enabled, wad_file: lobby.wad_file, wad_available: lobby.wad_available },
+    lobby: {
+      mechanism: lobby.mechanism,
+      enabled: lobby.enabled,
+      listening: lobby.listening,
+      presence: lobby.presence,
+      played: lobby.played,
+      available: lobby.available,
+      client_running: lobby.client_running,
+      legacy_wad_patch: lobby.legacy_wad_patch
+    },
     locales: locales.map((item) => ({ code: item.code, voice: item.has_voice, lang: item.has_lang, lobby: item.has_lobby }))
   };
 }
