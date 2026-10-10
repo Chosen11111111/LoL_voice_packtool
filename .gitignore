@@ -3,4 +3,5 @@ node_modules/
 config.json
 logs/
 .tmp/
+.local/
 *.log
