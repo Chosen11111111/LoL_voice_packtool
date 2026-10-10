@@ -17,8 +17,6 @@ const logger = createLogger("oneclick");
 export interface RunOptions {
   locale: string;
   modules: ModuleId[];
-  /** 换肤插件同时开启时保持完整加载器目录。 */
-  skinsOn?: boolean;
   /** 全部成功后自动重启客户端 UX。 */
   restartClient?: boolean;
   progress?: ProgressReporter;
@@ -81,7 +79,7 @@ export async function applyAll(env: SwitchEnv, options: RunOptions): Promise<Run
     const size = sizes[module] ?? 1;
     const progress = offsetProgress(options.progress, base, total);
     if (module === "lobby_voice") {
-      results.push(await applyLobbyVoice(options.locale, env, { progress, signal: options.signal, skinsOn: options.skinsOn }));
+      results.push(await applyLobbyVoice(options.locale, env, { progress, signal: options.signal }));
     } else if (module === "ingame_voice") {
       results.push(await applyIngameVoice(options.locale, { voiceRoot: env.voiceRoot, finalDir: env.finalDir, leagueDir: env.leagueDir, progress, signal: options.signal }));
     } else if (module === "ingame_lang") {
@@ -146,8 +144,7 @@ export async function restoreAll(env: SwitchEnv, options: Omit<RunOptions, "loca
   const results: ModuleResult[] = [
     await restoreLobbyVoice(env, {
       progress: offsetProgress(options.progress, 0, total),
-      signal: options.signal,
-      skinsOn: options.skinsOn
+      signal: options.signal
     }),
     await restoreLobbyLangZh(env),
     await restoreIngameVoice({

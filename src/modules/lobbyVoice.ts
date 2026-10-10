@@ -1,16 +1,17 @@
 /**
- * 大厅端: 选人/禁用台词语音。
+ * 大厅端选人语音(后端能力, 默认不在界面暴露)。
  *
- * 链路: 语音插件(Chosen-VoiceSync) + 资源目录联接 + d3d9 加载桩 + Rose 加载器配置。
- * 还原时必须写 config.json 的 enabled=false —— 插件已在内存里时, 只有这个标志能让它立刻停手。
+ * 实现链路: 语音插件(Chosen-VoiceSync) + 资源目录联接 + d3d9 加载桩 + 加载器配置。
+ * 加载器固定使用"只含本语音插件"的精简目录, 不会把别的插件一起挂上去。
+ *
+ * 该能力由 features.lobbyVoice 开关控制(默认关闭): 关闭时界面与其他入口都不会走这里,
+ * 但代码与接口保留, 需要时把开关打开即可。
  */
 import path from "node:path";
-import { isFile, pathExists, removeQuietly, writeTextFile } from "../core/fsx.ts";
+import { isFile, pathExists, readJsonFile, removeQuietly, writeTextFile } from "../core/fsx.ts";
 import { createLogger } from "../core/logger.ts";
 import { makeResult, type ModuleResult } from "../core/result.ts";
-import { readJsonFile } from "../core/fsx.ts";
-import { cdnLocale, localeDisplayName } from "../packs/locales.ts";
-import { lobbyAssetsDir } from "../packs/locales.ts";
+import { cdnLocale, localeDisplayName, lobbyAssetsDir } from "../packs/locales.ts";
 import {
   ensureVoiceLoader,
   getStubStatus,
@@ -39,14 +40,14 @@ async function activeLocaleFile(env: SwitchEnv): Promise<string> {
   return path.join(env.voiceRoot, "active_locale.json");
 }
 
-/** 确保插件就位(缺了就从内置模板装一份, 独立工具不能依赖宿主项目)。 */
+/** 确保插件就位(缺了就从内置模板装一份, 不依赖任何外部项目)。 */
 async function ensurePlugin(env: SwitchEnv): Promise<{ ok: boolean; message: string }> {
   if (!env.penguDir || !env.pluginDir) {
     return {
       ok: false,
       message:
-        "未找到 Pengu Loader（需要 core.dll 与 d3d9_stub.dll）。\n" +
-        "请把 Pengu Loader 放到项目目录下，或在 config.json 里指定 penguLoaderDir。"
+        "未找到加载器（需要 core.dll 与 d3d9_stub.dll）。\n" +
+        "请把加载器目录放到本工具目录下，或在 config.json 里指定 penguLoaderDir。"
     };
   }
   const result = await ensurePluginInstalled(env.pluginDir, pluginTemplateDir(env.appDir));
@@ -57,8 +58,6 @@ async function ensurePlugin(env: SwitchEnv): Promise<{ ok: boolean; message: str
 export interface LobbyVoiceOptions {
   progress?: import("../core/types.ts").ProgressReporter;
   signal?: AbortSignal;
-  /** 换肤插件同时开启时沿用完整加载器目录。 */
-  skinsOn?: boolean;
 }
 
 /** 开启大厅选人原声语音。 */
@@ -66,14 +65,7 @@ export async function applyLobbyVoice(locale: string, env: SwitchEnv, options: L
   options.progress?.(0, 1);
   const plugin = await ensurePlugin(env);
   if (!plugin.ok) {
-    return makeResult(MODULE, false, {
-      planned: 0,
-      success: 0,
-      failed: 0,
-      missing: true,
-      reason: "资源缺失",
-      message: plugin.message
-    });
+    return makeResult(MODULE, false, { planned: 0, success: 0, failed: 0, missing: true, reason: "资源缺失", message: plugin.message });
   }
   const pluginDir = env.pluginDir!;
 
@@ -105,7 +97,7 @@ export async function applyLobbyVoice(locale: string, env: SwitchEnv, options: L
     return makeResult(MODULE, false, { planned: 1, success: 0, failed: 1, reason: `替换失败 1 个：${mountWhy}`, message: mountWhy });
   }
 
-  // 3. 插件配置
+  // 3. 插件配置(含 enabled 标志: 插件在内存中运行时也能立刻停手)
   const pluginConfig: PluginConfig = { enabled: true, locale, cdn_locale: cdn };
   const [configOk, configWhy] = await writePluginConfig(pluginDir, pluginConfig);
   if (!configOk) {
@@ -120,44 +112,34 @@ export async function applyLobbyVoice(locale: string, env: SwitchEnv, options: L
     return makeResult(MODULE, false, { planned: 1, success: 0, failed: 1, reason: `替换失败 1 个：${reason}`, message: reason });
   }
 
-  // 5. 加载器: 只开语音时用精简加载器, 换肤开启时沿用完整目录
-  let loaderDir = env.penguDir!;
-  if (!options.skinsOn) {
-    const loader = await ensureVoiceLoader(env.penguDir!, pluginDir);
-    if (!loader.ok) {
-      return makeResult(MODULE, false, { planned: 1, success: 0, failed: 1, reason: `替换失败 1 个：${loader.message}`, message: loader.message });
-    }
-    loaderDir = loader.dir;
+  // 5. 精简加载器: 只挂本语音插件
+  const loader = await ensureVoiceLoader(env.penguDir!, pluginDir);
+  if (!loader.ok) {
+    return makeResult(MODULE, false, { planned: 1, success: 0, failed: 1, reason: `替换失败 1 个：${loader.message}`, message: loader.message });
   }
 
+  // 6. 加载桩 + 加载器配置
   const stub = await placeStub(env.penguDir!, env.resolution);
   if (!stub.ok) {
-    return makeResult(MODULE, false, {
-      planned: 1,
-      success: 0,
-      failed: 1,
-      reason: `替换失败 1 个：加载桩放置失败`,
-      message: stub.message
-    });
+    return makeResult(MODULE, false, { planned: 1, success: 0, failed: 1, reason: "替换失败 1 个：加载桩放置失败", message: stub.message });
   }
-
-  const [iniOk, iniWhy] = await writeLoaderIni(true, loaderDir);
+  const [iniOk, iniWhy] = await writeLoaderIni(true, loader.dir);
   if (!iniOk) {
     return makeResult(MODULE, false, { planned: 1, success: 0, failed: 1, reason: `替换失败 1 个：${iniWhy}`, message: iniWhy });
   }
 
   options.progress?.(1, 1);
-  logger.info(`大厅语音已开启: ${locale} loader=${loaderDir}`);
+  logger.info(`大厅语音已开启: ${locale} loader=${loader.dir}`);
   return makeResult(MODULE, true, {
     planned: 1,
     success: 1,
     failed: 0,
     message: `大厅语音 1/1 已开启 ${localeDisplayName(locale)} 选人原声`,
-    detail: { loader: loaderDir, assets, plugin: pluginDir }
+    detail: { loader: loader.dir, assets, plugin: pluginDir }
   });
 }
 
-/** 还原大厅选人语音为国服默认。 */
+/** 还原大厅选人语音为官方默认(插件停用 + 卸载资源 + 移除加载桩)。 */
 export async function restoreLobbyVoice(env: SwitchEnv, options: LobbyVoiceOptions = {}): Promise<ModuleResult> {
   options.progress?.(0, 1);
   const pluginDir = env.pluginDir;
@@ -177,7 +159,6 @@ export async function restoreLobbyVoice(env: SwitchEnv, options: LobbyVoiceOptio
       }
     }
 
-    // 插件在内存中运行时, 只有 config.json 的 enabled=false 能立刻停掉音频拦截
     if (pluginDir) {
       const [ok, why] = await writePluginConfig(pluginDir, { ...DEFAULT_PLUGIN_CONFIG });
       if (!ok) {
@@ -186,38 +167,22 @@ export async function restoreLobbyVoice(env: SwitchEnv, options: LobbyVoiceOptio
           planned: 1,
           success: 0,
           failed: 1,
-          reason: `还原失败 1 个：写入插件禁用配置失败`,
+          reason: "还原失败 1 个：写入插件禁用配置失败",
           message: `写入插件禁用配置失败：${why}`
         });
       }
-      const [scriptOk, scriptWhy] = await rewritePluginConfigBlock(pluginDir, {
-        enabled: false,
-        locale: "zh_CN",
-        cdn_locale: "zh_cn"
-      });
+      const [scriptOk, scriptWhy] = await rewritePluginConfigBlock(pluginDir, { enabled: false, locale: "zh_CN", cdn_locale: "zh_cn" });
       if (!scriptOk) {
         return makeResult(MODULE, false, {
           action: "restore",
           planned: 1,
           success: 0,
           failed: 1,
-          reason: `还原失败 1 个：写入插件脚本失败`,
+          reason: "还原失败 1 个：写入插件脚本失败",
           message: `写入插件脚本失败：${scriptWhy}`
         });
       }
       await unmountVoiceAssets(pluginDir);
-    }
-
-    if (options.skinsOn) {
-      if (env.penguDir) await writeLoaderIni(true, env.penguDir);
-      options.progress?.(1, 1);
-      return makeResult(MODULE, true, {
-        action: "restore",
-        planned: 1,
-        success: 1,
-        failed: 0,
-        message: "大厅语音已还原为官方默认（换肤保持开启）"
-      });
     }
 
     const ini = await readLoaderIni();
@@ -234,13 +199,7 @@ export async function restoreLobbyVoice(env: SwitchEnv, options: LobbyVoiceOptio
         message: stub.message
       });
     }
-    return makeResult(MODULE, true, {
-      action: "restore",
-      planned: 1,
-      success: 1,
-      failed: 0,
-      message: "大厅语音已还原为官方默认"
-    });
+    return makeResult(MODULE, true, { action: "restore", planned: 1, success: 1, failed: 0, message: "大厅语音已还原为官方默认" });
   } catch (error) {
     const message = String((error as Error).message ?? error);
     return makeResult(MODULE, false, {
@@ -263,7 +222,7 @@ export interface LobbyStatus {
   stub_active: boolean;
   assets_mounted: boolean;
   loader_path: string;
-  pengu_dir: string | null;
+  loader_dir: string | null;
   plugin_dir: string | null;
   plugin_installed: boolean;
   message: string;
@@ -280,8 +239,6 @@ export async function getLobbyStatus(env: SwitchEnv): Promise<LobbyStatus> {
 
   let enabled = false;
   if (stub.active) {
-    // 只有"资源挂载在"或"激活语种记录在"或"插件配置明确 enabled 且非 zh_CN"才算开启,
-    // 避免与换肤预览共用 d3d9.dll 时误判
     if (assetsMounted || (await pathExists(await activeLocaleFile(env)))) enabled = true;
     else if (config) enabled = Boolean(config.enabled) && config.locale !== "zh_CN";
   }
@@ -295,7 +252,7 @@ export async function getLobbyStatus(env: SwitchEnv): Promise<LobbyStatus> {
     stub_active: stub.active,
     assets_mounted: assetsMounted,
     loader_path: ini.loaderPath,
-    pengu_dir: env.penguDir,
+    loader_dir: env.penguDir,
     plugin_dir: pluginDir,
     plugin_installed: pluginDir ? await isFile(path.join(pluginDir, "index.js")) : false,
     message: stub.message

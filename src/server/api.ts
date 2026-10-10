@@ -84,7 +84,6 @@ export function buildRouter(): Router {
       locale,
       modules: asModules(body.modules),
       restartClient: typeof body.restartClient === "boolean" ? body.restartClient : undefined,
-      skinsOn: typeof body.skinsOn === "boolean" ? body.skinsOn : undefined,
       lobbyLang: body.lobbyLang === "en_US" || body.lobbyLang === "zh_CN" ? body.lobbyLang : "keep"
     });
     return { ok: true, task };
@@ -95,7 +94,6 @@ export function buildRouter(): Router {
     const task = startRestoreTask({
       modules: asModules(body.modules),
       restartClient: typeof body.restartClient === "boolean" ? body.restartClient : undefined,
-      skinsOn: typeof body.skinsOn === "boolean" ? body.skinsOn : undefined
     });
     return { ok: true, task };
   });
@@ -108,7 +106,6 @@ export function buildRouter(): Router {
       locale,
       modules: asModules(body.modules) ?? ["lobby_voice", "ingame_voice", "ingame_lang"],
       restartClient: typeof body.restartClient === "boolean" ? body.restartClient : true,
-      skinsOn: typeof body.skinsOn === "boolean" ? body.skinsOn : undefined,
       lobbyLang: body.lobbyLang === "en_US" ? "en_US" : "keep"
     });
     return { ok: true, task };
@@ -119,7 +116,6 @@ export function buildRouter(): Router {
     const task = startRestoreTask({
       modules: asModules(body.modules) ?? ["lobby_voice", "lobby_lang", "ingame_voice", "ingame_lang"],
       restartClient: typeof body.restartClient === "boolean" ? body.restartClient : true,
-      skinsOn: typeof body.skinsOn === "boolean" ? body.skinsOn : undefined
     });
     return { ok: true, task };
   });

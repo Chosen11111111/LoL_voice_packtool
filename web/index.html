@@ -3,312 +3,223 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>英雄联盟 语音包/语言包 切换器</title>
-<style>
-  :root {
-    --bg: #061826; --panel: #0b2238; --panel2: #0d2842; --line: #16324f;
-    --text: #e2e8f0; --muted: #94a3b8; --accent: #38bdf8; --accent2: #0284c7;
-    --ok: #10b981; --warn: #f59e0b; --err: #ef4444;
-  }
-  * { box-sizing: border-box; }
-  body { margin: 0; background: var(--bg); color: var(--text);
-    font: 14px/1.6 "Segoe UI", "Microsoft YaHei", system-ui, sans-serif; }
-  header { padding: 18px 22px; background: linear-gradient(135deg, #0b2238, #061826);
-    border-bottom: 1px solid var(--line); }
-  h1 { margin: 0; font-size: 18px; letter-spacing: .3px; }
-  h1 span { color: var(--accent); }
-  .sub { color: var(--muted); font-size: 12px; margin-top: 4px; }
-  main { padding: 18px 22px 60px; max-width: 1180px; margin: 0 auto; }
-  .grid { display: grid; gap: 14px; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); }
-  .card { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 14px 16px; }
-  .card h2 { margin: 0 0 10px; font-size: 14px; color: var(--accent); font-weight: 600; }
-  .row { display: flex; justify-content: space-between; gap: 12px; padding: 5px 0; border-bottom: 1px dashed #14263a; }
-  .row:last-child { border-bottom: 0; }
-  .row .k { color: var(--muted); }
-  .row .v { text-align: right; word-break: break-all; max-width: 62%; }
-  .pill { display: inline-block; padding: 2px 9px; border-radius: 999px; font-size: 12px; border: 1px solid var(--line); }
-  .pill.on { color: #052e16; background: var(--ok); border-color: var(--ok); }
-  .pill.off { color: var(--muted); }
-  .pill.warn { color: #431407; background: var(--warn); border-color: var(--warn); }
-  button { font: inherit; cursor: pointer; border-radius: 8px; border: 1px solid var(--line);
-    background: #12293f; color: var(--text); padding: 8px 14px; transition: .15s; }
-  button:hover:not(:disabled) { background: #1b3853; border-color: #24506f; }
-  button.primary { background: var(--accent2); border-color: var(--accent2); color: #fff; font-weight: 600; }
-  button.primary:hover:not(:disabled) { background: #0369a1; }
-  button.danger { background: #7f1d1d; border-color: #991b1b; }
-  button:disabled { opacity: .45; cursor: not-allowed; }
-  .locales { display: grid; gap: 10px; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); }
-  .locale { border: 1px solid var(--line); border-radius: 10px; padding: 12px; background: var(--panel2); }
-  .locale.active { border-color: var(--accent); box-shadow: 0 0 0 1px #0ea5e9 inset; }
-  .locale .title { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; }
-  .locale .code { color: var(--muted); font-size: 12px; }
-  .tags { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 10px; font-size: 12px; color: var(--muted); }
-  .tag { border: 1px solid var(--line); border-radius: 6px; padding: 1px 7px; }
-  .tag.ok { color: #6ee7b7; border-color: #14532d; }
-  .tag.no { color: #64748b; text-decoration: line-through; }
-  label.check { display: inline-flex; align-items: center; gap: 6px; margin-right: 14px; color: var(--muted); }
-  .bar { height: 10px; background: #0a1c2c; border: 1px solid var(--line); border-radius: 999px; overflow: hidden; }
-  .bar > div { height: 100%; width: 0; background: linear-gradient(90deg, #0284c7, #38bdf8); transition: width .2s; }
-  #log { background: #040d16; border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px;
-    height: 200px; overflow: auto; font: 12px/1.5 Consolas, monospace; color: #a5f3fc; white-space: pre-wrap; }
-  .actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
-  .muted { color: var(--muted); font-size: 12px; }
-  .toast { position: fixed; right: 18px; bottom: 18px; max-width: 460px; background: var(--panel2);
-    border: 1px solid var(--line); border-left: 4px solid var(--accent); border-radius: 8px; padding: 10px 14px; display: none; }
-  .toast.err { border-left-color: var(--err); }
-  .toast.ok { border-left-color: var(--ok); }
-</style>
+<title>英雄联盟 语音包切换器</title>
+<link rel="stylesheet" href="/styles.css" />
 </head>
 <body>
-<header>
-  <h1>🎧 英雄联盟 <span>语音包 / 语言包</span> 切换器</h1>
-  <div class="sub" id="subtitle">正在加载后端状态…</div>
-</header>
+<div class="app">
+  <aside class="sidebar">
+    <div class="brand">
+      <div class="brand-mark">LV</div>
+      <div class="brand-text">
+        <strong>语音包切换器</strong>
+        <span id="brandVersion">League Voice</span>
+      </div>
+    </div>
 
-<main>
-  <div class="grid">
-    <section class="card">
-      <h2>运行环境</h2>
-      <div class="row"><span class="k">客户端目录</span><span class="v" id="leagueDir">—</span></div>
-      <div class="row"><span class="k">游戏文件目录</span><span class="v" id="finalDir">—</span></div>
-      <div class="row"><span class="k">资源目录</span><span class="v" id="voiceRoot">—</span></div>
-      <div class="row"><span class="k">加载器目录</span><span class="v" id="penguDir">—</span></div>
-      <div class="row"><span class="k">进程</span><span class="v" id="procs">—</span></div>
+    <nav class="nav" id="nav">
+      <button class="nav-item active" data-view="overview"><i class="ico-dot"></i><span>概览</span></button>
+      <button class="nav-item" data-view="locales"><i class="ico-dot"></i><span>语音包</span></button>
+      <button class="nav-item" data-view="update"><i class="ico-dot"></i><span>更新与下载</span></button>
+      <button class="nav-item" data-view="settings"><i class="ico-dot"></i><span>设置</span></button>
+      <button class="nav-item" data-view="logs"><i class="ico-dot"></i><span>运行日志</span></button>
+    </nav>
+
+    <div class="sidebar-foot">
+      <div class="conn" id="conn"><i class="dot"></i><span>连接中…</span></div>
+      <div class="muted tiny" id="appRootLabel">—</div>
+    </div>
+  </aside>
+
+  <main class="main">
+    <header class="topbar">
+      <div class="topbar-title">
+        <h1 id="viewTitle">概览</h1>
+        <p class="muted small" id="viewSub">正在读取后端状态…</p>
+      </div>
+      <div class="topbar-actions">
+        <div class="task-chip hidden" id="taskChip">
+          <div class="task-chip-bar"><i id="taskChipFill"></i></div>
+          <span id="taskChipText">任务进行中</span>
+          <button class="btn tiny danger" id="btnCancelTask">取消</button>
+        </div>
+        <button class="btn ghost" id="btnRefresh">刷新</button>
+      </div>
+    </header>
+
+    <!-- ==================== 概览 ==================== -->
+    <section class="view active" id="view-overview">
+      <div class="cards four">
+        <div class="stat">
+          <span class="stat-label">对局语音 / 播报</span>
+          <strong class="stat-value" id="statVoice">—</strong>
+          <span class="stat-foot" id="statVoiceFoot">—</span>
+        </div>
+        <div class="stat">
+          <span class="stat-label">对局文本语言</span>
+          <strong class="stat-value" id="statLang">—</strong>
+          <span class="stat-foot" id="statLangFoot">—</span>
+        </div>
+        <div class="stat">
+          <span class="stat-label">已安装语音包</span>
+          <strong class="stat-value" id="statPacks">—</strong>
+          <span class="stat-foot" id="statPacksFoot">—</span>
+        </div>
+        <div class="stat">
+          <span class="stat-label">运行环境</span>
+          <strong class="stat-value" id="statEnv">—</strong>
+          <span class="stat-foot" id="statEnvFoot">—</span>
+        </div>
+      </div>
+
+      <div class="grid two">
+        <div class="panel">
+          <div class="panel-head">
+            <h2>切换语音包</h2>
+            <span class="muted small" id="selectedLocaleHint">未选择</span>
+          </div>
+          <div class="field">
+            <label>目标语音包</label>
+            <div class="locale-picker" id="localePicker"></div>
+          </div>
+          <div class="field">
+            <label>切换范围</label>
+            <div class="check-row">
+              <label class="check"><input type="checkbox" id="modVoice" checked /><span>对局语音 / 播报员</span></label>
+              <label class="check"><input type="checkbox" id="modLang" checked /><span>对局文本语言</span></label>
+            </div>
+            <div class="check-row">
+              <label class="check"><input type="checkbox" id="optRestart" checked /><span>完成后自动重启客户端</span></label>
+            </div>
+          </div>
+          <div class="btn-row">
+            <button class="btn primary" id="btnApply">开启所选语音包</button>
+            <button class="btn danger" id="btnRestore">恢复官方默认</button>
+            <button class="btn ghost" id="btnPlan">预检</button>
+          </div>
+          <p class="muted small" id="applyHint">预检只读，不改任何文件；对局进行中会被拒绝。</p>
+        </div>
+
+        <div class="panel">
+          <div class="panel-head"><h2>游戏环境</h2><span class="muted small" id="pathSource">—</span></div>
+          <div class="kv" id="envList"></div>
+          <div class="btn-row">
+            <button class="btn ghost" id="btnDetectInline">重新探测路径</button>
+            <button class="btn ghost" id="btnDoctorInline">环境自检</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="panel">
+        <div class="panel-head"><h2>执行进度</h2><span class="muted small" id="progressText">空闲</span></div>
+        <div class="bar"><i id="barFill"></i></div>
+        <div class="log small" id="miniLog">[就绪]</div>
+      </div>
     </section>
 
-    <section class="card">
-      <h2>当前状态</h2>
-      <div class="row"><span class="k">对局语音 / 播报</span><span class="v" id="stVoice">—</span></div>
-      <div class="row"><span class="k">对局文本语言</span><span class="v" id="stLang">—</span></div>
-      <div class="row"><span class="k">大厅选人语音</span><span class="v" id="stLobby">—</span></div>
-      <div class="row"><span class="k">加载桩 / 插件 / 挂载</span><span class="v" id="stStub">—</span></div>
-      <div class="row"><span class="k">上次动作</span><span class="v" id="stLast">—</span></div>
+    <!-- ==================== 语音包 ==================== -->
+    <section class="view" id="view-locales">
+      <div class="panel">
+        <div class="panel-head">
+          <h2>已安装语音包</h2>
+          <div class="btn-row">
+            <span class="muted small" id="voiceRootLabel">—</span>
+            <button class="btn ghost tiny" id="btnCopyRoot">复制路径</button>
+          </div>
+        </div>
+        <div class="locale-grid" id="localeGrid"></div>
+      </div>
     </section>
+
+    <!-- ==================== 更新 ==================== -->
+    <section class="view" id="view-update">
+      <div class="grid two">
+        <div class="panel">
+          <div class="panel-head"><h2>版本状态</h2></div>
+          <div class="kv" id="updateInfo"><div class="kv-row"><span class="k">状态</span><b>尚未检查</b></div></div>
+          <div class="btn-row"><button class="btn primary" id="btnCheckUpdate">检查更新</button></div>
+        </div>
+        <div class="panel">
+          <div class="panel-head"><h2>增量同步</h2><span class="muted small">已存在的文件会跳过</span></div>
+          <div class="check-row" id="syncLocales"></div>
+          <div class="btn-row"><button class="btn" id="btnSync">开始增量同步</button></div>
+        </div>
+      </div>
+      <div class="panel">
+        <div class="panel-head"><h2>资源完整性</h2><span class="muted small" id="inventoryHint">—</span></div>
+        <div class="table-wrap">
+          <table class="table" id="inventoryTable">
+            <thead><tr><th>语种</th><th>对局语音</th><th>选人语音</th><th>禁用语音</th><th>英雄数据</th></tr></thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <!-- ==================== 设置 ==================== -->
+    <section class="view" id="view-settings">
+      <div class="grid two">
+        <div class="panel">
+          <div class="panel-head"><h2>路径</h2><span class="muted small">留空 = 自动探测</span></div>
+          <div class="field"><label>联盟客户端目录（含 LeagueClient.exe）</label><input id="cfgLeaguePath" placeholder="自动探测" /></div>
+          <div class="field"><label>游戏本体目录（含 League of Legends.exe）</label><input id="cfgGamePath" placeholder="跟随客户端推导" /></div>
+          <div class="field"><label>语音包资源根目录</label><input id="cfgVoiceRoot" placeholder="自动探测" /></div>
+          <div class="btn-row">
+            <button class="btn ghost" id="btnDetect">自动探测路径</button>
+            <button class="btn primary" id="btnSaveConfig">保存</button>
+          </div>
+          <div class="cand-list" id="candidateList"></div>
+        </div>
+
+        <div class="panel">
+          <div class="panel-head"><h2>行为与服务</h2></div>
+          <div class="field"><label>默认语音包</label><select id="cfgDefaultLocale"></select></div>
+          <div class="field"><label>维护的语种（逗号分隔）</label><input id="cfgSupported" placeholder="ja_JP,ko_KR,en_US" /></div>
+          <label class="check"><input type="checkbox" id="cfgAutoRestart" /><span>切换完成后自动重启客户端</span></label>
+          <div class="field-row">
+            <div class="field"><label>服务端口</label><input id="cfgPort" type="number" min="1" max="65535" /></div>
+            <div class="field"><label>访问令牌（留空=本机免校验）</label><input id="cfgToken" placeholder="本机可留空" /></div>
+          </div>
+          <div class="field"><label>界面目录（换成自己的 UI 时指到这里）</label><input id="cfgWebDir" /></div>
+          <div class="field">
+            <label>高级功能（默认关闭，后端代码保留）</label>
+            <div class="check-row">
+              <label class="check"><input type="checkbox" id="cfgFeatureLobbyVoice" disabled /><span>大厅选人语音（需要客户端加载器，暂不启用）</span></label>
+            </div>
+          </div>
+          <pre class="code hidden" id="doctorOut"></pre>
+        </div>
+      </div>
+    </section>
+
+    <!-- ==================== 日志 ==================== -->
+    <section class="view" id="view-logs">
+      <div class="panel">
+        <div class="panel-head">
+          <h2>运行日志</h2>
+          <div class="btn-row">
+            <button class="btn ghost tiny" id="btnCopyLog">复制</button>
+            <button class="btn ghost tiny" id="btnClearLog">清空</button>
+          </div>
+        </div>
+        <div class="log" id="log"></div>
+      </div>
+    </section>
+  </main>
+</div>
+
+<div class="modal hidden" id="modal">
+  <div class="modal-box">
+    <h3 id="modalTitle">确认</h3>
+    <p id="modalBody" class="muted"></p>
+    <div class="btn-row right">
+      <button class="btn ghost" id="modalCancel">取消</button>
+      <button class="btn primary" id="modalOk">确定</button>
+    </div>
   </div>
+</div>
 
-  <section class="card" style="margin-top:14px">
-    <h2>语言包</h2>
-    <div class="locales" id="locales"></div>
-    <div class="actions">
-      <button id="btnPlan">预检(只读)</button>
-      <button id="btnApply" class="primary">开始切换</button>
-      <button id="btnRestore" class="danger">恢复官方默认</button>
-      <button id="btnRefresh">刷新状态</button>
-    </div>
-    <div style="margin-top:10px">
-      <label class="check"><input type="checkbox" id="mLobby" checked /> 大厅选人语音</label>
-      <label class="check"><input type="checkbox" id="mVoice" checked /> 对局语音/播报</label>
-      <label class="check"><input type="checkbox" id="mLang" checked /> 对局文本语言</label>
-      <label class="check"><input type="checkbox" id="mLobbyLang" /> 顺便切换大厅界面英文</label>
-      <label class="check"><input type="checkbox" id="mRestart" checked /> 完成后自动重启客户端</label>
-    </div>
-  </section>
-
-  <section class="card" style="margin-top:14px">
-    <h2>进度</h2>
-    <div class="bar"><div id="barFill"></div></div>
-    <div class="muted" id="progressText" style="margin:6px 0 10px">空闲</div>
-    <div id="log">[等待操作]</div>
-    <div class="actions">
-      <button id="btnCheck">检查更新</button>
-      <button id="btnUpdate">增量同步语言包</button>
-      <button id="btnPlugin">安装大厅语音插件</button>
-      <button id="btnDoctor">环境自检</button>
-    </div>
-  </section>
-</main>
-
-<div class="toast" id="toast"></div>
-
-<script>
-const $ = (id) => document.getElementById(id);
-let selectedLocale = "";
-let busy = false;
-
-function log(line) {
-  const box = $("log");
-  const stamp = new Date().toLocaleTimeString("zh-CN", { hour12: false });
-  box.textContent += `\n[${stamp}] ${line}`;
-  box.scrollTop = box.scrollHeight;
-}
-
-function toast(message, kind = "") {
-  const el = $("toast");
-  el.textContent = message;
-  el.className = "toast " + kind;
-  el.style.display = "block";
-  clearTimeout(el._timer);
-  el._timer = setTimeout(() => { el.style.display = "none"; }, 6000);
-}
-
-async function api(path, options = {}) {
-  const response = await fetch(path, {
-    headers: { "Content-Type": "application/json" },
-    ...options
-  });
-  const payload = await response.json().catch(() => null);
-  if (!response.ok || (payload && payload.ok === false && payload.error)) {
-    throw new Error((payload && payload.message) || `HTTP ${response.status}`);
-  }
-  return payload;
-}
-
-function selectedModules() {
-  const modules = [];
-  if ($("mLobby").checked) modules.push("lobby_voice");
-  if ($("mVoice").checked) modules.push("ingame_voice");
-  if ($("mLang").checked) modules.push("ingame_lang");
-  return modules;
-}
-
-function renderState(state) {
-  const p = state.paths;
-  $("subtitle").textContent = `v${state.app.version} · 配置：${state.app.configPath} · 资源来源：${state.voiceRootSource}`;
-  $("leagueDir").textContent = p.leagueDir || "(未定位)";
-  $("finalDir").textContent = p.finalDir || p.message.split("\n")[0];
-  $("voiceRoot").textContent = state.voiceRoot;
-  $("penguDir").textContent = state.lobby.pengu_dir || "(未找到 Pengu Loader)";
-  $("procs").innerHTML = `客户端 <span class="pill ${state.processes.client_running ? "warn" : "off"}">${state.processes.client_running ? "运行中" : "未运行"}</span>
-    对局 <span class="pill ${state.processes.game_running ? "warn" : "off"}">${state.processes.game_running ? "对局中" : "未对局"}</span>`;
-  $("stVoice").textContent = state.ingame.voice;
-  $("stLang").textContent = state.ingame.lang;
-  $("stLobby").textContent = state.lobby.voice + (state.lobby.enabled ? ` · ${state.lobby.locale}` : "");
-  $("stStub").textContent = `${state.lobby.stub_active ? "已就位" : "未放置"} / ${state.lobby.plugin_installed ? "已安装" : "未安装"} / ${state.lobby.assets_mounted ? "已挂载" : "未挂载"}`;
-}
-
-function renderLocales(payload) {
-  const host = $("locales");
-  host.innerHTML = "";
-  if (!payload.locales.length) {
-    host.innerHTML = '<div class="muted">未发现有效的语言包目录。请把 ja_JP / ko_KR / en_US 等目录放进资源目录，或用「增量同步语言包」下载。</div>';
-    return;
-  }
-  for (const item of payload.locales) {
-    const card = document.createElement("div");
-    card.className = "locale" + (item.active ? " active" : "");
-    card.innerHTML = `
-      <div class="title">
-        <strong>${item.name}</strong>
-        <span class="code">${item.code}${item.active ? " · 当前" : ""}</span>
-      </div>
-      <div class="tags">
-        <span class="tag ${item.has_voice ? "ok" : "no"}">对局语音 ${item.voice_files}</span>
-        <span class="tag ${item.has_lang ? "ok" : "no"}">对局文本 ${item.lang_files}</span>
-        <span class="tag ${item.has_lobby ? "ok" : "no"}">大厅选人 ${item.lobby_files}</span>
-      </div>
-      <button class="primary" data-locale="${item.code}">切换到 ${item.code}</button>`;
-    card.querySelector("button").addEventListener("click", () => {
-      selectedLocale = item.code;
-      apply();
-    });
-    host.appendChild(card);
-  }
-}
-
-async function refresh() {
-  const state = await api("/api/state");
-  renderState(state.state);
-  const locales = await api("/api/locales?stats=1");
-  renderLocales(locales);
-  if (!selectedLocale) selectedLocale = locales.active_locale || (locales.locales[0] && locales.locales[0].code) || "";
-}
-
-async function plan() {
-  const result = await api("/api/plan", { method: "POST", body: JSON.stringify({ locale: selectedLocale, modules: selectedModules() }) });
-  for (const check of result.plan.checks) log(`${check.ok ? "√" : "×"} ${check.module_name}：${check.message}`);
-  if (result.plan.space.needed) log("磁盘：" + (result.plan.space.message || result.plan.space.detail));
-  for (const warning of result.plan.warnings) log("! " + warning);
-  if (result.plan.blockers.length) {
-    for (const blocker of result.plan.blockers) log("× " + blocker.replace(/\n/g, " "));
-    toast("预检未通过，请看日志", "err");
-    return false;
-  }
-  toast("预检通过", "ok");
-  return true;
-}
-
-async function waitTask(id) {
-  for (;;) {
-    const payload = await api(`/api/tasks/${id}`);
-    const task = payload.task;
-    if (task.status !== "running" && task.status !== "pending") {
-      const result = payload.result || {};
-      for (const item of result.results || []) {
-        log(`${item.ok ? "√" : "×"} ${item.module_name} ${item.success}/${item.planned}${item.reason ? "：" + item.reason : ""}`);
-        if (!item.ok && item.message) log("    " + item.message.replace(/\n/g, " "));
-      }
-      log(result.message || task.error || "完成");
-      toast(result.message || (task.status === "succeeded" ? "完成" : "失败"), task.status === "succeeded" ? "ok" : "err");
-      return task;
-    }
-    await new Promise((resolve) => setTimeout(resolve, 250));
-  }
-}
-
-async function run(label, starter) {
-  if (busy) { toast("已有任务在进行中", "err"); return; }
-  busy = true;
-  document.querySelectorAll("button").forEach((button) => { button.disabled = true; });
-  log("=== " + label + " ===");
-  try {
-    const payload = await starter();
-    await waitTask(payload.task.id);
-  } catch (error) {
-    log("× " + error.message);
-    toast(error.message, "err");
-  } finally {
-    busy = false;
-    document.querySelectorAll("button").forEach((button) => { button.disabled = false; });
-    await refresh().catch(() => undefined);
-  }
-}
-
-function apply() {
-  if (!selectedLocale) { toast("请先选择语言包", "err"); return; }
-  return run(`切换到 ${selectedLocale}`, () => api("/api/apply", {
-    method: "POST",
-    body: JSON.stringify({
-      locale: selectedLocale,
-      modules: selectedModules(),
-      restartClient: $("mRestart").checked,
-      lobbyLang: $("mLobbyLang").checked ? "en_US" : "keep"
-    })
-  }));
-}
-
-$("btnPlan").addEventListener("click", () => plan().catch((error) => toast(error.message, "err")));
-$("btnApply").addEventListener("click", () => apply());
-$("btnRestore").addEventListener("click", () => run("恢复官方默认", () => api("/api/restore", {
-  method: "POST",
-  body: JSON.stringify({ restartClient: $("mRestart").checked })
-})));
-$("btnRefresh").addEventListener("click", () => refresh().then(() => toast("已刷新", "ok")).catch((error) => toast(error.message, "err")));
-$("btnCheck").addEventListener("click", () => run("检查更新", () => api("/api/update/check", { method: "POST" })));
-$("btnUpdate").addEventListener("click", () => run("增量同步语言包", () => api("/api/update/run", { method: "POST", body: JSON.stringify({}) })));
-$("btnPlugin").addEventListener("click", () => run("安装大厅语音插件", () => api("/api/plugin/install", { method: "POST", body: JSON.stringify({}) })));
-$("btnDoctor").addEventListener("click", async () => {
-  try {
-    const payload = await api("/api/doctor", { method: "POST" });
-    log(JSON.stringify(payload.doctor, null, 2));
-    toast("自检结果已输出到日志", "ok");
-  } catch (error) { toast(error.message, "err"); }
-});
-
-const events = new EventSource("/api/events");
-events.addEventListener("progress", (event) => {
-  const data = JSON.parse(event.data);
-  const progress = data.progress;
-  $("barFill").style.width = progress.percent + "%";
-  $("progressText").textContent = `${progress.percent}% (${progress.done}/${progress.total}) ${progress.current || ""}`;
-});
-events.addEventListener("log", (event) => log(JSON.parse(event.data).line));
-events.addEventListener("done", () => {
-  $("barFill").style.width = "100%";
-  $("progressText").textContent = "完成";
-});
-events.addEventListener("error", () => { $("progressText").textContent = "事件连接中断，正在重连…"; });
-
-refresh().then(() => log("已连接后端，状态就绪")).catch((error) => toast("无法连接后端：" + error.message, "err"));
-</script>
+<div class="toasts" id="toasts"></div>
+<script src="/app.js"></script>
 </body>
 </html>

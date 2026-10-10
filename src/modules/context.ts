@@ -66,5 +66,4 @@ export async function buildEnv(options: BuildEnvOptions): Promise<SwitchEnv> {
 export interface ModuleRunOptions {
   progress?: import("../core/types.ts").ProgressReporter;
   signal?: AbortSignal;
-  skinsOn?: boolean;
 }

@@ -144,7 +144,7 @@ export interface SwitchPlan {
 export async function planSwitch(options: { locale: string; modules?: ModuleId[] }): Promise<SwitchPlan> {
   const config = await loadConfig();
   const env = await buildEnvFromConfig(config);
-  const modules: ModuleId[] = options.modules?.length ? options.modules : ["lobby_voice", "ingame_voice", "ingame_lang"];
+  const modules: ModuleId[] = options.modules?.length ? options.modules : defaultApplyModules(config);
   const blockers: string[] = [];
   const warnings: string[] = [];
 
@@ -191,13 +191,39 @@ export async function planSwitch(options: { locale: string; modules?: ModuleId[]
   };
 }
 
+/* ---------------------------------------------------------------- 默认模块 */
+
+/**
+ * 默认切换范围 = 对局语音 + 对局文本。
+ * 大厅相关能力(大厅选人语音 / 大厅界面语言)由 features 开关控制: 关闭时不出现在默认流程里,
+ * 但接口仍可显式指定 modules 调用(后端能力保留)。
+ */
+export function defaultApplyModules(config: AppConfig): ModuleId[] {
+  const modules: ModuleId[] = [];
+  if (config.features.lobbyVoice) modules.push("lobby_voice");
+  modules.push("ingame_voice", "ingame_lang");
+  return modules;
+}
+
+/** 默认还原范围: 大厅能力关闭时, 只在大厅确实处于开启状态才把它加回来(避免残留)。 */
+async function defaultRestoreModules(config: AppConfig, env: SwitchEnv): Promise<ModuleId[]> {
+  const modules: ModuleId[] = [];
+  if (config.features.lobbyVoice) {
+    modules.push("lobby_voice");
+  } else if (env.penguDir && (await getStubStatus(env.penguDir, env.resolution)).active) {
+    modules.push("lobby_voice");
+  }
+  if (config.features.lobbyLang) modules.push("lobby_lang");
+  modules.push("ingame_voice", "ingame_lang");
+  return modules;
+}
+
 /* ---------------------------------------------------------------- 任务入口 */
 
 export interface ApplyRequest {
   locale: string;
   modules?: ModuleId[];
   restartClient?: boolean;
-  skinsOn?: boolean;
   lobbyLang?: "keep" | "en_US" | "zh_CN";
   oneClick?: boolean;
 }
@@ -210,7 +236,7 @@ export function startApplyTask(request: ApplyRequest): TaskSnapshot {
       return { ok: false, partial: false, restarted: false, message: env.resolution.message, summary: { ok: false, partial: false, lines: [], failed: [] }, results: [] };
     }
     const locale = request.locale || appConfig.defaultLocale;
-    const modules: ModuleId[] = request.modules?.length ? request.modules : ["lobby_voice", "ingame_voice", "ingame_lang"];
+    const modules: ModuleId[] = request.modules?.length ? request.modules : defaultApplyModules(appConfig);
     const onlyLobby = modules.length === 1 && modules[0] === "lobby_voice";
     const onlyIngame = modules.every((module) => module !== "lobby_voice");
 
@@ -218,7 +244,6 @@ export function startApplyTask(request: ApplyRequest): TaskSnapshot {
       return applyAll(env, {
         locale,
         modules,
-        skinsOn: request.skinsOn,
         restartClient: request.restartClient ?? appConfig.autoRestartClient,
         progress: handle.progress,
         signal: handle.signal,
@@ -231,7 +256,7 @@ export function startApplyTask(request: ApplyRequest): TaskSnapshot {
     for (const module of modules) {
       if (handle.isCancelled()) break;
       if (module === "lobby_voice") {
-        results.push(await applyLobbyVoice(locale, env, { progress: handle.progress, signal: handle.signal, skinsOn: request.skinsOn }));
+        results.push(await applyLobbyVoice(locale, env, { progress: handle.progress, signal: handle.signal }));
       } else if (module === "ingame_voice") {
         results.push(await applyIngameVoice(locale, { voiceRoot: env.voiceRoot, finalDir: env.finalDir, leagueDir: env.leagueDir, progress: handle.progress, signal: handle.signal }));
       } else if (module === "ingame_lang") {
@@ -254,7 +279,6 @@ export function startApplyTask(request: ApplyRequest): TaskSnapshot {
 export interface RestoreRequest {
   modules?: ModuleId[];
   restartClient?: boolean;
-  skinsOn?: boolean;
   oneClick?: boolean;
 }
 
@@ -262,12 +286,11 @@ export function startRestoreTask(request: RestoreRequest = {}): TaskSnapshot {
   return taskManager.startSnapshot("oneclick_restore", "恢复官方默认", async (handle) => {
     const appConfig = await loadConfig();
     const env = await buildEnvFromConfig(appConfig);
-    const modules: ModuleId[] = request.modules?.length ? request.modules : ["lobby_voice", "lobby_lang", "ingame_voice", "ingame_lang"];
+    const modules: ModuleId[] = request.modules?.length ? request.modules : await defaultRestoreModules(appConfig, env);
 
     if (modules.length > 1) {
       return restoreAll(env, {
         modules,
-        skinsOn: request.skinsOn,
         restartClient: request.restartClient ?? appConfig.autoRestartClient,
         progress: handle.progress,
         signal: handle.signal
@@ -277,7 +300,7 @@ export function startRestoreTask(request: RestoreRequest = {}): TaskSnapshot {
     const results: ModuleResult[] = [];
     const only = modules[0]!;
     if (only === "lobby_voice") {
-      results.push(await restoreLobbyVoice(env, { progress: handle.progress, signal: handle.signal, skinsOn: request.skinsOn }));
+      results.push(await restoreLobbyVoice(env, { progress: handle.progress, signal: handle.signal }));
     } else if (only === "ingame_voice") {
       results.push(await restoreIngameVoice({ voiceRoot: env.voiceRoot, finalDir: env.finalDir, leagueDir: env.leagueDir, progress: handle.progress, signal: handle.signal }));
     } else if (only === "ingame_lang") {

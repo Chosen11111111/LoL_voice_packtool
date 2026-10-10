@@ -24,6 +24,13 @@ export interface DownloadConfig {
   retries: number;
 }
 
+export interface FeatureFlags {
+  /** 大厅选人语音(需要加载器 + 客户端注入, 默认关闭, 仅保留后端能力)。 */
+  lobbyVoice: boolean;
+  /** 大厅界面语言(改 LeagueClientSettings.yaml, 与语音无关)。 */
+  lobbyLang: boolean;
+}
+
 export interface AppConfig {
   /** 语音包资源根目录(留空=自动探测)。 */
   voiceRoot: string;
@@ -47,6 +54,8 @@ export interface AppConfig {
   supportedLocales: string[];
   /** 应用/还原后是否自动重启客户端 UX。 */
   autoRestartClient: boolean;
+  /** 功能开关: 关掉的能力仍留在后端, 只是不在界面/默认流程里出现。 */
+  features: FeatureFlags;
   server: ServerConfig;
   download: DownloadConfig;
   logLevel: string;
@@ -64,6 +73,7 @@ const DEFAULT_CONFIG: AppConfig = {
   defaultLocale: "ja_JP",
   supportedLocales: ["ja_JP", "ko_KR", "en_US"],
   autoRestartClient: true,
+  features: { lobbyVoice: false, lobbyLang: true },
   server: { host: "127.0.0.1", port: 43110, token: "", webDir: "web" },
   download: { threads: 16, concurrency: 16, timeoutMs: 30000, retries: 3 },
   logLevel: "info"
@@ -100,6 +110,10 @@ function mergeConfig(base: AppConfig, patch: Partial<AppConfig> | null | undefin
     }
     if (key === "download" && typeof value === "object") {
       merged.download = { ...base.download, ...(value as Partial<DownloadConfig>) };
+      continue;
+    }
+    if (key === "features" && typeof value === "object") {
+      merged.features = { ...base.features, ...(value as Partial<FeatureFlags>) };
       continue;
     }
     (merged as unknown as Record<string, unknown>)[key] = value;

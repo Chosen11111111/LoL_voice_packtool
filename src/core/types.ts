@@ -31,8 +31,6 @@ export interface ModuleContext {
   leagueDir: string | null;
   progress?: ProgressReporter;
   signal?: AbortSignal;
-  /** 换肤插件同时开启时, 加载器沿用完整插件目录而不是精简的语音目录。 */
-  skinsOn?: boolean;
 }
 
 export interface TaskOutcome {

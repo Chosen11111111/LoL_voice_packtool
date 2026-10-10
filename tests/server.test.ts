@@ -129,12 +129,19 @@ test("POST /api/plan 干跑预检通过且不修改任何文件", async () => {
   const { json } = await post("/api/plan", { locale: "ja_JP" });
   assert.equal(json.ok, true);
   assert.equal(json.plan.ok, true, JSON.stringify(json.plan.blockers));
-  assert.equal(json.plan.checks.length, 3);
+  // 默认只检查对局语音 + 对局文本(大厅语音默认不在流程里)
+  assert.equal(json.plan.checks.length, 2);
+  assert.deepEqual(json.plan.checks.map((check: any) => check.module), ["ingame_voice", "ingame_lang"]);
   assert.equal(await readFile(path.join(fixture!.finalDir, "Champions", "Ahri.zh_CN.wad.client")), "CN-Ahri");
 });
 
 test("POST /api/apply 全链路切换(大厅+对局语音+对局语言)", async () => {
-  const { json } = await post("/api/apply", { locale: "ja_JP", restartClient: false });
+  // 显式指定三个模块(含大厅语音): 界面不暴露它, 但后端能力必须保留可用
+  const { json } = await post("/api/apply", {
+    locale: "ja_JP",
+    restartClient: false,
+    modules: ["lobby_voice", "ingame_voice", "ingame_lang"]
+  });
   assert.equal(json.ok, true);
   const finished = await waitTask(json.task.id);
   assert.equal(finished.task.status, "succeeded", JSON.stringify(finished.result));
@@ -156,7 +163,7 @@ test("POST /api/apply 全链路切换(大厅+对局语音+对局语言)", async 
 });
 
 test("POST /api/restore 全部还原为官方默认", async () => {
-  const { json } = await post("/api/restore", { restartClient: false });
+  const { json } = await post("/api/restore", { restartClient: false, modules: ["lobby_voice", "lobby_lang", "ingame_voice", "ingame_lang"] });
   assert.equal(json.ok, true);
   const finished = await waitTask(json.task.id);
   assert.equal(finished.task.status, "succeeded", JSON.stringify(finished.result));

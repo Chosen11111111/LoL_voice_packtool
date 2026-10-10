@@ -13,6 +13,7 @@
   },
   "scripts": {
     "start": "node src/index.ts",
+    "app": "node src/app.ts",
     "serve": "node src/index.ts serve",
     "status": "node src/index.ts status",
     "doctor": "node src/index.ts doctor",

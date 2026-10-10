@@ -1,5 +1,6 @@
 node_modules/
 .npm-cache/
+.app-profile/
 config.json
 logs/
 .tmp/
