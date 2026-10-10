@@ -12,7 +12,13 @@ import path from "node:path";
 import { createLogger } from "../core/logger.ts";
 import { isDirectory, isFile } from "../core/fsx.ts";
 import { watchChampSelect, type ChampSelectPresence, type StopWatch } from "../core/win/lcuEvents.ts";
-import { ChampSelectTracker, voiceRelativePath, type ChampSelectSession, type ChampSelectVoiceEvent } from "./champSelect.ts";
+import {
+  ChampSelectTracker,
+  voiceRelativePath,
+  type ChampSelectSession,
+  type ChampSelectTrigger,
+  type ChampSelectVoiceEvent
+} from "./champSelect.ts";
 
 const logger = createLogger("lobby-live");
 
@@ -27,6 +33,8 @@ export interface LobbyLiveOptions {
   locale: string;
   /** 是否也播别人的禁用/选人台词。 */
   includeOthers?: boolean;
+  /** 触发时机: hover = 悬停即播(默认); lock = 只有锁定(点确定)才播。 */
+  trigger?: ChampSelectTrigger;
   /** 轮询间隔(测试用)。 */
   fastIntervalMs?: number;
   idleIntervalMs?: number;
@@ -47,6 +55,7 @@ export interface LobbyLiveState {
   running: boolean;
   locale: string;
   include_others: boolean;
+  trigger: ChampSelectTrigger;
   presence: ChampSelectPresence;
   /** 本地语音包里该语种的音频数量。 */
   available: number;
@@ -55,6 +64,8 @@ export interface LobbyLiveState {
   history: LobbyLiveEvent[];
   /** 最近一次选人会话摘要(排障用)。 */
   last_session: Record<string, unknown> | null;
+  /** 最近的会话快照序列(排障: 看悬停/锁定是怎么变化的)。 */
+  session_log: Array<Record<string, unknown>>;
   /** 窗口回报的最近一次播放结果(排障用)。 */
   last_playback: PlaybackReport | null;
   playback_ok: number;
@@ -78,6 +89,7 @@ export class LobbyLiveEngine {
   private message = "未启动";
   /** 最近一次选人会话摘要(排障用: 看客户端到底给了什么结构)。 */
   private lastSession: Record<string, unknown> | null = null;
+  private sessionLog: Array<Record<string, unknown>> = [];
   /** 窗口回报的播放结果。 */
   private lastPlayback: PlaybackReport | null = null;
   private playbackOk = 0;
@@ -130,6 +142,8 @@ export class LobbyLiveEngine {
     this.lastPlayback = null;
     this.playbackOk = 0;
     this.playbackFailed = 0;
+    this.sessionLog = [];
+    this.lastSession = null;
     const watch = options.watcher ?? watchChampSelect;
     this.stopWatch = watch({
       fastIntervalMs: options.fastIntervalMs,
@@ -138,32 +152,44 @@ export class LobbyLiveEngine {
         this.presence = presence;
         if (presence !== "in") this.tracker.reset();
       },
-      onSession: (session) => this.handleSession(session)
+      onSession: (session, presence) => this.handleSession(session, presence)
     });
-    this.message = `正在监听选人流程，使用 ${options.locale} 的语音包（${this.available} 个音频）`;
+    this.message =
+      `正在监听选人流程，使用 ${options.locale} 的语音包（${this.available} 个音频，` +
+      `${(options.trigger ?? "hover") === "lock" ? "锁定才播" : "悬停即播"}）`;
     logger.info(this.message);
     return { ok: true, message: this.message, state: this.state() };
   }
 
-  private handleSession(session: ChampSelectSession): void {
+  private handleSession(session: ChampSelectSession, presence: ChampSelectPresence): void {
     const options = this.options;
     if (!options) return;
-    // 摘要: 只留排障需要的关键字段, 避免状态接口太大
-    const actions = (session.actions ?? []).flat();
-    this.lastSession = {
-      localPlayerCellId: session.localPlayerCellId,
-      gameId: session.gameId,
-      timer_phase: session.timer?.phase,
-      action_count: actions.length,
-      actions: actions.slice(0, 12).map((item) => ({
-        actorCellId: item.actorCellId,
-        championId: item.championId,
-        type: item.type,
-        completed: item.completed,
-        isInProgress: item.isInProgress
-      }))
-    };
-    const events = this.tracker.derive(null, session, { includeOthers: options.includeOthers });
+    // 只在"正在选人"时记录会话摘要(404 时空会话会覆盖掉有用的诊断信息)
+    if (presence === "in") {
+      const actions = (session.actions ?? []).flat();
+      const mine = (session.myTeam ?? []).find((item) => item.cellId === session.localPlayerCellId);
+      const snapshot: Record<string, unknown> = {
+        at: new Date().toISOString().slice(11, 19),
+        localPlayerCellId: session.localPlayerCellId,
+        gameId: session.gameId,
+        timer_phase: session.timer?.phase,
+        my_team_champion: mine?.championId ?? 0,
+        action_count: actions.length,
+        actions: actions.slice(0, 12).map((item) => ({
+          actorCellId: item.actorCellId,
+          championId: item.championId,
+          type: item.type,
+          completed: item.completed,
+          isInProgress: item.isInProgress
+        }))
+      };
+      this.lastSession = snapshot;
+      const previous = this.sessionLog[0];
+      if (!previous || JSON.stringify({ ...previous, at: 0 }) !== JSON.stringify({ ...snapshot, at: 0 })) {
+        this.sessionLog = [snapshot, ...this.sessionLog].slice(0, 10);
+      }
+    }
+    const events = this.tracker.derive(null, session, { includeOthers: options.includeOthers, trigger: options.trigger });
     for (const event of events) {
       const payload: LobbyLiveEvent = {
         ...event,
@@ -172,7 +198,7 @@ export class LobbyLiveEngine {
       };
       this.played += 1;
       this.history = [payload, ...this.history].slice(0, HISTORY_LIMIT);
-      logger.info(`播放 ${event.kind} 台词: 英雄 ${event.championId}（${event.phase}）`);
+      logger.info(`播放 ${event.kind} 台词: 英雄 ${event.championId}（${event.phase}，来源 ${event.source ?? "?"}）`);
       for (const listener of this.listeners) {
         try {
           listener(payload);
@@ -209,12 +235,14 @@ export class LobbyLiveEngine {
       running: this.isRunning(),
       locale: this.options?.locale ?? "",
       include_others: Boolean(this.options?.includeOthers),
+      trigger: this.options?.trigger ?? "hover",
       presence: this.presence,
       available: this.available,
       played: this.played,
       last_event: this.history[0] ?? null,
       history: this.history,
       last_session: this.lastSession,
+      session_log: this.sessionLog,
       last_playback: this.lastPlayback,
       playback_ok: this.playbackOk,
       playback_failed: this.playbackFailed,

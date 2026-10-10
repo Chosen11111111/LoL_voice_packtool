@@ -100,3 +100,38 @@ test("没有本地玩家信息时不产生事件", () => {
   );
   assert.equal(events.length, 0);
 });
+test("trigger=lock: 悬停不播, 只有锁定(点确定)才播", () => {
+  const tracker = new ChampSelectTracker();
+  const hover = tracker.derive(null, session({ actions: [[pickAction(0, 103, false)]] }), { now: 1000, trigger: "lock" });
+  assert.equal(hover.length, 0, "悬停不该播");
+
+  const locked = tracker.derive(null, session({ actions: [[pickAction(0, 103, true)]] }), { now: 2000, trigger: "lock" });
+  assert.deepEqual(locked.map((item) => [item.championId, item.phase]), [[103, "lock"]]);
+});
+
+test("兜底: 动作数组没变化时, 本队阵容里的英雄变化也会触发(来源 team)", () => {
+  const tracker = new ChampSelectTracker();
+  // 动作数组始终为空(某些客户端/模式下悬停只体现在阵容里)
+  const first = tracker.derive(null, session({ myTeam: [{ cellId: 0, championId: 104 }], actions: [[]] }), { now: 1000 });
+  assert.deepEqual(first.map((item) => [item.championId, item.source]), [[104, "team"]]);
+
+  const second = tracker.derive(null, session({ myTeam: [{ cellId: 0, championId: 157 }], actions: [[]] }), { now: 3000 });
+  assert.deepEqual(second.map((item) => [item.championId, item.source]), [[157, "team"]]);
+
+  // 没变化则不重复
+  const same = tracker.derive(null, session({ myTeam: [{ cellId: 0, championId: 157 }], actions: [[]] }), { now: 4000 });
+  assert.equal(same.length, 0);
+});
+
+test("动作路径已播过时, 兜底不会重复播(冷却去重)", () => {
+  const tracker = new ChampSelectTracker();
+  const events = tracker.derive(
+    null,
+    session({ myTeam: [{ cellId: 0, championId: 103 }], actions: [[pickAction(0, 103, false)]] }),
+    { now: 1000 }
+  );
+  assert.equal(events.length, 1);
+  assert.equal(events[0]!.source, "action");
+});
+
+

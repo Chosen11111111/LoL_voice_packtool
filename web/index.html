@@ -20,6 +20,20 @@
   <section class="row-card glass">
     <div class="row-head">
       <span class="row-label">游戏路径</span>
+      <!-- 选人台词播报: 触发方式 + 音量(右上角) -->
+      <div class="hud" id="voiceHud">
+        <button type="button" class="hud-pill" id="btnTriggerMode" title="触发方式：悬停到英雄就播 / 锁定（点确定）才播">悬停即播</button>
+        <button type="button" class="hud-icon" id="btnMuteToggle" title="静音 / 取消静音" aria-label="静音切换">
+          <svg viewBox="0 0 24 24" width="15" height="15" aria-hidden="true">
+            <path d="M4 9.5h3L11 6v12l-4-3.5H4z" fill="currentColor" />
+            <path id="muteArc1" d="M14.4 9.2a4.2 4.2 0 0 1 0 5.6" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" />
+            <path id="muteArc2" d="M17 6.8a7.4 7.4 0 0 1 0 10.4" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" />
+            <path id="muteCross" d="M15 9.5l5 5M20 9.5l-5 5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" />
+          </svg>
+        </button>
+        <input type="range" class="hud-volume" id="volumeSlider" min="0" max="100" step="1" value="60" aria-label="播报音量" />
+        <span class="hud-value" id="volumeValue">60%</span>
+      </div>
     </div>
     <div class="control-bar">
       <div class="field-shell" id="pathFieldShell">
