@@ -32,7 +32,10 @@ export const ENTRY_SIZE = 32;
 export const FIELD_OFFSET = 8;
 export const FIELD_SIZE = 12;
 export const FIELD_SIZE2 = 16;
-export const FIELD_HASH = 24;
+/** [+24] 是客户端校验用的内容校验值(算法未公开, 只能原样搬运)。 */
+export const FIELD_CHECKSUM = 24;
+/** 兼容旧名(早期误以为它是路径哈希, 实测为内容校验值)。 */
+export const FIELD_HASH = FIELD_CHECKSUM;
 
 /** 追加数据时的对齐(实测原文件条目偏移均为 16 字节对齐)。 */
 export const APPEND_ALIGN = 16;
@@ -42,6 +45,7 @@ export interface WadEntry {
   offset: number;
   size: number;
   size2: number;
+  /** 字段 [+24]: 客户端用来校验本条目数据的内容校验值。 */
   hash: bigint;
 }
 
@@ -193,6 +197,12 @@ export interface PatchItem {
   index: number;
   data: Buffer;
   label?: string;
+  /**
+   * 该条目的内容校验值(wad 的 [+24] 字段)。
+   * 客户端会校验它 —— 自己算不出来(算法未公开), 所以只有从**官方同源 wad**
+   * 搬运"数据 + 校验值"这一对时才会提供; 不提供则保持原值不动。
+   */
+  checksum?: bigint;
 }
 
 export interface PatchResult {
@@ -276,6 +286,7 @@ export async function patchWadEntries(wadFile: string, items: PatchItem[]): Prom
     wad.buffer.writeUInt32LE(cursor, base + FIELD_OFFSET);
     wad.buffer.writeUInt32LE(item.data.length, base + FIELD_SIZE);
     wad.buffer.writeUInt32LE(item.data.length, base + FIELD_SIZE2);
+    if (item.checksum !== undefined) wad.buffer.writeBigUInt64LE(item.checksum, base + FIELD_CHECKSUM);
     cursor += item.data.length;
     const pad = (APPEND_ALIGN - (cursor % APPEND_ALIGN)) % APPEND_ALIGN;
     if (pad) {

@@ -236,3 +236,36 @@ node src/index.ts lobby restore [--league <客户端目录>]
 > 替换时客户端必须完全退出（文件被占用无法替换，工具会明确拒绝而不是硬来）。
 > 国服 `zh_CN-assets.wad` 里有 351 个 ogg（173 选人 + 173 禁用）；
 > 国际服当前渠道的语种包里没有选人语音（`zh_TW-assets.wad` 只有 5 个 ogg）。
+
+## 选人语音（LCU 监听 + 本地播放，客户端零改动）
+
+客户端资源包 `Plugins/rcp-be-lol-game-data/<语种>-assets.wad` **有严格的内容校验**，实测结论：
+
+- 日志会报 `FATAL ERROR - Installation is corrupt. WadFile chunk verification failed.`
+- 报错里给出 `Chunk`（条目的 `+0` 字段）、`Expected`（条目 `+24` 字段）、`Actual`（客户端算出的值）、`Size`
+- 试过 40 种常见算法（xxh64 各种 seed / FNV / MurmurHash64A·B / SHA·MD5 截断 / CRC64）× 120 个真实条目，**零命中** —— 校验值是私有的，伪造不了
+- 最温和的修改（数据一个字节不改、只把数据搬到文件尾部并更新偏移）也会让客户端黑屏
+
+因此选人台词改成**工具自己在外面播**，客户端一个字节都不用动：
+
+```
+LCU 轮询 /lol-champ-select/v1/session
+        ↓ 推导事件（自己 hover/lock 选人 → choose；自己 ban → ban）
+  SSE 推 event: lobby 给工具窗口
+        ↓
+  窗口里的 <audio> 播放 <资源根>/<语种>/assets/champion-{choose,ban}-vo/<id>.ogg
+```
+
+使用方式：打开工具（界面里选中的语种就是播报语种，自动开始监听），进选人即可听到。排障用命令行：
+
+```
+node src/index.ts lobby-live --locale ja_JP [--others]
+```
+
+要点：
+
+- 客户端界面语言完全不受影响（中文依旧），因为是外部播放；
+- 换英雄会立刻切掉上一条，不会叠音；同一英雄同一类型 8 秒内不重复播；
+- 默认只播**自己**的选人/禁用；`--others` 或 API 的 `includeOthers` 可把别人的禁用也一起播；
+- 播放端就是工具窗口（Chromium 原生支持 ogg/vorbis，零解码依赖）；应用窗口启动时带 `--autoplay-policy=no-user-gesture-required`，不需要先点一下才出声。
+

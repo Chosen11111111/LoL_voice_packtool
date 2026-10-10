@@ -164,6 +164,25 @@ test("还原: 写回备份并删除备份文件, 内容与原始文件一致", a
   assert.equal(again.ok, true);
 });
 
+test("补丁: 提供 checksum 时写入 [+24], 不提供则保持原值", async () => {
+  const root = await makeTempDir("wad-checksum");
+  const { file } = await writeWad(root, [OGG_A, OGG_B, PNG_C]);
+  const before = await readWad(file);
+  const originalChecksum0 = before.entries[0]!.hash;
+  const originalChecksum1 = before.entries[1]!.hash;
+  const newChecksum = 0x0123456789abcdefn;
+
+  await patchWadEntries(file, [
+    { index: 0, data: Buffer.from("with-checksum"), checksum: newChecksum },
+    { index: 1, data: Buffer.from("without-checksum") }
+  ]);
+
+  const after = await readWad(file);
+  assert.equal(after.entries[0]!.hash, newChecksum);
+  assert.equal(after.entries[1]!.hash, originalChecksum1);
+  assert.notEqual(after.entries[0]!.hash, originalChecksum0);
+});
+
 test("异常输入: 非 RW 文件与空替换列表都安全返回", async () => {
   const root = await makeTempDir("wad-invalid");
   const bogus = path.join(root, "not-a-wad.wad");

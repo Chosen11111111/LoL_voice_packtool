@@ -158,6 +158,7 @@
 
   function selectLocaleValue(code, notify) {
     store.selected = code || "";
+    void syncLobbyLive();
     const select = $("localeSelect");
     select.value = store.selected;
 
@@ -631,9 +632,83 @@
         setStatus("操作已完成", "ok", 100);
       }
     });
+    // 选人台词: 后端监听到悬停/锁定/禁用后推过来, 这里用 <audio> 播语音包里的音频
+    events.addEventListener("lobby", (event) => {
+      try {
+        playLobbyVoice(JSON.parse(event.data));
+      } catch {
+        /* ignore */
+      }
+    });
     events.onerror = () => {
       setStatus("后端服务连接已断开", "err");
     };
+  }
+
+  /* ------------------------------------------------ 选人语音实时播报 */
+
+  // 播放端就是本窗口: Chromium 原生支持 ogg/vorbis, 不需要任何解码依赖
+  const lobbyAudio = new Audio();
+  lobbyAudio.preload = "auto";
+  let lobbyLiveLocale = "";
+
+  function playLobbyVoice(data) {
+    if (!data || !data.url) return;
+    // 换英雄时立刻切掉上一条, 避免两条台词叠在一起
+    try {
+      lobbyAudio.pause();
+      lobbyAudio.currentTime = 0;
+    } catch {
+      /* ignore */
+    }
+    lobbyAudio.src = data.url;
+    const played = lobbyAudio.play();
+    if (played && typeof played.catch === "function") {
+      played.catch(() => setStatus("浏览器拦下了自动播放，点一下窗口任意位置即可", "warn", 0));
+    }
+    if (data.championId) {
+      log("播放选人台词：" + data.kind + " 英雄 " + data.championId + "（" + data.phase + "）");
+    }
+  }
+
+  // 首次点击时解锁音频(浏览器自动播放策略)
+  document.addEventListener(
+    "click",
+    () => {
+      try {
+        lobbyAudio.muted = true;
+        lobbyAudio.play().then(() => {
+          lobbyAudio.pause();
+          lobbyAudio.muted = false;
+        }).catch(() => undefined);
+      } catch {
+        /* ignore */
+      }
+    },
+    { once: true }
+  );
+
+  /** 让后端的监听跟随界面里选中的语种。 */
+  async function syncLobbyLive() {
+    const locale = store.selected || "";
+    if (!locale || locale === lobbyLiveLocale) return;
+    lobbyLiveLocale = locale;
+    try {
+      const response = await fetch("/api/lobby-live/start", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ locale })
+      });
+      const data = await response.json();
+      if (data && data.ok) {
+        log("选人语音监听已启动：" + data.message);
+      } else if (data) {
+        lobbyLiveLocale = "";
+        log("选人语音监听未启动：" + (data.message || ""));
+      }
+    } catch {
+      lobbyLiveLocale = "";
+    }
   }
 
   /* ------------------------------------------------ 启动初始化 */
@@ -647,6 +722,7 @@
   }
 
   setBusy(false);
+  void syncLobbyLive();
   refresh()
     .then(() => {
       log("已连接后端服务 v" + store.state.app.version);

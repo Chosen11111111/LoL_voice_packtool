@@ -11,6 +11,7 @@ import { scanLocales } from "./packs/locales.ts";
 import { getIngameStatus } from "./packs/inventory.ts";
 import { applyLobbyVoice, getLobbyStatus, restoreLobbyVoice } from "./modules/lobbyVoice.ts";
 import { getLobbyLangState } from "./modules/lobbyLang.ts";
+import { lobbyLive } from "./modules/lobbyLive.ts";
 import { buildEnv } from "./modules/context.ts";
 import { buildEnvFromConfig, doctor, getLocales, inspectPaths, planSwitch, startApplyTask, startRestoreTask, startUpdateCheckTask, startUpdateRunTask, updateConfig } from "./service.ts";
 import { taskManager } from "./tasks/manager.ts";
@@ -35,6 +36,40 @@ interface ParsedArgs {
 
 /** 纯布尔开关(后面跟的值不会被当成参数值)。 */
 const BOOLEAN_FLAGS = new Set(["json", "force", "help", "h", "stats", "verbose"]);
+
+/**
+ * 选人语音实时播报(LCU 监听 + 本地播放)。
+ * 这个命令主要用于排障: 它只监听并打印事件, 音频由工具窗口播放。
+ */
+async function runLobbyLiveCommand(args: ParsedArgs): Promise<number> {
+  const base = await loadConfig();
+  const leagueOverride = flagString(args, "league");
+  const config = leagueOverride ? { ...base, leaguePath: leagueOverride } : base;
+  const env = await buildEnv({ config, appDir: appRoot(), voiceRoot: flagString(args, "root"), skipProcess: true });
+  const locale = flagString(args, "locale") ?? base.defaultLocale;
+  print(`资源根: ${env.voiceRoot}`);
+  print(`语音包: ${locale}`);
+  print("开始监听选人流程 …（Ctrl+C 退出）");
+  const result = await lobbyLive.start({
+    voiceRoot: env.voiceRoot,
+    locale,
+    includeOthers: Boolean(flagBool(args, "others"))
+  });
+  print(`${result.ok ? "[+]" : "[-]"} ${result.message}`);
+  if (!result.ok) return 1;
+  const unsubscribe = lobbyLive.subscribe((event) => {
+    print(`  [${new Date().toLocaleTimeString("zh-CN", { hour12: false })}] 播报 ${event.kind} 英雄 ${event.championId}（${event.phase}）-> ${event.url}`);
+  });
+  await new Promise<void>((resolve) => {
+    const stop = () => {
+      unsubscribe();
+      void lobbyLive.stop().then(() => resolve());
+    };
+    process.on("SIGINT", stop);
+    process.on("SIGTERM", stop);
+  });
+  return 0;
+}
 
 /** 大厅选人语音(客户端资源包 WAD 方案): 可指定 --league 直接作用于某一台客户端。 */
 async function runLobbyCommand(args: ParsedArgs): Promise<number> {
@@ -346,6 +381,11 @@ export async function runCli(argv = process.argv.slice(2)): Promise<number> {
   if (!jsonMode) setLogFile(null);
 
   const command = args.command || "status";
+  // --help / -h / help 都直接打印帮助
+  if (flagBool(args, "help") || flagBool(args, "h") || command === "help") {
+    printHelp();
+    return 0;
+  }
   try {
     switch (command) {
       case "status":
@@ -389,6 +429,8 @@ export async function runCli(argv = process.argv.slice(2)): Promise<number> {
       }
       case "lobby":
         return await runLobbyCommand(args);
+      case "lobby-live":
+        return await runLobbyLiveCommand(args);
       case "serve":
         return await commandServe(args);
       case "doctor": {
@@ -463,6 +505,9 @@ export function printHelp(): void {
   print("  restore                    恢复官方国服默认 [--modules ...] [--restart=false]");
   print("  oneclick apply|restore     一键全套 / 一键还原");
   print("  update check|run           检查更新 / 增量同步语言包 [--locales ja_JP,ko_KR]");
+  print("  lobby-live [--locale ja_JP] [--others]   选人语音实时播报(LCU 监听, 音频由工具窗口播放)");
+  print("  lobby [apply|restore|status] [--locale ja_JP] [--league <客户端目录>]");
+  print("                             大厅选人语音(客户端资源包方案)");
   print("  paths                      探测所有可能的游戏安装路径");
   print("  doctor                     环境自检(路径/进程/语种/语言包)");
   print("  config [get|set k=v|path]  查看或修改配置");

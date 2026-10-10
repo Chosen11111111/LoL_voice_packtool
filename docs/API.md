@@ -259,3 +259,23 @@ data: {"type":"state","task":{ "id":"…","status":"running", … }}
 3. **完全独立**：前端自己起服务（Vite/Electron），只把 `http://127.0.0.1:43110` 当后端调用。注意跨域已放开（`Access-Control-Allow-Origin: *`），若设置了 `token` 记得带 `X-Auth-Token`。
 
 后端不含任何 UI 假设：不注入 HTML、不读前端状态、不要求特定框架。**只依赖本文件描述的接口形状。**
+
+### 选人语音实时播报
+
+| 方法 | 路径 | 说明 |
+| --- | --- | --- |
+| GET | `/api/lobby-live/state` | 监听状态：`running / locale / presence / played / last_event / history` |
+| POST | `/api/lobby-live/start` | `{ locale, includeOthers? }` → 开始监听选人流程 |
+| POST | `/api/lobby-live/stop` | 停止监听 |
+| GET | `/api/lobby-audio/:kind/:id.ogg?locale=ja_JP` | 音频来源，`kind` = `choose` 或 `ban`，直接返回 `audio/ogg` |
+
+SSE 事件（`GET /api/events`）：
+
+```
+event: lobby
+data: {"kind":"choose","championId":103,"phase":"hover","actorCellId":0,
+       "locale":"ja_JP","url":"/api/lobby-audio/choose/103.ogg?locale=ja_JP"}
+```
+
+前端收到后直接用 `<audio src=url>` 播放即可（工具自带的前端已经接好）。
+

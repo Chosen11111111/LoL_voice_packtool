@@ -73,7 +73,9 @@ function openAppWindow(browser: string, url: string): ChildProcess {
       "--no-first-run",
       "--no-default-browser-check",
       "--disable-features=msEdgeSidebarV2,msSmartScreenProtection",
-      "--window-size=800,600"
+      "--window-size=800,600",
+      // 选人台词是由后端事件触发播放的, 不能受浏览器"需要用户手势才能播放"的策略限制
+      "--autoplay-policy=no-user-gesture-required"
     ],
     { stdio: "ignore", windowsHide: false }
   );

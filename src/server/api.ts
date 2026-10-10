@@ -1,8 +1,10 @@
 /** REST API: 界面(未来任意前端)只需对着这一组接口写。 */
 import path from "node:path";
-import { copyFile, mkdir, rename } from "node:fs/promises";
+import { copyFile, mkdir, readFile, rename } from "node:fs/promises";
 import { APP_NAME, APP_NAME_CN, APP_VERSION, API_VERSION } from "../version.ts";
 import { loadConfig, appRoot, type AppConfig } from "../core/config.ts";
+import { resolveVoiceRoot } from "../core/paths.ts";
+import { lobbyLive } from "../modules/lobbyLive.ts";
 import { isDirectory } from "../core/fsx.ts";
 import type { ModuleId } from "../core/types.ts";
 import { invalidateConfigCache } from "../core/config.ts";
@@ -52,7 +54,55 @@ export function buildRouter(): Router {
     sse_clients: router.sseCount
   }));
 
-  router.get("/api/state", async () => ({ ok: true, state: await getDashboard() }));
+  router.get("/api/state", async () => ({ ok: true, state: { ...(await getDashboard()), lobby_live: lobbyLive.state() } }));
+
+  /* ------------------------------------------------ 选人语音实时播报 */
+
+  /** 工具窗口播放的音频来源: <资源根>/<语种>/assets/champion-{choose,ban}-vo/<id>.ogg */
+  router.get("/api/lobby-audio/:kind/:file", async (context) => {
+    const kind = context.params.kind === "ban" ? "champion-ban-vo" : "champion-choose-vo";
+    const id = Number.parseInt(String(context.params.file ?? "").replace(/\.ogg$/i, ""), 10);
+    const locale = String(context.query.get("locale") ?? "");
+    if (!Number.isFinite(id) || id <= 0 || !/^[a-z]{2}_[A-Z]{2}$/.test(locale)) {
+      return { ok: false, error: "bad_request", message: "参数不合法" };
+    }
+    const config = await loadConfig();
+    const root = (await resolveVoiceRoot(config, appRoot())).root;
+    const file = path.join(root, locale, "assets", kind, `${id}.ogg`);
+    const data = await readFile(file).catch(() => null);
+    if (!data) {
+      context.res.writeHead(404, { "Content-Type": "application/json; charset=utf-8" });
+      context.res.end(JSON.stringify({ ok: false, error: "not_found", message: `语音包里没有 ${locale}/${kind}/${id}.ogg` }));
+      return undefined;
+    }
+    context.res.writeHead(200, {
+      "Content-Type": "audio/ogg",
+      "Content-Length": data.length,
+      "Cache-Control": "no-store"
+    });
+    context.res.end(data);
+    return undefined;
+  });
+
+  router.get("/api/lobby-live/state", () => ({ ok: true, state: lobbyLive.state() }));
+
+  router.post("/api/lobby-live/start", async (context) => {
+    const body = asRecord(context.body);
+    const config = await loadConfig();
+    const locale = String(body.locale ?? config.defaultLocale);
+    const root = (await resolveVoiceRoot(config, appRoot())).root;
+    const result = await lobbyLive.start({
+      voiceRoot: root,
+      locale,
+      includeOthers: Boolean(body.includeOthers)
+    });
+    return { ok: result.ok, message: result.message, state: result.state, audio_base: `/api/lobby-audio` };
+  });
+
+  router.post("/api/lobby-live/stop", async () => {
+    await lobbyLive.stop();
+    return { ok: true, state: lobbyLive.state() };
+  });
 
   /** 客户端语种/渠道(国服 or 外服)与目标槽位后缀。 */
   router.get("/api/client", async () => {
@@ -225,6 +275,11 @@ export async function startApiServer(
   // 任务事件 -> SSE
   taskManager.subscribe((event: TaskEvent) => {
     router.broadcast(event.type, event);
+  });
+
+  // 选人语音实时播报事件 -> SSE(前端收到后用它播音频)
+  lobbyLive.subscribe((event) => {
+    router.broadcast("lobby", event);
   });
 
   // 前端目录: 绝对路径直接用, 相对路径相对项目根

@@ -41,6 +41,82 @@ export interface EntryMapping {
   ban: Record<string, number>;
 }
 
+/** 官方 wad 里的一个"块": 数据 + 校验值(两者必须成对搬运)。 */
+export interface SourceChunk {
+  data: Buffer;
+  checksum: bigint;
+  size: number;
+}
+
+/**
+ * 建立 "chunkId(+0) -> 数据+校验值" 表。
+ * 客户端会校验每条数据的内容校验值, 而算法未公开 —— 因此只能从官方 wad 里
+ * 把"数据 + 校验值"整对搬过来, 这样校验天然成立。
+ */
+export async function buildChunkTable(sourceWadFile: string): Promise<Map<string, SourceChunk>> {
+  const source = await readWad(sourceWadFile);
+  const table = new Map<string, SourceChunk>();
+  for (const entry of source.entries) {
+    const base = 272 + entry.index * 32;
+    const chunkId = source.buffer.readBigUInt64LE(base).toString(16);
+    table.set(chunkId, {
+      data: Buffer.from(source.buffer.subarray(entry.offset, entry.offset + entry.size)),
+      checksum: source.buffer.readBigUInt64LE(base + 24),
+      size: entry.size
+    });
+  }
+  return table;
+}
+
+export interface TransplantOptions {
+  targetWadFile: string;
+  sourceWadFile: string;
+  onLog?: (line: string) => void;
+  onProgress?: (done: number, total: number, current: string) => void;
+  /** 只搬运这些 chunkId(留空=全部能对上的)。 */
+  onlyChunkIds?: Set<string>;
+}
+
+/** 把官方 wad 的块搬进目标 wad(按 chunkId 对齐), 数据与校验值成对替换。 */
+export async function transplantChunks(options: TransplantOptions): Promise<PatchResult & { matched: number; total: number }> {
+  const log = options.onLog ?? (() => undefined);
+  const progress = options.onProgress ?? (() => undefined);
+  const target = await readWad(options.targetWadFile);
+  const table = await buildChunkTable(options.sourceWadFile);
+  log(`源 wad 提供 ${table.size} 个块`);
+
+  const items: PatchItem[] = [];
+  let matched = 0;
+  let done = 0;
+  for (const entry of target.entries) {
+    const base = 272 + entry.index * 32;
+    const chunkId = target.buffer.readBigUInt64LE(base).toString(16);
+    if (options.onlyChunkIds && !options.onlyChunkIds.has(chunkId)) continue;
+    const chunk = table.get(chunkId);
+    if (!chunk) continue;
+    matched += 1;
+    items.push({ index: entry.index, data: chunk.data, checksum: chunk.checksum, label: `chunk ${chunkId.slice(0, 12)}` });
+    done += 1;
+    progress(done, target.count, chunkId.slice(0, 12));
+  }
+  if (!items.length) {
+    return {
+      ok: false,
+      patched: 0,
+      skipped: 0,
+      backup: null,
+      bytesAppended: 0,
+      labels: [],
+      skippedLabels: [],
+      matched: 0,
+      total: target.count,
+      message: "源 wad 与目标 wad 没有任何可对齐的块(chunkId 不匹配)"
+    };
+  }
+  const result = await patchWadEntries(options.targetWadFile, items);
+  return { ...result, matched, total: target.count };
+}
+
 /**
  * wad 身份标识。
  * 不能用文件大小 —— 补丁之后文件会变长, 那样缓存会失效并触发无谓的重新识别。
