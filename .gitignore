@@ -1,0 +1,6 @@
+node_modules/
+.npm-cache/
+config.json
+logs/
+.tmp/
+*.log

@@ -1,0 +1,29 @@
+{
+  "voiceRoot": "E:\\\\ChosenSkin2.0\\\\voice",
+  "leaguePath": "",
+  "gamePath": "",
+  "penguLoaderDir": "",
+  "manifestDownloader": "ManifestDownloader.exe",
+  "manifestId": "37D5BB71755990B9",
+  "bundleProxy": "https://gh.chosen.cc.cd/channels/public/bundles",
+  "cdnBase": "https://raw.communitydragon.org/latest",
+  "defaultLocale": "ja_JP",
+  "supportedLocales": [
+    "ja_JP",
+    "ko_KR",
+    "en_US"
+  ],
+  "autoRestartClient": true,
+  "server": {
+    "host": "127.0.0.1",
+    "port": 43110,
+    "token": ""
+  },
+  "download": {
+    "threads": 16,
+    "concurrency": 16,
+    "timeoutMs": 30000,
+    "retries": 3
+  },
+  "logLevel": "info"
+}

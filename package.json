@@ -1,0 +1,34 @@
+{
+  "name": "league-voice",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "英雄联盟 多语种语音包 / 语言包 独立切换后端 (TypeScript, 零运行时依赖)",
+  "main": "src/index.ts",
+  "bin": {
+    "league-voice": "src/index.ts"
+  },
+  "engines": {
+    "node": ">=20.11"
+  },
+  "scripts": {
+    "start": "node src/index.ts",
+    "serve": "node src/index.ts serve",
+    "status": "node src/index.ts status",
+    "doctor": "node src/index.ts doctor",
+    "typecheck": "tsc -p tsconfig.json",
+    "test": "node --test --test-isolation=none \"tests/**/*.test.ts\"",
+    "test:watch": "node --test --watch --test-isolation=none \"tests/**/*.test.ts\""
+  },
+  "keywords": [
+    "league-of-legends",
+    "voice-pack",
+    "locale",
+    "lcu",
+    "pengu-loader"
+  ],
+  "license": "MIT",
+  "devDependencies": {
+    "@types/node": "^24.0.0"
+  }
+}
