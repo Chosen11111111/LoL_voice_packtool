@@ -7,219 +7,169 @@
 <link rel="stylesheet" href="/styles.css" />
 </head>
 <body>
-<div class="app">
-  <aside class="sidebar">
-    <div class="brand">
-      <div class="brand-mark">LV</div>
-      <div class="brand-text">
-        <strong>语音包切换器</strong>
-        <span id="brandVersion">League Voice</span>
-      </div>
-    </div>
-
-    <nav class="nav" id="nav">
-      <button class="nav-item active" data-view="overview"><i class="ico-dot"></i><span>概览</span></button>
-      <button class="nav-item" data-view="locales"><i class="ico-dot"></i><span>语音包</span></button>
-      <button class="nav-item" data-view="update"><i class="ico-dot"></i><span>更新与下载</span></button>
-      <button class="nav-item" data-view="settings"><i class="ico-dot"></i><span>设置</span></button>
-      <button class="nav-item" data-view="logs"><i class="ico-dot"></i><span>运行日志</span></button>
-    </nav>
-
-    <div class="sidebar-foot">
-      <div class="conn" id="conn"><i class="dot"></i><span>连接中…</span></div>
-      <div class="muted tiny" id="appRootLabel">—</div>
-    </div>
-  </aside>
-
-  <main class="main">
-    <header class="topbar">
-      <div class="topbar-title">
-        <h1 id="viewTitle">概览</h1>
-        <p class="muted small" id="viewSub">正在读取后端状态…</p>
-      </div>
-      <div class="topbar-actions">
-        <div class="task-chip hidden" id="taskChip">
-          <div class="task-chip-bar"><i id="taskChipFill"></i></div>
-          <span id="taskChipText">任务进行中</span>
-          <button class="btn tiny danger" id="btnCancelTask">取消</button>
-        </div>
-        <button class="btn ghost" id="btnRefresh">刷新</button>
-      </div>
-    </header>
-
-    <!-- ==================== 概览 ==================== -->
-    <section class="view active" id="view-overview">
-      <div class="cards four">
-        <div class="stat">
-          <span class="stat-label">对局语音 / 播报</span>
-          <strong class="stat-value" id="statVoice">—</strong>
-          <span class="stat-foot" id="statVoiceFoot">—</span>
-        </div>
-        <div class="stat">
-          <span class="stat-label">对局文本语言</span>
-          <strong class="stat-value" id="statLang">—</strong>
-          <span class="stat-foot" id="statLangFoot">—</span>
-        </div>
-        <div class="stat">
-          <span class="stat-label">已安装语音包</span>
-          <strong class="stat-value" id="statPacks">—</strong>
-          <span class="stat-foot" id="statPacksFoot">—</span>
-        </div>
-        <div class="stat">
-          <span class="stat-label">运行环境</span>
-          <strong class="stat-value" id="statEnv">—</strong>
-          <span class="stat-foot" id="statEnvFoot">—</span>
-        </div>
-      </div>
-
-      <div class="grid two">
-        <div class="panel">
-          <div class="panel-head">
-            <h2>切换语音包</h2>
-            <span class="muted small" id="selectedLocaleHint">未选择</span>
-          </div>
-          <div class="field">
-            <label>目标语音包</label>
-            <div class="locale-picker" id="localePicker"></div>
-          </div>
-          <div class="field">
-            <label>切换范围</label>
-            <div class="check-row">
-              <label class="check"><input type="checkbox" id="modVoice" checked /><span>对局语音 / 播报员</span></label>
-              <label class="check"><input type="checkbox" id="modLang" checked /><span>对局文本语言</span></label>
-            </div>
-            <div class="check-row">
-              <label class="check"><input type="checkbox" id="optRestart" checked /><span>完成后自动重启客户端</span></label>
-            </div>
-          </div>
-          <div class="btn-row">
-            <button class="btn primary" id="btnApply">开启所选语音包</button>
-            <button class="btn danger" id="btnRestore">恢复官方默认</button>
-            <button class="btn ghost" id="btnPlan">预检</button>
-          </div>
-          <p class="muted small" id="applyHint">预检只读，不改任何文件；对局进行中会被拒绝。</p>
-        </div>
-
-        <div class="panel">
-          <div class="panel-head"><h2>游戏环境</h2><span class="muted small" id="pathSource">—</span></div>
-          <div class="kv" id="envList"></div>
-          <div class="btn-row">
-            <button class="btn ghost" id="btnDetectInline">重新探测路径</button>
-            <button class="btn ghost" id="btnDoctorInline">环境自检</button>
-          </div>
-        </div>
-      </div>
-
-      <div class="panel">
-        <div class="panel-head"><h2>执行进度</h2><span class="muted small" id="progressText">空闲</span></div>
-        <div class="bar"><i id="barFill"></i></div>
-        <div class="log small" id="miniLog">[就绪]</div>
-      </div>
-    </section>
-
-    <!-- ==================== 语音包 ==================== -->
-    <section class="view" id="view-locales">
-      <div class="panel">
-        <div class="panel-head">
-          <h2>已安装语音包</h2>
-          <div class="btn-row">
-            <span class="muted small" id="voiceRootLabel">—</span>
-            <button class="btn ghost tiny" id="btnCopyRoot">复制路径</button>
-          </div>
-        </div>
-        <div class="locale-grid" id="localeGrid"></div>
-      </div>
-    </section>
-
-    <!-- ==================== 更新 ==================== -->
-    <section class="view" id="view-update">
-      <div class="grid two">
-        <div class="panel">
-          <div class="panel-head"><h2>版本状态</h2></div>
-          <div class="kv" id="updateInfo"><div class="kv-row"><span class="k">状态</span><b>尚未检查</b></div></div>
-          <div class="btn-row"><button class="btn primary" id="btnCheckUpdate">检查更新</button></div>
-        </div>
-        <div class="panel">
-          <div class="panel-head"><h2>增量同步</h2><span class="muted small">已存在的文件会跳过</span></div>
-          <div class="check-row" id="syncLocales"></div>
-          <div class="btn-row"><button class="btn" id="btnSync">开始增量同步</button></div>
-        </div>
-      </div>
-      <div class="panel">
-        <div class="panel-head"><h2>资源完整性</h2><span class="muted small" id="inventoryHint">—</span></div>
-        <div class="table-wrap">
-          <table class="table" id="inventoryTable">
-            <thead><tr><th>语种</th><th>对局语音</th><th>选人语音</th><th>禁用语音</th><th>英雄数据</th></tr></thead>
-            <tbody></tbody>
-          </table>
-        </div>
-      </div>
-    </section>
-
-    <!-- ==================== 设置 ==================== -->
-    <section class="view" id="view-settings">
-      <div class="grid two">
-        <div class="panel">
-          <div class="panel-head"><h2>路径</h2><span class="muted small">留空 = 自动探测</span></div>
-          <div class="field"><label>联盟客户端目录（含 LeagueClient.exe）</label><input id="cfgLeaguePath" placeholder="自动探测" /></div>
-          <div class="field"><label>游戏本体目录（含 League of Legends.exe）</label><input id="cfgGamePath" placeholder="跟随客户端推导" /></div>
-          <div class="field"><label>语音包资源根目录</label><input id="cfgVoiceRoot" placeholder="自动探测" /></div>
-          <div class="btn-row">
-            <button class="btn ghost" id="btnDetect">自动探测路径</button>
-            <button class="btn primary" id="btnSaveConfig">保存</button>
-          </div>
-          <div class="cand-list" id="candidateList"></div>
-        </div>
-
-        <div class="panel">
-          <div class="panel-head"><h2>行为与服务</h2></div>
-          <div class="field"><label>默认语音包</label><select id="cfgDefaultLocale"></select></div>
-          <div class="field"><label>维护的语种（逗号分隔）</label><input id="cfgSupported" placeholder="ja_JP,ko_KR,en_US" /></div>
-          <label class="check"><input type="checkbox" id="cfgAutoRestart" /><span>切换完成后自动重启客户端</span></label>
-          <div class="field-row">
-            <div class="field"><label>服务端口</label><input id="cfgPort" type="number" min="1" max="65535" /></div>
-            <div class="field"><label>访问令牌（留空=本机免校验）</label><input id="cfgToken" placeholder="本机可留空" /></div>
-          </div>
-          <div class="field"><label>界面目录（换成自己的 UI 时指到这里）</label><input id="cfgWebDir" /></div>
-          <div class="field">
-            <label>高级功能（默认关闭，后端代码保留）</label>
-            <div class="check-row">
-              <label class="check"><input type="checkbox" id="cfgFeatureLobbyVoice" disabled /><span>大厅选人语音（需要客户端加载器，暂不启用）</span></label>
-            </div>
-          </div>
-          <pre class="code hidden" id="doctorOut"></pre>
-        </div>
-      </div>
-    </section>
-
-    <!-- ==================== 日志 ==================== -->
-    <section class="view" id="view-logs">
-      <div class="panel">
-        <div class="panel-head">
-          <h2>运行日志</h2>
-          <div class="btn-row">
-            <button class="btn ghost tiny" id="btnCopyLog">复制</button>
-            <button class="btn ghost tiny" id="btnClearLog">清空</button>
-          </div>
-        </div>
-        <div class="log" id="log"></div>
-      </div>
-    </section>
-  </main>
+<!-- 柔和蓝白环境底衬（供毛玻璃折射出通透质感，克制不花哨） -->
+<div class="ambient-bg" aria-hidden="true">
+  <span class="ambient-blob blob-1"></span>
+  <span class="ambient-blob blob-2"></span>
+  <span class="ambient-blob blob-3"></span>
 </div>
 
-<div class="modal hidden" id="modal">
-  <div class="modal-box">
-    <h3 id="modalTitle">确认</h3>
-    <p id="modalBody" class="muted"></p>
-    <div class="btn-row right">
-      <button class="btn ghost" id="modalCancel">取消</button>
-      <button class="btn primary" id="modalOk">确定</button>
+<div class="layout">
+
+  <!-- 第一排：路径栏 -->
+  <section class="row-card glass">
+    <div class="row-head">
+      <span class="row-label">游戏路径</span>
     </div>
+    <div class="control-bar">
+      <div class="field-shell" id="pathFieldShell">
+        <input
+          type="text"
+          id="leaguePathInput"
+          placeholder="例如：D:\WeGameApps\英雄联盟\LeagueClient"
+          autocomplete="off"
+          spellcheck="false"
+        />
+      </div>
+
+      <button type="button" class="btn soft-btn" id="btnAutoSearchPath">自动搜索</button>
+      <button type="button" class="btn primary" id="btnConfirmPath">确认</button>
+      <button type="button" class="btn region-pill" id="btnServerRegion" data-region="cn">
+        <span class="region-dot"></span>
+        <span id="regionText">国服</span>
+      </button>
+    </div>
+  </section>
+
+  <!-- 第二排：语言包下拉栏 + 压缩包选择 + 三种勾选情况 -->
+  <section class="row-card glass row-dropdown-section">
+    <div class="row-head">
+      <span class="row-label">语音包选择</span>
+    </div>
+    <div class="control-bar">
+      <!-- 自定义毛玻璃下拉栏 -->
+      <div class="custom-select" id="customLocaleSelect">
+        <button type="button" class="select-trigger" id="selectTrigger" aria-expanded="false">
+          <span class="select-label placeholder" id="selectLabel">未选中语音包</span>
+          <span class="select-caret"></span>
+        </button>
+        <div class="select-menu hidden" id="selectMenu"></div>
+        <select id="localeSelect" class="hidden">
+          <option value="">未选中语音包</option>
+        </select>
+      </div>
+
+      <input
+        type="file"
+        id="voicePackFileInput"
+        class="hidden"
+        accept=".zip,.7z,.rar,.tar,.gz"
+      />
+      <button type="button" class="btn soft-blue-btn" id="btnChooseLocale">语音包选择</button>
+    </div>
+
+    <!-- 三种情况：胶囊式舒适勾选框 -->
+    <div class="check-subrow">
+      <label class="check-pill">
+        <input type="checkbox" id="modIngameVoice" checked />
+        <span class="check-dot"></span>
+        <span class="check-text">游戏内语音及播报员</span>
+      </label>
+
+      <label class="check-pill">
+        <input type="checkbox" id="modIngameLang" checked />
+        <span class="check-dot"></span>
+        <span class="check-text">游戏内文字</span>
+      </label>
+
+      <label class="check-pill">
+        <input type="checkbox" id="modLobbyVoice" checked />
+        <span class="check-dot"></span>
+        <span class="check-text">对局前选人语音</span>
+      </label>
+    </div>
+  </section>
+
+  <!-- 第三排：当前状态（三个状况） -->
+  <section class="row-card glass status-section">
+    <div class="row-head">
+      <span class="row-label">当前状态</span>
+    </div>
+    <div class="status-three-grid">
+      <div class="status-item" id="cardStatusVoice">
+        <div class="status-item-top">
+          <span class="status-name">游戏内语音及播报员</span>
+          <span class="status-tag" id="tagStatusVoice">原版</span>
+        </div>
+        <strong class="status-badge" id="statusIngameVoice">读取中…</strong>
+      </div>
+
+      <div class="status-item" id="cardStatusLang">
+        <div class="status-item-top">
+          <span class="status-name">游戏内文字</span>
+          <span class="status-tag" id="tagStatusLang">原版</span>
+        </div>
+        <strong class="status-badge" id="statusIngameLang">读取中…</strong>
+      </div>
+
+      <div class="status-item" id="cardStatusLobby">
+        <div class="status-item-top">
+          <span class="status-name">对局前选人语音</span>
+          <span class="status-tag" id="tagStatusLobby">原版</span>
+        </div>
+        <strong class="status-badge" id="statusLobbyVoice">读取中…</strong>
+      </div>
+    </div>
+  </section>
+
+  <!-- 第四排：恢复按钮和开启按钮 -->
+  <section class="action-row">
+    <button type="button" class="btn action-btn restore-btn glass" id="btnRestore">恢复原版</button>
+    <button type="button" class="btn primary action-btn apply-btn" id="btnApply">开启语音包</button>
+  </section>
+
+  <!-- 第五排：状态 和 日志按钮 -->
+  <footer class="row-card glass footer-row">
+    <div class="footer-status">
+      <div class="footer-status-top">
+        <span class="status-dot" id="statusDot"></span>
+        <span class="status-text" id="statusText">就绪</span>
+      </div>
+      <div class="progress-track">
+        <div class="progress-fill" id="progressFill"></div>
+      </div>
+    </div>
+    <button type="button" class="btn soft-btn log-btn" id="btnOpenLog">日志</button>
+  </footer>
+
+</div>
+
+<!-- 多路径选择弹窗 -->
+<div class="modal hidden" id="pathSelectModal">
+  <div class="modal-box glass-modal">
+    <div class="modal-head">
+      <h3>检测到多个英雄联盟路径，请选择</h3>
+      <button type="button" class="btn tiny soft-btn" id="btnClosePathSelect">关闭</button>
+    </div>
+    <p class="modal-tip">在电脑中搜索到以下多个游戏目录，点击对应项即可选用：</p>
+    <div class="path-cand-list" id="pathCandidateList"></div>
   </div>
 </div>
 
-<div class="toasts" id="toasts"></div>
+<!-- 日志弹窗 -->
+<div class="modal hidden" id="logModal">
+  <div class="modal-box glass-modal">
+    <div class="modal-head">
+      <h3>运行日志</h3>
+      <div class="modal-actions">
+        <button type="button" class="btn tiny soft-btn" id="btnClearLog">清空</button>
+        <button type="button" class="btn tiny soft-btn" id="btnCloseLog">关闭</button>
+      </div>
+    </div>
+    <div class="log-content" id="logBox">[就绪]</div>
+  </div>
+</div>
+
 <script src="/app.js"></script>
 </body>
 </html>

@@ -1,68 +1,75 @@
-/* 英雄联盟语音包切换器 —— 界面逻辑(零依赖, 直接吃后端 REST + SSE) */
+/* 英雄联盟语音包切换器 —— 五排精致蓝白毛玻璃界面逻辑 */
 (() => {
   "use strict";
 
   const $ = (id) => document.getElementById(id);
-  const MAX_LOG = 800;
+  const MAX_LOG = 500;
 
   const store = {
     state: null,
-    locales: null,
+    locales: [],
+    customPacks: [],
     config: null,
     selected: "",
+    region: "cn",
     logs: [],
     busy: false,
-    taskId: null,
-    lastUpdate: null
+    taskId: null
   };
 
   /* ------------------------------------------------ 基础工具 */
+
+  function escapeHtml(text) {
+    return String(text).replace(/[&<>"']/g, (ch) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[ch]));
+  }
 
   function log(line) {
     const stamp = new Date().toLocaleTimeString("zh-CN", { hour12: false });
     for (const raw of String(line).split("\n")) {
       store.logs.push("[" + stamp + "] " + raw);
     }
-    if (store.logs.length > MAX_LOG) store.logs.splice(0, store.logs.length - MAX_LOG);
-    renderLogs();
+    if (store.logs.length > MAX_LOG) {
+      store.logs.splice(0, store.logs.length - MAX_LOG);
+    }
+    const box = $("logBox");
+    if (box) {
+      box.textContent = store.logs.join("\n") || "[就绪]";
+      box.scrollTop = box.scrollHeight;
+    }
   }
 
-  function renderLogs() {
-    const text = store.logs.join("\n") || "[就绪]";
-    $("log").textContent = text;
-    $("log").scrollTop = $("log").scrollHeight;
-    const tail = store.logs.slice(-6).join("\n") || "[就绪]";
-    $("miniLog").textContent = tail;
-    $("miniLog").scrollTop = $("miniLog").scrollHeight;
+  function setStatus(text, kind, percent) {
+    $("statusText").textContent = text;
+    const dot = $("statusDot");
+    dot.classList.remove("ok", "err");
+    if (kind === "ok") dot.classList.add("ok");
+    if (kind === "err") dot.classList.add("err");
+    if (typeof percent === "number") {
+      $("progressFill").style.width = Math.max(0, Math.min(100, percent)) + "%";
+    }
   }
 
-  function toast(message, kind) {
-    const el = document.createElement("div");
-    el.className = "toast" + (kind ? " " + kind : "");
-    el.textContent = message;
-    $("toasts").appendChild(el);
-    setTimeout(() => el.remove(), 6000);
-  }
-
-  function confirmDialog(title, body, okText) {
-    return new Promise((resolve) => {
-      $("modalTitle").textContent = title;
-      $("modalBody").textContent = body;
-      $("modalOk").textContent = okText || "确定";
-      $("modal").classList.remove("hidden");
-      const done = (value) => {
-        $("modal").classList.add("hidden");
-        $("modalOk").onclick = null;
-        $("modalCancel").onclick = null;
-        resolve(value);
-      };
-      $("modalOk").onclick = () => done(true);
-      $("modalCancel").onclick = () => done(false);
-    });
+  function setBusy(busy) {
+    store.busy = busy;
+    for (const id of [
+      "btnAutoSearchPath",
+      "btnConfirmPath",
+      "btnServerRegion",
+      "btnChooseLocale",
+      "btnRestore",
+      "btnApply",
+      "selectTrigger"
+    ]) {
+      const el = $(id);
+      if (el) el.disabled = busy;
+    }
   }
 
   async function api(path, options) {
-    const response = await fetch(path, Object.assign({ headers: { "Content-Type": "application/json" } }, options || {}));
+    const response = await fetch(
+      path,
+      Object.assign({ headers: { "Content-Type": "application/json" } }, options || {})
+    );
     const payload = await response.json().catch(() => null);
     if (!response.ok || (payload && payload.ok === false && payload.error)) {
       throw new Error((payload && payload.message) || "HTTP " + response.status);
@@ -70,524 +77,584 @@
     return payload;
   }
 
-  function setBusy(busy) {
-    store.busy = busy;
-    for (const id of ["btnApply", "btnRestore", "btnPlan", "btnSync", "btnCheckUpdate", "btnSaveConfig", "btnDetect", "btnDetectInline", "btnDoctorInline"]) {
-      const el = $(id);
-      if (el) el.disabled = busy;
-    }
-    $("taskChip").classList.toggle("hidden", !busy && !store.taskId);
-  }
-
-  function setProgress(percent, text) {
-    $("barFill").style.width = Math.max(0, Math.min(100, percent)) + "%";
-    $("taskChipFill").style.width = Math.max(0, Math.min(100, percent)) + "%";
-    if (text !== undefined) {
-      $("progressText").textContent = text;
-      $("taskChipText").textContent = text;
-    }
-  }
-
   function selectedModules() {
     const modules = [];
-    if ($("modVoice").checked) modules.push("ingame_voice");
-    if ($("modLang").checked) modules.push("ingame_lang");
+    if ($("modIngameVoice").checked) modules.push("ingame_voice");
+    if ($("modIngameLang").checked) modules.push("ingame_lang");
+    if ($("modLobbyVoice").checked) modules.push("lobby_voice");
     return modules;
   }
 
-  /* ------------------------------------------------ 渲染 */
-
-  function renderConnection(online) {
-    const conn = $("conn");
-    conn.classList.toggle("online", online);
-    conn.classList.toggle("offline", !online);
-    conn.querySelector("span").textContent = online ? "后端已连接" : "后端已断开";
+  function cleanStatusDetail(raw, isActive, fallbackLocale) {
+    if (!isActive) return "国服原版文件";
+    const cleaned = String(raw || "")
+      .replace(/[【】]/g, "")
+      .replace(/^已切换为：/, "")
+      .replace(/^当前为：/, "")
+      .trim();
+    if (cleaned && cleaned !== "已开启") return cleaned;
+    if (fallbackLocale) return fallbackLocale;
+    return "已替换为语音包";
   }
 
-  function renderOverview() {
+  function detectRegionFromPath(pathStr, sourceDetail) {
+    const raw = String(pathStr || "").trim();
+    const detail = String(sourceDetail || "").trim();
+    if (!raw) return null;
+
+    // 外服路径特征：Riot Games 或纯英文 League of Legends 安装目录（不含 WeGame/Tencent/英雄联盟）
+    if (
+      /riot\s*games/i.test(raw) ||
+      /riot/i.test(detail) ||
+      (/league\s*of\s*legends/i.test(raw) && !/wegame|tencent|英雄联盟|tcls/i.test(raw))
+    ) {
+      return "global";
+    }
+
+    // 国服路径特征：含 英雄联盟 / WeGame / Tencent / TCLS / LeagueClient
+    if (
+      /英雄联盟|wegame|tencent|tcls|leagueclient/i.test(raw) ||
+      /tencent/i.test(detail)
+    ) {
+      return "cn";
+    }
+
+    return null;
+  }
+
+  function setServerRegion(targetRegion, silent) {
+    if (!targetRegion || store.region === targetRegion) {
+      // 原本就是该区服则不用切换
+      return;
+    }
+    store.region = targetRegion;
+    const label = store.region === "cn" ? "国服" : "外服";
+    const btn = $("btnServerRegion");
+    const textEl = $("regionText");
+    if (btn) btn.dataset.region = store.region;
+    if (textEl) textEl.textContent = label;
+    if (!silent) {
+      log("根据游戏路径自动切换为：" + label);
+    }
+  }
+
+  /* ------------------------------------------------ 自定义毛玻璃下拉栏 */
+
+  function allLocaleItems() {
+    const merged = [...store.locales];
+    for (const pack of store.customPacks) {
+      if (!merged.some((item) => item.code === pack.code)) {
+        merged.push(pack);
+      }
+    }
+    return merged;
+  }
+
+  function closeCustomDropdown() {
+    $("customLocaleSelect").classList.remove("open");
+    $("selectMenu").classList.add("hidden");
+    $("selectTrigger").setAttribute("aria-expanded", "false");
+  }
+
+  function selectLocaleValue(code, notify) {
+    store.selected = code || "";
+    const select = $("localeSelect");
+    select.value = store.selected;
+
+    const items = allLocaleItems();
+    const found = items.find((item) => item.code === store.selected);
+    const labelEl = $("selectLabel");
+    if (found) {
+      labelEl.textContent = found.name || found.code;
+      labelEl.classList.remove("placeholder");
+      if (notify) {
+        log("已选中语音包：" + (found.name || found.code));
+        setStatus("已选中语音包：" + (found.name || found.code), "ok");
+      }
+    } else {
+      labelEl.textContent = "未选中语音包";
+      labelEl.classList.add("placeholder");
+      if (notify) {
+        setStatus("未选中语音包", "");
+      }
+    }
+    renderLocaleRow();
+  }
+
+  function renderLocaleRow() {
+    const select = $("localeSelect");
+    const menu = $("selectMenu");
+    const items = allLocaleItems();
+
+    select.innerHTML = '<option value="">未选中语音包</option>';
+    menu.innerHTML = "";
+
+    // 默认未选中项
+    const emptyOpt = document.createElement("div");
+    emptyOpt.className = "select-option" + (!store.selected ? " active" : "");
+    emptyOpt.innerHTML = '<span>未选中语音包</span>';
+    emptyOpt.onclick = () => {
+      closeCustomDropdown();
+      selectLocaleValue("", true);
+    };
+    menu.appendChild(emptyOpt);
+
+    for (const item of items) {
+      const opt = document.createElement("option");
+      opt.value = item.code;
+      opt.textContent = item.name || item.code;
+      select.appendChild(opt);
+
+      const row = document.createElement("div");
+      row.className = "select-option" + (store.selected === item.code ? " active" : "");
+      const badgeText = item.active ? "当前生效" : item.code;
+      row.innerHTML =
+        "<span>" + escapeHtml(item.name || item.code) + "</span>" +
+        '<span class="select-option-tag">' + escapeHtml(badgeText) + "</span>";
+      row.onclick = () => {
+        closeCustomDropdown();
+        selectLocaleValue(item.code, true);
+      };
+      menu.appendChild(row);
+    }
+
+    const found = items.find((item) => item.code === store.selected);
+    const labelEl = $("selectLabel");
+    if (found) {
+      select.value = found.code;
+      labelEl.textContent = found.name || found.code;
+      labelEl.classList.remove("placeholder");
+    } else {
+      select.value = "";
+      labelEl.textContent = "未选中语音包";
+      labelEl.classList.add("placeholder");
+    }
+  }
+
+  /* ------------------------------------------------ 渲染各排状态 */
+
+  function renderPathRow() {
+    const input = $("leaguePathInput");
+    const configured = store.config && store.config.leaguePath;
+    const detected = store.state && store.state.paths && store.state.paths.leagueDir;
+    const sourceDetail = store.state && store.state.paths && store.state.paths.sourceDetail;
+    const currentPath = configured || detected || "";
+    if (document.activeElement !== input) {
+      input.value = currentPath;
+    }
+    const detectedRegion = detectRegionFromPath(input.value || currentPath, sourceDetail);
+    if (detectedRegion) {
+      setServerRegion(detectedRegion, false);
+    }
+  }
+
+  function renderStatusRow() {
     const state = store.state;
     if (!state) return;
-    const ingame = state.ingame;
 
-    $("statVoice").textContent = ingame.is_voice_active ? "已切换" : "国服原版";
-    $("statVoice").className = "stat-value " + (ingame.is_voice_active ? "on" : "off");
-    $("statVoiceFoot").textContent = ingame.is_voice_active
-      ? ingame.voice.replace(/[【】]/g, "") + " · 备份 " + ingame.voice_backups + " 个"
-      : "官方中文语音";
+    const ingame = state.ingame || {};
+    const lobby = state.lobby || {};
 
-    $("statLang").textContent = ingame.is_lang_active ? "已切换" : "国服原版";
-    $("statLang").className = "stat-value " + (ingame.is_lang_active ? "on" : "off");
-    $("statLangFoot").textContent = ingame.is_lang_active ? ingame.lang.replace(/[【】]/g, "") : "官方中文文本";
+    // 1. 游戏内语音及播报员
+    const voiceActive = Boolean(ingame.is_voice_active);
+    $("cardStatusVoice").classList.toggle("active", voiceActive);
+    $("tagStatusVoice").textContent = voiceActive ? "语音包" : "原版";
+    $("statusIngameVoice").textContent = cleanStatusDetail(ingame.voice, voiceActive, ingame.active_locale);
 
-    const locales = store.locales ? store.locales.locales : [];
-    $("statPacks").textContent = locales.length + " 个";
-    $("statPacks").className = "stat-value";
-    $("statPacksFoot").textContent = locales.map((item) => item.code).join(" · ") || "资源目录里还没有语音包";
+    // 2. 游戏内文字
+    const langActive = Boolean(ingame.is_lang_active);
+    $("cardStatusLang").classList.toggle("active", langActive);
+    $("tagStatusLang").textContent = langActive ? "语音包" : "原版";
+    $("statusIngameLang").textContent = cleanStatusDetail(ingame.lang, langActive, ingame.active_locale);
 
-    const game = state.processes.game_running;
-    const client = state.processes.client_running;
-    $("statEnv").textContent = game ? "对局中" : client ? "客户端运行中" : "就绪";
-    $("statEnv").className = "stat-value " + (game ? "off" : "on");
-    $("statEnvFoot").textContent = game ? "对局进行中，禁止切换" : client ? "切换完成后会自动重启生效" : "客户端未运行";
-
-    $("pathSource").textContent = state.paths.sourceDetail || state.paths.source || "—";
-    const rows = [
-      ["客户端目录", state.paths.leagueDir || "未定位"],
-      ["游戏文件目录", state.paths.finalDir || state.paths.message.split("\n")[0]],
-      ["语音包目录", state.voiceRoot],
-      ["加载器目录", state.lobby && state.lobby.loader_dir ? state.lobby.loader_dir + "（未启用）" : "未配置（大厅功能未启用）"]
-    ];
-    $("envList").innerHTML = rows
-      .map((row) => '<div class="kv-row"><span class="k">' + row[0] + "</span><b>" + escapeHtml(row[1]) + "</b></div>")
-      .join("");
-    $("appRootLabel").textContent = state.app.appRoot;
-    $("brandVersion").textContent = "v" + state.app.version;
-    $("voiceRootLabel").textContent = state.voiceRoot;
-  }
-
-  function escapeHtml(text) {
-    return String(text).replace(/[&<>"']/g, (ch) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[ch]));
-  }
-
-  function renderLocalePicker() {
-    const host = $("localePicker");
-    const locales = store.locales ? store.locales.locales : [];
-    if (!locales.length) {
-      host.innerHTML = '<span class="muted small">没有可用语音包，请到「更新与下载」同步</span>';
-      return;
-    }
-    host.innerHTML = "";
-    for (const item of locales) {
-      const usable = item.has_voice || item.has_lang;
-      const chip = document.createElement("button");
-      chip.className = "locale-chip" + (item.code === store.selected ? " active" : "") + (usable ? "" : " disabled");
-      chip.innerHTML = escapeHtml(item.name) + " <small>" + item.code + "</small>";
-      chip.disabled = !usable;
-      chip.onclick = () => {
-        store.selected = item.code;
-        renderLocalePicker();
-        $("selectedLocaleHint").textContent = "已选择 " + item.name;
-      };
-      host.appendChild(chip);
-    }
-    const current = locales.find((item) => item.code === store.selected);
-    $("selectedLocaleHint").textContent = current ? "已选择 " + current.name : "未选择";
-  }
-
-  function renderLocaleGrid() {
-    const host = $("localeGrid");
-    const locales = store.locales ? store.locales.locales : [];
-    if (!locales.length) {
-      host.innerHTML = '<div class="muted small">资源目录里还没有语音包。可用「更新与下载 → 增量同步」自动下载。</div>';
-      return;
-    }
-    host.innerHTML = "";
-    for (const item of locales) {
-      const card = document.createElement("div");
-      card.className = "locale-card" + (item.active ? " active" : "");
-      card.innerHTML =
-        '<div class="locale-card-head"><strong>' + escapeHtml(item.name) + "</strong>" +
-        (item.active ? '<span class="badge on">当前生效</span>' : '<span class="badge">' + item.code + "</span>") +
-        "</div>" +
-        '<div class="tags">' +
-        '<span class="tag ' + (item.has_voice ? "ok" : "no") + '">对局语音 ' + item.voice_files + "</span>" +
-        '<span class="tag ' + (item.map_files ? "ok" : "no") + '">播报员 ' + item.map_files + "</span>" +
-        '<span class="tag ' + (item.has_lang ? "ok" : "no") + '">对局文本 ' + item.lang_files + "</span>" +
-        "</div>" +
-        '<div class="btn-row">' +
-        '<button class="btn primary tiny" data-act="all">全套切换</button>' +
-        '<button class="btn tiny" data-act="voice">仅对局语音</button>' +
-        '<button class="btn tiny" data-act="lang">仅对局文本</button>' +
-        "</div>";
-      card.querySelector('[data-act="all"]').onclick = () => applyLocale(item.code, ["ingame_voice", "ingame_lang"]);
-      card.querySelector('[data-act="voice"]').onclick = () => applyLocale(item.code, ["ingame_voice"]);
-      card.querySelector('[data-act="lang"]').onclick = () => applyLocale(item.code, ["ingame_lang"]);
-      host.appendChild(card);
-    }
-  }
-
-  function renderUpdate() {
-    const info = store.lastUpdate;
-    if (!info) return;
-    const rows = [
-      ["远程版本", info.info.remoteVersion || "未知"],
-      ["本地版本", info.info.localVersion || "未记录"],
-      ["缺少文件", String(info.info.missingItems)],
-      ["状态", info.info.detail]
-    ];
-    $("updateInfo").innerHTML = rows
-      .map((row) => '<div class="kv-row"><span class="k">' + row[0] + "</span><b>" + escapeHtml(row[1]) + "</b></div>")
-      .join("");
-    renderInventory(info.inventory);
-  }
-
-  function renderInventory(inventory) {
-    if (!inventory) return;
-    const body = $("inventoryTable").querySelector("tbody");
-    body.innerHTML = inventory
-      .map((row) => {
-        const cell = (value, expect) =>
-          '<td class="num ' + (value >= expect ? "good" : "bad") + '">' + value + "/" + expect + "</td>";
-        return (
-          "<tr><td>" + escapeHtml(row.code) + "</td>" +
-          cell(row.wads, 180) + cell(row.choose, 173) + cell(row.ban, 173) + cell(row.champions, 173) +
-          "</tr>"
-        );
-      })
-      .join("");
-    $("inventoryHint").textContent = "以 180 个对局资源 / 173 个英雄为准";
-  }
-
-  function renderSyncLocales() {
-    const host = $("syncLocales");
-    const config = store.config;
-    if (!config) return;
-    const locales = config.supportedLocales || ["ja_JP", "ko_KR", "en_US"];
-    host.innerHTML = locales
-      .map((code) => '<label class="check"><input type="checkbox" value="' + code + '" checked /><span>' + code + "</span></label>")
-      .join("");
-  }
-
-  function renderSettings() {
-    const config = store.config;
-    if (!config) return;
-    $("cfgLeaguePath").value = config.leaguePath || "";
-    $("cfgGamePath").value = config.gamePath || "";
-    $("cfgVoiceRoot").value = config.voiceRoot || "";
-    $("cfgSupported").value = (config.supportedLocales || []).join(",");
-    $("cfgAutoRestart").checked = Boolean(config.autoRestartClient);
-    $("cfgPort").value = config.server.port;
-    $("cfgToken").value = config.server.token || "";
-    $("cfgWebDir").value = config.server.webDir || "web";
-    $("cfgFeatureLobbyVoice").checked = Boolean(config.features && config.features.lobbyVoice);
-    const select = $("cfgDefaultLocale");
-    const codes = (store.locales ? store.locales.locales.map((item) => item.code) : []).concat(config.supportedLocales || []);
-    const unique = [...new Set(codes)];
-    select.innerHTML = unique.map((code) => '<option value="' + code + '">' + code + "</option>").join("");
-    select.value = config.defaultLocale;
+    // 3. 对局前选人语音
+    const lobbyActive = Boolean(lobby.enabled);
+    const lobbyLocaleObj = store.locales.find((item) => item.code === lobby.locale);
+    const lobbyLocaleName = lobbyLocaleObj ? lobbyLocaleObj.name : lobby.locale;
+    $("cardStatusLobby").classList.toggle("active", lobbyActive);
+    $("tagStatusLobby").textContent = lobbyActive ? "语音包" : "原版";
+    $("statusLobbyVoice").textContent = cleanStatusDetail(lobby.voice, lobbyActive, lobbyLocaleName);
   }
 
   async function refresh() {
-    const [state, locales, config] = await Promise.all([
+    const [stateRes, localesRes, configRes] = await Promise.all([
       api("/api/state"),
       api("/api/locales?stats=1"),
       api("/api/config")
     ]);
-    store.state = state.state;
-    store.locales = locales;
-    store.config = config.config;
-    if (!store.selected) {
-      const active = locales.locales.find((item) => item.code === locales.active_locale);
-      const first = locales.locales[0];
-      store.selected = active ? active.code : first ? first.code : "";
-    }
-    renderOverview();
-    renderLocalePicker();
-    renderLocaleGrid();
-    renderSettings();
-    renderSyncLocales();
-    renderConnection(true);
+    store.state = stateRes.state;
+    store.locales = localesRes.locales || [];
+    store.config = configRes.config;
+
+    renderPathRow();
+    renderLocaleRow();
+    renderStatusRow();
     setBusy(Boolean(Object.keys(store.state.busy || {}).length));
   }
 
-  function go(view) {
-    for (const item of document.querySelectorAll(".nav-item")) {
-      item.classList.toggle("active", item.dataset.view === view);
-    }
-    for (const section of document.querySelectorAll(".view")) {
-      section.classList.toggle("active", section.id === "view-" + view);
-    }
-    const titles = {
-      overview: ["概览", "当前语音包状态与一键切换"],
-      locales: ["语音包", "本机已安装的语音包及其资源完整度"],
-      update: ["更新与下载", "增量同步官方语音包资源"],
-      settings: ["设置", "路径、行为与服务参数"],
-      logs: ["运行日志", "本次会话的操作与任务日志"]
-    };
-    $("viewTitle").textContent = titles[view][0];
-    $("viewSub").textContent = titles[view][1];
-    location.hash = "#/" + view;
-  }
-
-  /* ------------------------------------------------ 任务 */
+  /* ------------------------------------------------ 任务执行 */
 
   async function waitTask(id) {
     setBusy(true);
     store.taskId = id;
-    $("taskChip").classList.remove("hidden");
     let status = "running";
     while (status === "running" || status === "pending") {
-      await new Promise((resolve) => setTimeout(resolve, 400));
+      await new Promise((resolve) => setTimeout(resolve, 350));
       const payload = await api("/api/tasks/" + id);
       status = payload.task.status;
       if (status === "running") continue;
+
       const result = payload.result || {};
-      for (const line of (result.summary && result.summary.lines) || []) log("结果：" + line);
-      for (const item of result.results || []) {
-        if (!item.ok && item.message) log("失败原因：" + item.message.replace(/\n/g, " "));
+      for (const line of (result.summary && result.summary.lines) || []) {
+        log("结果：" + line);
       }
-      log(result.message || payload.task.error || "任务结束");
-      toast(result.message || (status === "succeeded" ? "完成" : "失败"), status === "succeeded" ? "ok" : "err");
+      for (const item of result.results || []) {
+        if (!item.ok && item.message) {
+          log("失败原因：" + item.message.replace(/\n/g, " "));
+        }
+      }
+      const msg = result.message || payload.task.error || (status === "succeeded" ? "操作完成" : "操作失败");
+      log(msg);
+      setStatus(msg, status === "succeeded" ? "ok" : "err", status === "succeeded" ? 100 : 0);
     }
     store.taskId = null;
     await refresh().catch(() => undefined);
     setBusy(false);
-    setProgress(100, "空闲");
     return status;
   }
 
   async function startTask(label, request) {
     if (store.busy) {
-      toast("已有任务在进行中", "err");
+      setStatus("已有任务正在执行，请稍候…", "err");
       return;
     }
     log("=== " + label + " ===");
-    setProgress(0, "准备中…");
+    setStatus("正在执行：" + label + "…", "", 0);
     try {
       const payload = await request();
-      await waitTask(payload.task.id);
+      return await waitTask(payload.task.id);
     } catch (error) {
-      log("× " + error.message);
-      toast(error.message, "err");
+      log("错误：" + error.message);
+      setStatus("错误：" + error.message, "err", 0);
       setBusy(false);
-      setProgress(0, "空闲");
-    }
-  }
-
-  function applyLocale(locale, modules) {
-    if (!modules.length) {
-      toast("请至少勾选一项切换范围", "err");
-      return;
-    }
-    const names = { ingame_voice: "对局语音", ingame_lang: "对局文本" };
-    const text = modules.map((module) => names[module] || module).join(" + ");
-    void confirmDialog("切换到 " + locale, "即将把【" + text + "】切换为 " + locale + "。\n原文件会自动备份，可随时恢复官方默认。", "开始切换").then((ok) => {
-      if (!ok) return;
-      store.selected = locale;
-      renderLocalePicker();
-      return startTask("切换到 " + locale + "（" + text + "）", () =>
-        api("/api/apply", {
-          method: "POST",
-          body: JSON.stringify({ locale, modules, restartClient: $("optRestart").checked })
-        })
-      );
-    });
-  }
-
-  function restoreOfficial() {
-    void confirmDialog("恢复官方默认", "将把对局语音与文本还原为国服原版（有备份才会还原）。\n客户端运行时会自动重启以解除占用。", "开始还原").then((ok) => {
-      if (!ok) return;
-      return startTask("恢复官方默认", () =>
-        api("/api/restore", {
-          method: "POST",
-          body: JSON.stringify({ modules: ["ingame_voice", "ingame_lang"], restartClient: $("optRestart").checked })
-        })
-      );
-    });
-  }
-
-  async function runPlan() {
-    if (!store.selected) {
-      toast("请先选择语音包", "err");
-      return;
-    }
-    try {
-      const payload = await api("/api/plan", {
-        method: "POST",
-        body: JSON.stringify({ locale: store.selected, modules: selectedModules() })
-      });
-      log("=== 预检 " + store.selected + " ===");
-      for (const check of payload.plan.checks) {
-        log((check.ok ? "√ " : "× ") + check.module_name + "：" + check.message);
-      }
-      if (payload.plan.space.needed) log("磁盘：" + (payload.plan.space.message || payload.plan.space.detail));
-      for (const warning of payload.plan.warnings) log("! " + warning);
-      for (const blocker of payload.plan.blockers) log("× " + blocker.replace(/\n/g, " "));
-      toast(payload.plan.ok ? "预检通过，可以开始切换" : "预检未通过，请看日志", payload.plan.ok ? "ok" : "err");
-    } catch (error) {
-      toast(error.message, "err");
+      return "failed";
     }
   }
 
   /* ------------------------------------------------ 事件绑定 */
 
-  $("nav").addEventListener("click", (event) => {
-    const item = event.target.closest(".nav-item");
-    if (item) go(item.dataset.view);
-  });
-  window.addEventListener("hashchange", () => {
-    const view = location.hash.replace("#/", "") || "overview";
-    go(view);
-  });
-  $("btnRefresh").onclick = () => refresh().then(() => toast("已刷新", "ok")).catch((error) => toast(error.message, "err"));
-  $("btnApply").onclick = () => applyLocale(store.selected, selectedModules());
-  $("btnRestore").onclick = restoreOfficial;
-  $("btnPlan").onclick = runPlan;
-  $("btnCancelTask").onclick = async () => {
-    if (!store.taskId) return;
-    try {
-      await api("/api/tasks/" + store.taskId + "/cancel", { method: "POST" });
-      log("已请求取消当前任务");
-    } catch (error) {
-      toast(error.message, "err");
+  // 第一排：自动搜索路径 + 确认路径 + 国服/外服自动识别与切换
+  async function confirmPath(customPath, customSource) {
+    const rawPath = (typeof customPath === "string" ? customPath : $("leaguePathInput").value).trim();
+    $("leaguePathInput").value = rawPath;
+
+    const immediateRegion = detectRegionFromPath(rawPath, customSource);
+    if (immediateRegion) {
+      setServerRegion(immediateRegion, false);
     }
+
+    try {
+      setBusy(true);
+      await api("/api/config", {
+        method: "PUT",
+        body: JSON.stringify({ leaguePath: rawPath })
+      });
+      await refresh();
+      const resolved = store.state && store.state.paths && store.state.paths.leagueDir;
+      const sourceDetail = store.state && store.state.paths && store.state.paths.sourceDetail;
+      const finalRegion = detectRegionFromPath(resolved || rawPath, sourceDetail || customSource);
+      if (finalRegion) {
+        setServerRegion(finalRegion, false);
+      }
+      if (resolved) {
+        const regionLabel = store.region === "cn" ? "国服" : "外服";
+        log("已确认游戏路径（" + regionLabel + "）：" + resolved);
+        setStatus("路径已确认（" + regionLabel + "）：" + resolved, "ok", 100);
+      } else {
+        log("未能在该路径找到客户端，请检查路径是否正确");
+        setStatus("未找到有效客户端目录，请检查输入路径", "err", 0);
+      }
+    } catch (error) {
+      log("保存路径失败：" + error.message);
+      setStatus("保存路径失败：" + error.message, "err", 0);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function autoSearchPaths() {
+    try {
+      setBusy(true);
+      setStatus("正在自动搜索电脑内的英雄联盟路径…", "");
+      const payload = await api("/api/paths");
+      const rawCandidates = payload.candidates || [];
+
+      const seen = new Set();
+      const unique = [];
+      for (const item of rawCandidates) {
+        const dir = (item.leagueDir || item.path || "").trim();
+        if (!dir) continue;
+        const key = dir.toLowerCase().replace(/[\\/]+$/, "");
+        if (seen.has(key)) continue;
+        seen.add(key);
+        unique.push({
+          dir,
+          source: item.sourceDetail || item.source || "自动探测",
+          ready: Boolean(item.finalDir)
+        });
+      }
+
+      if (unique.length === 0) {
+        log("自动搜索未找到英雄联盟安装路径");
+        setStatus("未搜索到英雄联盟路径，请手动输入", "err", 0);
+        return;
+      }
+
+      if (unique.length === 1) {
+        const chosen = unique[0];
+        log("自动捕获到英雄联盟路径：" + chosen.dir);
+        await confirmPath(chosen.dir, chosen.source);
+        return;
+      }
+
+      log("检测到 " + unique.length + " 个英雄联盟路径，等待用户选择");
+      setStatus("检测到多个英雄联盟路径，请在弹窗中选择一个", "");
+      const listHost = $("pathCandidateList");
+      listHost.innerHTML = "";
+      for (const cand of unique) {
+        const candRegion = detectRegionFromPath(cand.dir, cand.source);
+        const regionTag = candRegion === "global" ? "外服" : "国服";
+        const row = document.createElement("div");
+        row.className = "path-cand-item";
+        row.innerHTML =
+          '<div class="path-cand-info">' +
+          '<span class="path-cand-dir">' + escapeHtml(cand.dir) + "</span>" +
+          '<span class="path-cand-meta">[' + regionTag + "] " +
+          escapeHtml(cand.source) +
+          (cand.ready ? " · 游戏资源目录已就绪" : "") +
+          "</span>" +
+          "</div>" +
+          '<button type="button" class="btn tiny primary">选择</button>';
+        row.onclick = () => {
+          $("pathSelectModal").classList.add("hidden");
+          void confirmPath(cand.dir, cand.source);
+        };
+        listHost.appendChild(row);
+      }
+      $("pathSelectModal").classList.remove("hidden");
+    } catch (error) {
+      log("自动搜索路径失败：" + error.message);
+      setStatus("自动搜索失败：" + error.message, "err", 0);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  $("btnAutoSearchPath").onclick = () => void autoSearchPaths();
+  $("btnConfirmPath").onclick = () => void confirmPath();
+  $("leaguePathInput").addEventListener("keydown", (event) => {
+    if (event.key === "Enter") void confirmPath();
+  });
+  $("leaguePathInput").addEventListener("input", () => {
+    const region = detectRegionFromPath($("leaguePathInput").value);
+    if (region) {
+      setServerRegion(region, true);
+    }
+  });
+
+  $("btnClosePathSelect").onclick = () => {
+    $("pathSelectModal").classList.add("hidden");
   };
-  $("btnCopyRoot").onclick = () => {
-    navigator.clipboard.writeText(store.state ? store.state.voiceRoot : "").then(() => toast("路径已复制", "ok"));
+  $("pathSelectModal").addEventListener("click", (event) => {
+    if (event.target === $("pathSelectModal")) {
+      $("pathSelectModal").classList.add("hidden");
+    }
+  });
+
+  // 国服 / 外服 按钮
+  $("btnServerRegion").onclick = () => {
+    const next = store.region === "cn" ? "global" : "cn";
+    setServerRegion(next, true);
+    const label = store.region === "cn" ? "国服" : "外服";
+    log("已手动切换区服模式为：" + label);
+    setStatus("已切换为：" + label, "ok");
   };
-  $("btnCopyLog").onclick = () => {
-    navigator.clipboard.writeText(store.logs.join("\n")).then(() => toast("日志已复制", "ok"));
+
+  // 第二排：自定义下拉栏开关 & 压缩包文件选择
+  $("selectTrigger").onclick = (event) => {
+    event.stopPropagation();
+    const wrap = $("customLocaleSelect");
+    const isOpen = wrap.classList.toggle("open");
+    $("selectMenu").classList.toggle("hidden", !isOpen);
+    $("selectTrigger").setAttribute("aria-expanded", String(isOpen));
+  };
+
+  document.addEventListener("click", (event) => {
+    if (!$("customLocaleSelect").contains(event.target)) {
+      closeCustomDropdown();
+    }
+  });
+
+  $("btnChooseLocale").onclick = () => {
+    const fileInput = $("voicePackFileInput");
+    fileInput.value = "";
+    fileInput.click();
+  };
+
+  $("voicePackFileInput").onchange = (event) => {
+    const file = event.target.files && event.target.files[0];
+    if (!file) return;
+    void importVoicePack(file);
+  };
+
+  /**
+   * 导入语音包压缩包：把文件内容直接传给后端，
+   * 由后端解压 -> 识别语种 -> 装进资源目录；装完会出现在下拉栏，这里顺手选中它。
+   */
+  async function importVoicePack(file) {
+    if (store.busy) {
+      setStatus("已有任务正在执行，请稍候…", "err");
+      return;
+    }
+    const fileName = file.name;
+    log("已选择语音包压缩包：" + fileName);
+    setStatus("正在上传语音包：" + fileName + "…", "", 3);
+    setBusy(true);
+    try {
+      const response = await fetch(
+        "/api/packs/import?name=" + encodeURIComponent(fileName),
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/octet-stream" },
+          body: file
+        }
+      );
+      const payload = await response.json().catch(() => null);
+      if (!response.ok || !payload || payload.ok === false) {
+        throw new Error((payload && payload.message) || "HTTP " + response.status);
+      }
+
+      const status = await waitTask(payload.task.id);
+      if (status !== "succeeded") return;
+
+      const detail = await api("/api/tasks/" + payload.task.id);
+      const result = detail.result || {};
+      const code = result.code || "";
+      await refresh();
+      if (code) {
+        selectLocaleValue(code, true);
+        setStatus("已导入并选中：" + (result.name || code), "ok", 100);
+      } else {
+        setStatus("导入完成，请在下拉栏中选择语音包", "ok", 100);
+      }
+    } catch (error) {
+      log("导入失败：" + error.message);
+      setStatus("导入失败：" + error.message, "err", 0);
+    } finally {
+      setBusy(false);
+      $("voicePackFileInput").value = "";
+    }
+  }
+
+  // 第四排：恢复原版 & 开启语音包
+  $("btnApply").onclick = () => {
+    const locale = store.selected;
+    if (!locale) {
+      setStatus("请先在第二排下拉栏中选择语音包", "err");
+      $("selectTrigger").click();
+      return;
+    }
+    const modules = selectedModules();
+    if (!modules.length) {
+      setStatus("请至少勾选一项要切换的内容", "err");
+      return;
+    }
+    const found = allLocaleItems().find((item) => item.code === locale);
+    const label = found ? found.name : locale;
+    void startTask("开启语音包：" + label, () =>
+      api("/api/apply", {
+        method: "POST",
+        body: JSON.stringify({ locale, modules })
+      })
+    );
+  };
+
+  $("btnRestore").onclick = () => {
+    const modules = selectedModules();
+    const targetModules = modules.length
+      ? modules
+      : ["ingame_voice", "ingame_lang", "lobby_voice"];
+    void startTask("恢复游戏原版", () =>
+      api("/api/restore", {
+        method: "POST",
+        body: JSON.stringify({ modules: targetModules })
+      })
+    );
+  };
+
+  // 第五排：日志弹窗
+  $("btnOpenLog").onclick = () => {
+    $("logModal").classList.remove("hidden");
+  };
+  $("btnCloseLog").onclick = () => {
+    $("logModal").classList.add("hidden");
   };
   $("btnClearLog").onclick = () => {
     store.logs = [];
-    renderLogs();
+    $("logBox").textContent = "[就绪]";
   };
-  $("btnCheckUpdate").onclick = () =>
-    startTask("检查更新", async () => {
-      const payload = await api("/api/update/check", { method: "POST" });
-      return payload;
-    }).then(async (status) => {
-      if (status !== "succeeded") return;
-      const latest = await api("/api/tasks");
-      const task = latest.tasks.find((item) => item.kind === "update_check" && item.hasResult);
-      const detail = await api("/api/tasks/" + (task ? task.id : ""));
-      store.lastUpdate = detail.result;
-      renderUpdate();
-      await refresh();
-    });
-  $("btnSync").onclick = () => {
-    const codes = [...document.querySelectorAll("#syncLocales input:checked")].map((input) => input.value);
-    if (!codes.length) {
-      toast("请至少选择一个语种", "err");
-      return;
+  $("logModal").addEventListener("click", (event) => {
+    if (event.target === $("logModal")) {
+      $("logModal").classList.add("hidden");
     }
-    void confirmDialog("增量同步", "将同步：" + codes.join("、") + "\n已存在的文件会自动跳过，只补缺失部分。", "开始同步").then((ok) => {
-      if (!ok) return;
-      return startTask("增量同步 " + codes.join("/"), async () => {
-        const payload = await api("/api/update/run", { method: "POST", body: JSON.stringify({ locales: codes }) });
-        const status = await waitTask(payload.task.id);
-        if (status === "succeeded") {
-          const detail = await api("/api/tasks/" + payload.task.id);
-          if (detail.result) {
-            store.lastUpdate = { info: detail.result.remote, inventory: detail.result.inventory };
-            renderUpdate();
-          }
-        }
-        await refresh();
-        return { task: payload.task };
-      });
-    });
-  };
-  $("btnDetect").onclick = detectPaths;
-  $("btnDetectInline").onclick = detectPaths;
-  $("btnDoctorInline").onclick = runDoctor;
-  $("btnSaveConfig").onclick = async () => {
-    try {
-      const config = {
-        leaguePath: $("cfgLeaguePath").value.trim(),
-        gamePath: $("cfgGamePath").value.trim(),
-        voiceRoot: $("cfgVoiceRoot").value.trim(),
-        defaultLocale: $("cfgDefaultLocale").value,
-        supportedLocales: $("cfgSupported").value.split(",").map((item) => item.trim()).filter(Boolean),
-        autoRestartClient: $("cfgAutoRestart").checked,
-        server: {
-          port: Number($("cfgPort").value) || 43110,
-          token: $("cfgToken").value.trim(),
-          webDir: $("cfgWebDir").value.trim() || "web"
-        }
-      };
-      await api("/api/config", { method: "PUT", body: JSON.stringify(config) });
-      toast("配置已保存", "ok");
-      log("配置已保存：" + JSON.stringify(config));
-      await refresh();
-    } catch (error) {
-      toast(error.message, "err");
-    }
-  };
+  });
 
-  async function detectPaths() {
-    try {
-      const payload = await api("/api/paths");
-      const host = $("candidateList");
-      host.innerHTML = "";
-      if (!payload.candidates.length) {
-        host.innerHTML = '<div class="muted small">没有探测到可用的游戏安装，请手动填写客户端目录。</div>';
-        toast("未探测到游戏安装", "err");
-        return;
-      }
-      for (const item of payload.candidates) {
-        const row = document.createElement("div");
-        row.className = "cand-item";
-        row.innerHTML =
-          "<span>" + escapeHtml(item.leagueDir || item.path) + "<br><small>" + escapeHtml(item.sourceDetail || item.source) +
-          (item.finalDir ? " · 资源目录已就绪" : " · 未找到 DATA/FINAL") + "</small></span>";
-        const use = document.createElement("button");
-        use.className = "btn tiny";
-        use.textContent = "填入";
-        use.disabled = !item.hasClient;
-        use.onclick = () => {
-          $("cfgLeaguePath").value = item.leagueDir || item.path;
-          $("cfgGamePath").value = item.gameDir || "";
-          toast("已填入，记得点保存", "ok");
-        };
-        row.appendChild(use);
-        host.appendChild(row);
-      }
-      log("路径探测完成，共 " + payload.candidates.length + " 个候选");
-      go("settings");
-    } catch (error) {
-      toast(error.message, "err");
-    }
-  }
-
-  async function runDoctor() {
-    try {
-      const payload = await api("/api/doctor", { method: "POST" });
-      const doctor = payload.doctor;
-      log("=== 环境自检 ===");
-      log("客户端目录：" + (doctor.paths.leagueDir || "未定位"));
-      log("游戏文件目录：" + (doctor.paths.finalDir || "未定位"));
-      log("语音包目录：" + doctor.config.voiceRoot);
-      log("Node：" + doctor.app.node + "  平台：" + doctor.app.platform);
-      log("客户端进程：" + (doctor.processes.client_running ? "运行中" : "未运行") + "，对局：" + (doctor.processes.game_running ? "进行中" : "无"));
-      log("语音包：" + doctor.locales.map((item) => item.code + (item.voice ? "✓" : "✗")).join(" "));
-      $("doctorOut").textContent = JSON.stringify(doctor, null, 2);
-      $("doctorOut").classList.remove("hidden");
-      toast("自检结果已输出到日志与设置页", "ok");
-      go("settings");
-    } catch (error) {
-      toast(error.message, "err");
-    }
-  }
-
-  /* ------------------------------------------------ SSE */
+  /* ------------------------------------------------ SSE 实时推送 */
 
   function connectEvents() {
     const events = new EventSource("/api/events");
     events.addEventListener("progress", (event) => {
       const data = JSON.parse(event.data);
       const progress = data.progress;
-      setProgress(progress.percent, progress.percent + "% (" + progress.done + "/" + progress.total + ") " + (progress.current || ""));
+      setStatus(
+        "正在处理 " + progress.percent + "% (" + progress.done + "/" + progress.total + ") " + (progress.current || ""),
+        "",
+        progress.percent
+      );
     });
-    events.addEventListener("log", (event) => log(JSON.parse(event.data).line));
+    events.addEventListener("log", (event) => {
+      log(JSON.parse(event.data).line);
+    });
     events.addEventListener("done", (event) => {
       const data = JSON.parse(event.data);
-      if (data.status === "succeeded") setProgress(100, "完成");
+      if (data.status === "succeeded") {
+        setStatus("操作已完成", "ok", 100);
+      }
     });
-    events.addEventListener("state", () => renderConnection(true));
-    events.onerror = () => renderConnection(false);
+    events.onerror = () => {
+      setStatus("后端服务连接已断开", "err");
+    };
   }
 
-  /* ------------------------------------------------ 启动 */
+  /* ------------------------------------------------ 启动初始化 */
+
+  try {
+    if (window.outerWidth > 860 || window.outerHeight > 660) {
+      window.resizeTo(800, 600);
+    }
+  } catch {
+    /* ignore */
+  }
 
   setBusy(false);
-  go((location.hash || "#/overview").replace("#/", "") || "overview");
   refresh()
-    .then(() => log("已连接后端 v" + store.state.app.version + "，状态就绪"))
+    .then(() => {
+      log("已连接后端服务 v" + store.state.app.version);
+      setStatus("就绪", "ok", 0);
+    })
     .catch((error) => {
-      renderConnection(false);
-      toast("无法连接后端：" + error.message, "err");
-      log("× 无法连接后端：" + error.message);
+      setStatus("无法连接后端服务：" + error.message, "err", 0);
+      log("无法连接后端：" + error.message);
     });
   connectEvents();
 })();
