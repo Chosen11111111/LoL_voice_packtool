@@ -175,3 +175,20 @@ test("上次开启没勾选人语音 -> 重启后不启动监听", async () => {
   await page.settle();
   assert.equal(page.requests.filter((r) => r.url === "/api/lobby-live/start").length, 0);
 });
+
+test("播报音量自动对齐客户端: 选中选人语音并开启后, 音量取客户端总音量", async () => {
+  const ui = { selectedLocale: "ja_JP", modules: ["lobby_voice"], volume: 20, followClient: false, voiceDelayMs: 1000, lastApplied: null, region: "auto" };
+  const page = await openWindow({ defaultLocale: "ja_JP", ui }, {}, false, {
+    last_applied: { locale: "ja_JP", modules: ["lobby_voice"], at: new Date("2026-10-11T12:30:00").toISOString() }
+  });
+  await page.settle();
+  // 沙箱里客户端音量返回 90; 即使配置里存的是 20, 也应被客户端的音量覆盖
+  assert.equal(page.el("volumeSlider").value, "90");
+});
+
+test("选人语音未开启时, 播报音量不跟随客户端", async () => {
+  const ui = { selectedLocale: "ja_JP", modules: ["lobby_voice"], volume: 20, followClient: false, voiceDelayMs: 1000, lastApplied: null, region: "auto" };
+  const page = await openWindow({ defaultLocale: "ja_JP", ui }, {}, false, { last_applied: null });
+  await page.settle();
+  assert.equal(page.el("volumeSlider").value, "20", "状态未开启时用配置里的音量");
+});

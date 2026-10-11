@@ -348,6 +348,11 @@
   let lastAppliedLogged = "";
   let lastAppliedWarned = "";
 
+  /** 选人语音的开关状态(只看状态, 不看勾选框)。 */
+  function lobbyVoiceStateOn() {
+    return Boolean(lastApplied && lastApplied.locale && (lastApplied.modules || []).includes("lobby_voice"));
+  }
+
   /** "上次开启"的简短文案(用于悬停提示与日志)。 */
   function lastAppliedText() {
     if (!lastApplied || !lastApplied.locale) return "";
@@ -825,12 +830,11 @@
   let lobbyLiveLocale = "";
   let lastVoice = { kind: "choose", championId: 0 };
 
-  /* --------------------------------- 播报音量 / 延迟(不再显示在界面上)
+  /* --------------------------------- 播报音量 / 延迟(不显示在界面上)
 
-     这几个值已经调好, 界面上不再放控件, 改配置即可(重启工具生效):
-       config.json -> ui.volume       播报音量(0-100)
-       config.json -> ui.voiceDelayMs 播报延迟, 默认 1000ms
-       config.json -> ui.followClient true = 音量跟随客户端总音量
+     播报音量**不需要用户设置**: 选人语音开启时自动抓客户端的总音量来对齐
+     (监听期间每 30 秒复查一次, 用户在客户端改了音量也能跟上)。
+     延迟固定在 config.json -> ui.voiceDelayMs(默认 1000ms)。
      客户端原版台词的自动静音闭环由后端默认开启, 可用 POST /api/client-voice {"auto":false} 关掉。
   */
 
@@ -949,14 +953,11 @@
       clearTimeout(clientVoiceRetry);
       clientVoiceRetry = null;
     }
-    // 音量对齐: 跟随客户端音量时, 用它的总音量 × 音效来设置播报音量
-    if (followClient && clientVoice.aligned > 0 && clientVoice.aligned !== volume) {
+    // 播报音量 = 客户端音量: 选人语音开启时自动抓客户端的音量来对齐, 不需要用户设置
+    if (lobbyVoiceStateOn() && clientVoice.aligned > 0 && clientVoice.aligned !== volume) {
       setVolume(clientVoice.aligned, false);
-      const volumes = clientVoice.volumes || { master: "?", sfx: "?", voice: "?" };
-      log(
-        "播报音量已对齐客户端总音量：" + clientVoice.aligned + "%" +
-          "（客户端 总音量 " + volumes.master + " / 音效 " + volumes.sfx + " / 语音 " + volumes.voice + "）"
-      );
+      const volumes = clientVoice.volumes || { master: "?" };
+      log("播报音量已对齐客户端音量：" + clientVoice.aligned + "%（客户端总音量 " + volumes.master + "%）");
     }
     applyFollowLabel();
   }
@@ -1160,7 +1161,7 @@
       if (data && data.ok) {
         log("选人语音监听已启动（状态：开启）：" + data.message);
         renderStatusRow();
-        // 监听启动时后端会按闭环静音客户端原版台词, 这里同步界面状态与音量对齐
+        // 启动瞬间: 后端按闭环静音客户端原版台词, 同时抓客户端音量对齐播报音量
         void loadClientVoice();
       } else if (data) {
         lobbyLiveLocale = "";
@@ -1204,6 +1205,11 @@
   initHud();
   // 兜底: 每 2 秒问一次后端"最近有没有选人事件"。SSE 正常时这里什么也不会做(时间戳已被 SSE 更新),
   // SSE 断了就由它把台词播出来 —— 保证"听得见"不依赖单一通道
+  // 每 30 秒重新对齐一次客户端音量(用户中途改了客户端音量也能跟上)
+  setInterval(() => {
+    if (!lobbyLiveLocale) return;
+    void loadClientVoice();
+  }, 30000);
   setInterval(() => {
     if (!lobbyLiveLocale) return;
     void (async () => {
