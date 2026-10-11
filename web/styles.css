@@ -895,41 +895,58 @@ button, input, select {
 
 /* ---------------- 品牌图按钮(和三个勾选框同一行, 占右边空位) ---------------- */
 .brand-banner {
-  flex: 0 1 auto;        /* 行内弹性项: 窗口变窄可以收缩, 不会把勾选框挤到下一行 */
-  width: 200px;
-  min-width: 88px;
+  flex: 0 1 auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
   margin: 0 0 0 auto;    /* 靠右: 吃掉勾选框右边的空位 */
   padding: 0;
-  background: none;      /* 不要底板 */
-  border: none;          /* 不要边框线 */
+  background: none;
+  border: none;
   cursor: pointer;
-  transition: transform 0.16s ease, filter 0.16s ease, opacity 0.16s ease;
+  transition: transform 0.16s ease, filter 0.16s ease;
   will-change: transform;
 }
 .brand-banner img {
   display: block;
-  width: 100%;
-  height: 100%;
-  max-height: 30px;
-  object-fit: contain;
-  object-position: right center;
+  width: 170px;
+  /* 原图 5986x982, 但白色主标只到 y=661(下面那句小字缩下来必然糊) —— 这里只显示主标 */
+  aspect-ratio: 5986 / 661;
+  object-fit: cover;
+  object-position: top center;
   -webkit-user-select: none;
   user-select: none;
   pointer-events: none;
   /*
-   * 这张 logo 是给**深色背景**设计的: 93% 的像素接近纯白(实测平均 rgb(223,230,238)),
+   * 这张 logo 是给**深色背景**设计的: 实测 93% 的像素接近纯白(平均 rgb(223,230,238)),
    * 直接贴在我们白底卡片上几乎看不见。
-   * 处理办法: 反相(白 -> 近黑) + 色相回正(彩色部分不变味) + 轻微压暗与加对比。
-   * 只改显示, 不动用户的原始文件; 想调深浅改这里的 brightness 即可(数值越小越深)。
+   * 反相(白 -> 近黑) + 色相回正(彩色部分不变味) + 轻微压暗加对比。
+   * 只改显示, 不动用户的原始文件; 深浅改这里的 brightness 即可(越小越深)。
    */
   filter: invert(1) hue-rotate(180deg) brightness(0.82) contrast(1.08) saturate(1.05);
 }
+.brand-tag {
+  flex: 0 0 auto;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.3px;
+  color: var(--blue);
+  background-color: rgba(37, 99, 235, 0.10);
+  border: 1px solid var(--blue-border);
+  border-radius: var(--radius-pill);
+  padding: 2px 8px;
+  white-space: nowrap;
+}
 .brand-banner:hover {
-  transform: scale(1.05);
-  filter: brightness(1.08) saturate(1.06) drop-shadow(0 3px 8px rgba(37, 99, 235, 0.22));
+  transform: scale(1.04);
+  filter: brightness(1.08) saturate(1.06) drop-shadow(0 3px 8px rgba(37, 99, 235, 0.20));
+}
+.brand-banner:hover .brand-tag {
+  background-color: rgba(37, 99, 235, 0.18);
 }
 .brand-banner:active {
-  transform: scale(0.96);
+  transform: scale(0.97);
   filter: brightness(0.94);
 }
 .brand-banner:focus-visible {
