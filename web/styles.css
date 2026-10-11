@@ -912,22 +912,18 @@ button, input, select {
   display: block;
   width: 208px;          /* ← 想改大小只改这一处 */
   height: auto;
-  border-radius: 7px;
   -webkit-user-select: none;
   user-select: none;
   pointer-events: none;
-  /* 自绘的矢量图本身就按浅色界面配的色, 不需要反相/压暗 */
-  box-shadow: 0 2px 8px rgba(37, 99, 235, 0.18);
+  /* 无底色、无描边、无投影: 只是一行深蓝文字, 与浅色界面融合 */
 }
 .brand-banner:hover {
-  transform: translateY(-1px) scale(1.03);
-  filter: brightness(1.06) saturate(1.05);
-  box-shadow: 0 8px 18px rgba(37, 99, 235, 0.26);
+  transform: translateY(-1px) scale(1.04);
+  filter: brightness(1.12) saturate(1.1) drop-shadow(0 3px 8px rgba(37, 99, 235, 0.18));
 }
 .brand-banner:active {
-  transform: translateY(1px) scale(0.98);
-  filter: brightness(0.96);
-  box-shadow: 0 2px 6px rgba(37, 99, 235, 0.18);
+  transform: translateY(1px) scale(0.97);
+  filter: brightness(0.9);
 }
 .brand-banner:focus-visible {
   outline: 2px solid var(--blue);
