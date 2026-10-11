@@ -39,7 +39,8 @@ test("HTTP 写入配置后完全退出进程，新进程从同一文件恢复所
   const file = path.join(home, "settings", "config.json");
   let server = await launch(home, file);
   try {
-    const ui = { selectedLocale: "ko_KR", modules: ["lobby_voice"], volume: 0, followClient: false, region: "global" };
+    // voiceDelayMs 是后加的字段, 未显式写入时按默认 null 落盘
+    const ui = { selectedLocale: "ko_KR", modules: ["lobby_voice"], volume: 0, followClient: false, voiceDelayMs: null, region: "global" };
     const response = await fetch(`${server.base}/api/config`, {
       method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ui, leaguePath: "D:\\SavedLeague" })
     });

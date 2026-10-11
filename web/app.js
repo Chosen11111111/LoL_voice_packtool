@@ -117,7 +117,7 @@
   const moduleControls = { ingame_voice: "modIngameVoice", ingame_lang: "modIngameLang", lobby_voice: "modLobbyVoice" };
 
   function preferenceSnapshot() {
-    return { selectedLocale: store.selected, modules: selectedModules(), volume, followClient, region: preferenceRegion };
+    return { selectedLocale: store.selected, modules: selectedModules(), volume, followClient, voiceDelayMs, region: preferenceRegion };
   }
 
   function savePreferences() {
@@ -150,6 +150,7 @@
     for (const [module, id] of Object.entries(moduleControls)) $(id).checked = modules.includes(module);
     if (typeof ui.volume === "number" && Number.isFinite(ui.volume)) setVolume(ui.volume, false);
     followClient = typeof ui.followClient === "boolean" ? ui.followClient : followClient;
+    if (typeof ui.voiceDelayMs === "number" && Number.isFinite(ui.voiceDelayMs)) setVoiceDelay(ui.voiceDelayMs, false);
     if (ui.region === "cn" || ui.region === "global") {
       preferenceRegion = ui.region;
       setServerRegion(ui.region, true);
@@ -790,6 +791,22 @@
   let volumeBeforeMute = volume > 0 ? volume : 60;
   // 是否跟随客户端音量(总音量 × 音效), 默认开启; 手动拖过滑杆就自动关掉
   let followClient = legacyPreference(FOLLOW_KEY) !== "0";
+  // 播报固定延迟(毫秒): 官方台词比我们晚一点时, 用它对齐(用户要的"加一个固定延迟")
+  let voiceDelayMs = 0;
+  let pendingPlayTimer = null;
+
+  function setVoiceDelay(ms, persist) {
+    const value = Math.max(0, Math.min(3000, Math.round(Number(ms) || 0)));
+    voiceDelayMs = value;
+    const input = $("delayInput");
+    if (input) input.value = String(value);
+    if (persist) void savePreferences();
+  }
+
+  function applyDelayInput() {
+    const input = $("delayInput");
+    if (input) input.value = String(voiceDelayMs);
+  }
 
   function applyFollowLabel() {
     const button = $("btnAlignVolume");
@@ -932,6 +949,14 @@
         setVolume(Number(slider.value), true);
       });
     }
+    applyDelayInput();
+    const delay = $("delayInput");
+    if (delay) {
+      delay.addEventListener("change", () => {
+        setVoiceDelay(delay.value, true);
+        log("播报延迟设为 " + voiceDelayMs + "ms");
+      });
+    }
     const align = $("btnAlignVolume");
     if (align) {
       align.addEventListener("click", () => {
@@ -993,23 +1018,39 @@
     lastPlayKey = key;
     lastPlayAt = now;
     lastVoice = { kind: data.kind, championId: data.championId };
-    // 换英雄时立刻切掉上一条, 避免两条台词叠在一起
+    // 固定延迟: 等官方那句先起头, 避免两路叠在一起或我们抢在前面
+    if (pendingPlayTimer) {
+      clearTimeout(pendingPlayTimer);
+      pendingPlayTimer = null;
+    }
+    if (voiceDelayMs > 0) {
+      pendingPlayTimer = setTimeout(() => {
+        pendingPlayTimer = null;
+        startPlayback(data.url);
+      }, voiceDelayMs);
+    } else {
+      startPlayback(data.url);
+    }
+    if (data.championId) {
+      log("播放选人台词：" + data.kind + " 英雄 " + data.championId + "（" + data.phase + "）" + (voiceDelayMs > 0 ? "，延迟 " + voiceDelayMs + "ms" : ""));
+    }
+  }
+
+  /** 真正开始播放(换英雄时立刻切掉上一条, 避免两条台词叠在一起)。 */
+  function startPlayback(url) {
     try {
       lobbyAudio.pause();
       lobbyAudio.currentTime = 0;
     } catch {
       /* ignore */
     }
-    lobbyAudio.src = data.url;
+    lobbyAudio.src = url;
     const played = lobbyAudio.play();
     if (played && typeof played.catch === "function") {
       played.catch((error) => {
         reportPlayback(false, "play_" + (error && error.name ? error.name : "error"), error && error.message ? error.message : "");
         setStatus("浏览器拦下了自动播放，点一下窗口任意位置即可", "warn", 0);
       });
-    }
-    if (data.championId) {
-      log("播放选人台词：" + data.kind + " 英雄 " + data.championId + "（" + data.phase + "）");
     }
   }
 

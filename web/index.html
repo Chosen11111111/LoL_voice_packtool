@@ -33,7 +33,12 @@
         </button>
         <input type="range" class="hud-volume" id="volumeSlider" min="0" max="100" step="1" value="60" aria-label="播报音量" />
         <span class="hud-value" id="volumeValue">60%</span>
-        <button type="button" class="hud-mini" id="btnAlignVolume" title="播报音量跟随客户端音量（总音量 × 音效）">对齐</button>
+        <button type="button" class="hud-mini" id="btnAlignVolume" title="播报音量跟随客户端总音量">对齐</button>
+        <label class="hud-delay" title="播报延迟：官方台词稍晚时用它对齐（0 = 立即播）">
+          延迟
+          <input type="number" id="delayInput" min="0" max="3000" step="50" value="0" aria-label="播报延迟(毫秒)" />
+          ms
+        </label>
       </div>
     </div>
     <div class="control-bar">

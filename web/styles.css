@@ -921,3 +921,31 @@ button, input, select {
 .hud-mini:hover {
   background: var(--control-hover);
 }
+
+.hud-delay {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  font-size: 10.5px;
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+.hud-delay input {
+  width: 46px;
+  padding: 2px 4px;
+  font-size: 10.5px;
+  text-align: right;
+  color: var(--text);
+  border: 1px solid var(--control-border);
+  border-radius: var(--radius-sm);
+  background: var(--control-bg);
+  box-shadow: var(--control-shadow);
+  font-variant-numeric: tabular-nums;
+}
+
+.hud-delay input:focus {
+  outline: none;
+  border-color: var(--blue-border);
+  box-shadow: 0 0 0 2px var(--blue-ring);
+}

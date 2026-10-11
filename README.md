@@ -239,6 +239,37 @@ node src/index.ts lobby restore [--league <客户端目录>]
 > 国服 `zh_CN-assets.wad` 里有 351 个 ogg（173 选人 + 173 禁用）；
 > 国际服当前渠道的语种包里没有选人语音（`zh_TW-assets.wad` 只有 5 个 ogg）。
 
+### 播报延迟(对齐官方台词)
+
+官方那句台词比我们晚一点点时, 用右上角的 **延迟(ms)** 微调: 0 = 立即播, 建议先试 150~300。
+设置会随安装目录保存(config.json 的 `ui.voiceDelayMs`), 换窗口/重启都保留。
+
+### 为什么播放用的窗口必须"不被节流"
+
+选人语音是"后端监听 LCU -> 推给窗口 -> 窗口播音频"。而对局时这个窗口总被客户端盖在后面,
+Chromium 默认会**节流甚至冻结被遮挡的窗口**, 事件分发会被拖到几十秒后(实测出现过晚 31 秒、
+甚至整场不播)。所以启动参数里关掉了节流与遮挡判定(见 `src/app.ts`):
+
+```
+--disable-background-timer-throttling
+--disable-backgrounding-occluded-windows
+--disable-renderer-backgrounding
+--disable-background-media-suspend
+--disable-ipc-flooding-protection
+--disable-features=...,CalculateNativeWinOcclusion
+```
+
+音频接口日志里的 "距事件 XXXms" 可以直接验证: 正常几十毫秒, 超过 1 秒就说明还在被节流。
+
+### 手动试听(不用进游戏)
+
+```bash
+curl -X POST http://127.0.0.1:43110/api/lobby-live/test \
+  -H "Content-Type: application/json" -d '{"kind":"choose","championId":266}'
+```
+
+走的是与真实选人事件完全相同的推送/播放链路, 用来验证"SSE -> 窗口 -> 音频接口"是否通畅。
+
 ## 选人语音（LCU 监听 + 本地播放，客户端零改动）
 
 客户端资源包 `Plugins/rcp-be-lol-game-data/<语种>-assets.wad` **有严格的内容校验**，实测结论：

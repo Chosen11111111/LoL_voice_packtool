@@ -121,3 +121,24 @@ test("原版台词开关使用实际请求函数并发送 JSON", async () => {
   const post = page.requests.find((r) => r.url === "/api/client-voice" && r.options.method === "POST");
   assert.deepEqual(JSON.parse(post!.options.body), { auto: false });
 });
+
+test("播报延迟: 写入配置并在新窗口恢复(含边界钳制)", async () => {
+  const config: any = { defaultLocale: "ja_JP", ui: { selectedLocale: "", modules: [], volume: 60, followClient: false, voiceDelayMs: null, region: "auto" } };
+  const first = await openWindow(config);
+  first.el("delayInput").value = "250";
+  first.el("delayInput").handlers.change();
+  await first.settle();
+  assert.equal(config.ui.voiceDelayMs, 250, "延迟应写入配置");
+
+  // 新窗口从配置恢复
+  const second = await openWindow(config);
+  assert.equal(second.el("delayInput").value, "250");
+
+  // 越界值被钳制(负数 -> 0, 超大 -> 3000)
+  second.el("delayInput").value = "-50";
+  second.el("delayInput").handlers.change();
+  assert.equal(second.el("delayInput").value, "0");
+  second.el("delayInput").value = "99999";
+  second.el("delayInput").handlers.change();
+  assert.equal(second.el("delayInput").value, "3000");
+});

@@ -70,5 +70,12 @@ test("界面配置分次保存不会覆盖其他选项，重新读取保留空�
   await saveConfig({ ui: { selectedLocale: "", volume: 0 } });
   invalidateConfigCache();
   const config = await loadConfig();
-  assert.deepEqual(config.ui, { selectedLocale: "", modules: ["ingame_voice"], volume: 0, followClient: false, region: "global" });
+  assert.deepEqual(config.ui, {
+    selectedLocale: "",
+    modules: ["ingame_voice"],
+    volume: 0,
+    followClient: false,
+    voiceDelayMs: null,
+    region: "global"
+  });
 }));

@@ -39,6 +39,8 @@ export interface UiConfig {
   modules: string[];
   volume: number | null;
   followClient: boolean | null;
+  /** 播报固定延迟(毫秒): 官方台词略晚一点时, 用它对齐。 */
+  voiceDelayMs: number | null;
   region: "auto" | "cn" | "global";
 }
 
@@ -90,7 +92,14 @@ const DEFAULT_CONFIG: AppConfig = {
   features: { lobbyVoice: false, lobbyLang: true },
   server: { host: "127.0.0.1", port: 43110, token: "", webDir: "web", maxUploadBytes: 0 },
   download: { threads: 16, concurrency: 16, timeoutMs: 30000, retries: 3 },
-  ui: { selectedLocale: null, modules: ["ingame_voice", "ingame_lang", "lobby_voice"], volume: null, followClient: null, region: "auto" },
+  ui: {
+    selectedLocale: null,
+    modules: ["ingame_voice", "ingame_lang", "lobby_voice"],
+    volume: null,
+    followClient: null,
+    voiceDelayMs: null,
+    region: "auto"
+  },
   logLevel: "info"
 };
 
