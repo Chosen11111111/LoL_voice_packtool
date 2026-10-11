@@ -6,6 +6,7 @@ import { cleanupSuite, makeTempDir, useSuite } from "./helpers.ts";
 import {
   BAN_KEY,
   PICK_KEY,
+  restoreTarget,
   computeAlignedVolume,
   deriveSuppressed,
   readVolumes,
@@ -55,4 +56,10 @@ test("readVolumes: 没写过的通道键返回 null(便于判断用哪个通道)
   assert.deepEqual(readVolumes({ masterVolume: 42 }), { master: 42, sfx: null, voice: null });
   assert.deepEqual(readVolumes({ masterVolume: 85, sfxVolume: 95, voiceVolume: 47.5 }), { master: 85, sfx: 95, voice: 47.5 });
   assert.equal(readVolumes(null), null);
+});
+
+test("还原目标: 非选人状态把两栏都打开(不是写回旧备份)", () => {
+  const target = restoreTarget();
+  assert.equal(target.pick, true, "离开选人后『播放选择语音』应为勾上");
+  assert.equal(target.ban, true, "离开选人后『播放禁用语音』应为勾上");
 });

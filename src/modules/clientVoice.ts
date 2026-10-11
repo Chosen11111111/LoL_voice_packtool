@@ -70,6 +70,14 @@ interface Backup {
   at: string;
 }
 
+/**
+ * "非选人状态"下这两栏的目标值: 都打开。
+ * 客户端原版台词只在**选人期间**被工具静音, 其余时间保持开启(用户明确要求)。
+ */
+export function restoreTarget(): { pick: boolean; ban: boolean } {
+  return { pick: true, ban: true };
+}
+
 interface AutoState {
   auto: boolean;
   suppressedByTool: boolean;
@@ -235,8 +243,11 @@ export async function setClientOriginalVoice(
     next[PICK_KEY] = false;
     next[BAN_KEY] = false;
   } else {
-    next[PICK_KEY] = backup?.pick ?? true;
-    next[BAN_KEY] = backup?.ban ?? true;
+    // 非选人状态一律**打开**客户端原版台词(用户要求: 离开选人后这两栏应该是勾上的)。
+    // 注意不是写回备份里的原值 —— 备份可能是"上次工具静音时留下的关", 写回去会看起来像没还原。
+    const target = restoreTarget();
+    next[PICK_KEY] = target.pick;
+    next[BAN_KEY] = target.ban;
   }
 
   const response = await lcuRequest("PATCH", SETTINGS_PATH, {
@@ -255,7 +266,11 @@ export async function setClientOriginalVoice(
   const suppressedByTool = suppress ? origin === "tool" || auto.suppressedByTool : false;
   await writeAuto({ auto: auto.auto, suppressedByTool });
   const state = await clientVoiceState();
-  logger.info(suppress ? `已静音客户端原版选人台词（${origin === "tool" ? "自动" : "手动"}）` : "已恢复客户端原版选人台词");
+  logger.info(
+    suppress
+      ? `已静音客户端原版选人台词（${origin === "tool" ? "自动" : "手动"}）：播放选择语音/播放禁用语音 = 关闭`
+      : "已还原客户端原版台词：播放选择语音/播放禁用语音 = 开启"
+  );
   return { ok: true, message: state.message, state };
 }
 
