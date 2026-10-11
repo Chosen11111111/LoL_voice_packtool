@@ -73,7 +73,8 @@ const EXCLUSIVE_GROUPS: Partial<Record<TaskKind, string>> = {
   restore: "switch",
   oneclick_apply: "switch",
   oneclick_restore: "switch",
-  update_run: "update"
+  update_run: "switch",
+  pack_import: "switch"
 };
 
 export class TaskManager {
@@ -81,6 +82,7 @@ export class TaskManager {
   private readonly subscribers = new Set<Subscriber>();
   private readonly controllers = new Map<string, AbortController>();
   private readonly lockedGroups = new Map<string, string>();
+  private readonly maxCompletedTasks = 100;
 
   subscribe(subscriber: Subscriber): () => void {
     this.subscribers.add(subscriber);
@@ -103,7 +105,7 @@ export class TaskManager {
       kind: record.kind,
       label: record.label,
       status: record.status,
-      progress: record.progress,
+      progress: { ...record.progress },
       startedAt: record.startedAt,
       finishedAt: record.finishedAt,
       error: record.error,
@@ -123,10 +125,19 @@ export class TaskManager {
   async waitFor(id: string, timeoutMs = 0): Promise<TaskRecord | null> {
     const record = this.tasks.get(id);
     if (!record) return null;
-    while (record.status === "running" || record.status === "pending") {
-      if (timeoutMs > 0 && Date.now() - record.startedAt > timeoutMs) break;
-      await new Promise((resolve) => setTimeout(resolve, 120));
-    }
+    if (record.status !== "running" && record.status !== "pending") return record;
+    await new Promise<void>((resolve) => {
+      let timer: NodeJS.Timeout | undefined;
+      const finish = () => {
+        unsubscribe();
+        if (timer) clearTimeout(timer);
+        resolve();
+      };
+      const unsubscribe = this.subscribe((event) => {
+        if (event.type === "done" && event.id === id) finish();
+      });
+      if (timeoutMs > 0) timer = setTimeout(finish, timeoutMs);
+    });
     return record;
   }
 
@@ -189,15 +200,15 @@ export class TaskManager {
       id,
       signal: controller.signal,
       progress: (done, total, current = "") => {
-        const safeTotal = Math.max(0, Math.trunc(total));
-        const safeDone = Math.max(0, Math.trunc(done));
+        const safeTotal = Number.isFinite(total) ? Math.max(0, Math.trunc(total)) : 0;
+        const safeDone = Number.isFinite(done) ? Math.max(0, Math.trunc(done)) : 0;
         record.progress = {
           done: safeDone,
           total: safeTotal,
           percent: safeTotal > 0 ? Math.min(100, Math.round((safeDone / safeTotal) * 1000) / 10) : 0,
           current
         };
-        this.broadcast({ type: "progress", id, progress: record.progress });
+        this.broadcast({ type: "progress", id, progress: { ...record.progress } });
       },
       log: (line) => {
         record.events.push({ type: "log", id, line });
@@ -211,7 +222,12 @@ export class TaskManager {
       try {
         const result = await runner(handle);
         record.result = result ?? null;
-        record.status = controller.signal.aborted ? "cancelled" : "succeeded";
+        const outcome = result && typeof result === "object" ? result as Record<string, unknown> : null;
+        const failed = outcome?.ok === false;
+        record.status = controller.signal.aborted ? "cancelled" : failed ? "failed" : "succeeded";
+        if (record.status === "failed") {
+          record.error = outcome?.message ? String(outcome.message) : "任务执行失败，请查看结果详情";
+        }
       } catch (error) {
         if (controller.signal.aborted) {
           record.status = "cancelled";
@@ -219,12 +235,17 @@ export class TaskManager {
           record.status = "failed";
           record.error = String((error as Error).message ?? error);
         }
-        logger.warn(`任务 ${kind} 失败: ${record.error}`);
+        if (record.status === "cancelled") logger.info(`任务 ${kind} 已取消`);
+        else logger.warn(`任务 ${kind} 失败: ${record.error}`);
       } finally {
         record.finishedAt = Date.now();
         this.controllers.delete(id);
         if (group && this.lockedGroups.get(group) === id) this.lockedGroups.delete(group);
         this.broadcast({ type: "done", id, status: record.status, result: record.result, error: record.error });
+        const completed = [...this.tasks.values()].filter((task) => task.finishedAt !== null);
+        for (const old of completed.slice(0, Math.max(0, completed.length - this.maxCompletedTasks))) {
+          this.tasks.delete(old.id);
+        }
       }
     })();
 

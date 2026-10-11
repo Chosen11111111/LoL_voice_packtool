@@ -4,7 +4,7 @@ import { summarize, type ModuleResult, type ResultSummary } from "../core/result
 import type { ModuleId, ProgressReporter } from "../core/types.ts";
 import { isClientRunning, isGameRunning } from "../core/win/processes.ts";
 import { restartClientUx, waitForClientUp } from "../core/win/lcu.ts";
-import { countPendingRestores, countRestoreWorkload } from "../packs/inventory.ts";
+import { countPendingRestores } from "../packs/inventory.ts";
 import { langSources, voiceGroups } from "../packs/wad.ts";
 import { applyIngameLang, restoreIngameLang } from "./ingameLang.ts";
 import { applyIngameVoice, restoreIngameVoice } from "./ingameVoice.ts";
@@ -35,18 +35,24 @@ export interface RunOutcome {
 }
 
 /** 把子步骤进度折算到总进度上。 */
-function offsetProgress(progress: ProgressReporter | undefined, base: number, total: number): ProgressReporter | undefined {
+function offsetProgress(progress: ProgressReporter | undefined, base: number, total: number, size: number): ProgressReporter | undefined {
   if (!progress) return undefined;
-  return (done: number, _moduleTotal: number, current?: string) => {
-    progress(Math.min(total, base + done), total, current ?? "");
+  return (done: number, moduleTotal: number, current?: string) => {
+    progress(base + Math.min(size, moduleTotal > 0 ? Math.max(0, done / moduleTotal) * size : 0), total, current ?? "");
   };
+}
+
+function stoppedOutcome(message: string, results: ModuleResult[] = []): RunOutcome {
+  const summary = { ...summarize(results), ok: false, partial: results.some((item) => item.success > 0) };
+  return { ok: false, partial: summary.partial, restarted: false, message, summary, results };
 }
 
 /** 开启: 大厅语音 + 对局语音 + 对局语言。 */
 export async function applyAll(env: SwitchEnv, options: RunOptions): Promise<RunOutcome> {
-  const modules = options.modules.length ? options.modules : (["lobby_voice", "ingame_voice", "ingame_lang"] as ModuleId[]);
+  const modules = [...new Set(options.modules.length ? options.modules : (["lobby_voice", "ingame_voice", "ingame_lang"] as ModuleId[]))];
   const results: ModuleResult[] = [];
   logger.info(`一键开启 locale=${options.locale} modules=${modules.join(",")}`);
+  if (options.signal?.aborted) return stoppedOutcome("已取消");
 
   if (!env.resolution.ok) {
     return {
@@ -57,6 +63,9 @@ export async function applyAll(env: SwitchEnv, options: RunOptions): Promise<Run
       summary: { ok: false, partial: false, lines: [], failed: [] },
       results: []
     };
+  }
+  if (modules.some((module) => module.startsWith("ingame_")) && await isGameRunning()) {
+    return stoppedOutcome("检测到游戏对局正在进行中，请退出对局后再切换！");
   }
 
   const sizes: Record<string, number> = {};
@@ -70,31 +79,36 @@ export async function applyAll(env: SwitchEnv, options: RunOptions): Promise<Run
       sizes[module] = 1;
     }
   }
-  const total = Object.values(sizes).reduce((sum, value) => sum + value, 0) || 1;
+  const extraLang = options.lobbyLang === "en_US" && !modules.includes("lobby_lang");
+  const total = Object.values(sizes).reduce((sum, value) => sum + value, extraLang ? 1 : 0) || 1;
   options.progress?.(0, total, "正在准备…");
 
   let base = 0;
   for (const module of modules) {
     if (options.signal?.aborted) break;
     const size = sizes[module] ?? 1;
-    const progress = offsetProgress(options.progress, base, total);
+    const progress = offsetProgress(options.progress, base, total, size);
     if (module === "lobby_voice") {
       results.push(await applyLobbyVoice(options.locale, env, { progress, signal: options.signal }));
     } else if (module === "ingame_voice") {
       results.push(await applyIngameVoice(options.locale, { voiceRoot: env.voiceRoot, finalDir: env.finalDir, leagueDir: env.leagueDir, baseLocale: env.baseLocale, progress, signal: options.signal }));
     } else if (module === "ingame_lang") {
       results.push(await applyIngameLang(options.locale, { voiceRoot: env.voiceRoot, finalDir: env.finalDir, leagueDir: env.leagueDir, baseLocale: env.baseLocale, progress, signal: options.signal }));
+    } else if (module === "lobby_lang") {
+      results.push(await applyLobbyLangEn(env));
     }
     base += size;
+    if (!options.signal?.aborted) options.progress?.(base, total);
   }
 
-  if (options.lobbyLang === "en_US") {
+  if (options.signal?.aborted) return stoppedOutcome("已取消", results);
+  if (extraLang) {
     results.push(await applyLobbyLangEn(env));
   }
 
   const summary = summarize(results);
   let restarted = false;
-  if (summary.ok && options.restartClient !== false && (await isClientRunning())) {
+  if (summary.ok && (extraLang || modules.some((module) => module !== "lobby_voice")) && options.restartClient !== false && (await isClientRunning()) && !options.signal?.aborted) {
     const restart = await restartClientUx();
     restarted = restart.ok;
     if (restarted) await waitForClientUp(90000);
@@ -114,6 +128,7 @@ export async function applyAll(env: SwitchEnv, options: RunOptions): Promise<Run
 
 /** 还原: 大厅语音 + 大厅界面语言 + 对局语音 + 对局语言。 */
 export async function restoreAll(env: SwitchEnv, options: Omit<RunOptions, "locale"> & { locale?: string }): Promise<RunOutcome> {
+  if (options.signal?.aborted) return stoppedOutcome("已取消");
   if (await isGameRunning()) {
     return {
       ok: false,
@@ -126,44 +141,33 @@ export async function restoreAll(env: SwitchEnv, options: Omit<RunOptions, "loca
   }
 
   const counts = await countPendingRestores(env.finalDir);
-  const total = (await countRestoreWorkload(env.finalDir)) || 2;
+  const modules = [...new Set(options.modules.length ? options.modules : (["lobby_voice", "lobby_lang", "ingame_voice", "ingame_lang"] as ModuleId[]))];
+  const total = modules.reduce((sum, module) => sum + Math.max(1, counts[module]), 0);
   options.progress?.(0, total, "正在准备…");
 
   let restarted = false;
-  if (options.restartClient !== false && (await isClientRunning())) {
+  if (modules.some((module) => module !== "lobby_voice") && options.restartClient !== false && (await isClientRunning()) && !options.signal?.aborted) {
     // 客户端占着 d3d9.dll/配置文件时, 先重启 UX 拿到干净的文件句柄
-    await restartClientUx();
-    restarted = true;
-    await waitForClientUp(90000);
+    const restart = await restartClientUx();
+    restarted = restart.ok;
+    if (restarted) await waitForClientUp(90000);
   }
 
-  const baseLobbyLang = counts.lobby_voice;
-  const baseVoice = baseLobbyLang + counts.lobby_lang;
-  const baseLang = baseVoice + counts.ingame_voice;
-
-  const results: ModuleResult[] = [
-    await restoreLobbyVoice(env, {
-      progress: offsetProgress(options.progress, 0, total),
-      signal: options.signal
-    }),
-    await restoreLobbyLangZh(env),
-    await restoreIngameVoice({
-      voiceRoot: env.voiceRoot,
-      finalDir: env.finalDir,
-      leagueDir: env.leagueDir,
-      baseLocale: env.baseLocale,
-      progress: offsetProgress(options.progress, baseVoice, total),
-      signal: options.signal
-    }),
-    await restoreIngameLang({
-      voiceRoot: env.voiceRoot,
-      finalDir: env.finalDir,
-      leagueDir: env.leagueDir,
-      baseLocale: env.baseLocale,
-      progress: offsetProgress(options.progress, baseLang, total),
-      signal: options.signal
-    })
-  ];
+  const results: ModuleResult[] = [];
+  let base = 0;
+  for (const module of modules) {
+    if (options.signal?.aborted) return { ...stoppedOutcome("已取消", results), restarted };
+    const size = Math.max(1, counts[module]);
+    const progress = offsetProgress(options.progress, base, total, size);
+    const context = { voiceRoot: env.voiceRoot, finalDir: env.finalDir, leagueDir: env.leagueDir, baseLocale: env.baseLocale, progress, signal: options.signal };
+    if (module === "lobby_voice") results.push(await restoreLobbyVoice(env, { progress, signal: options.signal }));
+    else if (module === "lobby_lang") results.push(await restoreLobbyLangZh(env));
+    else if (module === "ingame_voice") results.push(await restoreIngameVoice(context));
+    else if (module === "ingame_lang") results.push(await restoreIngameLang(context));
+    base += size;
+    if (!options.signal?.aborted) options.progress?.(base, total);
+  }
+  if (options.signal?.aborted) return { ...stoppedOutcome("已取消", results), restarted };
 
   const summary = summarize(results);
   options.progress?.(total, total);

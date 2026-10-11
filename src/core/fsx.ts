@@ -9,6 +9,7 @@
  */
 import fs from "node:fs/promises";
 import path from "node:path";
+import { randomUUID } from "node:crypto";
 import { BAK_SUFFIX, NEW_SUFFIX, PART_SUFFIX } from "../version.ts";
 import { classifyError } from "./errors.ts";
 
@@ -95,8 +96,8 @@ export async function walkFiles(dir: string, options: WalkOptions = {}): Promise
   const { recursive = false, match, firstOnly = false } = options;
   const found: string[] = [];
   const queue: string[] = [dir];
-  while (queue.length) {
-    const current = queue.shift()!;
+  for (let cursor = 0; cursor < queue.length; cursor += 1) {
+    const current = queue[cursor]!;
     let entries: import("node:fs").Dirent[];
     try {
       entries = await fs.readdir(current, { withFileTypes: true });
@@ -165,16 +166,24 @@ export async function readJsonFile<T>(file: string): Promise<T | null> {
 }
 
 /** 原子写文件: 先写同目录临时文件再改名, 断电/中断不会留下半个 JSON。 */
+const atomicWrites = new Map<string, Promise<void>>();
+
 export async function writeFileAtomic(file: string, data: string | Uint8Array): Promise<void> {
-  await ensureDir(path.dirname(file));
-  const temp = `${file}.tmp${process.pid}`;
-  await fs.writeFile(temp, data);
-  try {
-    await fs.rename(temp, file);
-  } catch (error) {
-    await removeQuietly(temp);
-    throw error;
-  }
+  const resolved = path.resolve(file);
+  const key = process.platform === "win32" ? resolved.toLowerCase() : resolved;
+  const writing = (atomicWrites.get(key) ?? Promise.resolve()).catch(() => undefined).then(async () => {
+    await ensureDir(path.dirname(resolved));
+    const temp = `${resolved}.tmp-${process.pid}-${randomUUID()}`;
+    try {
+      await fs.writeFile(temp, data, { flag: "wx" });
+      await fs.rename(temp, resolved);
+    } finally {
+      await removeQuietly(temp);
+    }
+  });
+  atomicWrites.set(key, writing);
+  try { await writing; }
+  finally { if (atomicWrites.get(key) === writing) atomicWrites.delete(key); }
 }
 
 /* ------------------------------------------------------------------ 拷贝/硬链接 */

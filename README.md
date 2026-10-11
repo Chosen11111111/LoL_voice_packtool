@@ -3,10 +3,10 @@
 把原先依附在其它项目里的 Python 脚本，重写成**独立、可直接分发**的 TypeScript 后端。
 
 - **零运行时依赖**：只用 Node 内置模块（`node:http` / `node:fs` / `node:child_process`），不需要 `npm install` 就能跑。
-- **Node 直跑 TS**：Node ≥ 20.11 原生类型擦除，`node src/index.ts` 即启动；`tsc` 只用于类型检查。
+- **Node 直跑 TS**：Node 22.18+（22.x）或 24+ 原生类型擦除，`node src/index.ts` 即启动；`tsc` 只用于类型检查。
 - **国服 / 国际服同一套流程**：替换哪一类槽位文件由"客户端基准语种"决定，不写死 `zh_CN`。
 - **两种驱动方式**：命令行（CLI）+ HTTP/SSE API，两者共用同一套业务实现（`src/service.ts`）。
-- **可验证**：56 个自动化测试，全部在临时目录里跑，绝不触碰真实游戏文件。
+- **可验证**：自动化测试覆盖文件替换/还原、并发配置、任务状态、流式上传下载和取消，使用临时目录与本地测试服务。
 
 ---
 
@@ -21,7 +21,7 @@
 | 环境自检 | `npm run doctor` |
 | 类型检查 / 测试 | `npm run typecheck` / `npm test` |
 
-要求：Windows 10/11 + Node.js ≥ 20.11（推荐 22/24）。运行时不需要任何第三方依赖。
+要求：Windows 10/11 + Node.js 22.18+（22.x）或 24+（推荐 24）。运行时不需要任何第三方依赖。[原生 TypeScript 支持说明](https://nodejs.org/download/release/latest-jod/docs/api/typescript.html#type-stripping)。
 
 ## 2. 界面
 

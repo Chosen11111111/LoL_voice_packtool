@@ -5,6 +5,12 @@
  *   3. 版本元数据-> content-metadata.json 与本地 version.json 比对。
  */
 import path from "node:path";
+import fs from "node:fs/promises";
+import { createWriteStream } from "node:fs";
+import { randomUUID } from "node:crypto";
+import { Readable } from "node:stream";
+import { pipeline } from "node:stream/promises";
+import { setTimeout as delay } from "node:timers/promises";
 import { appRoot, type AppConfig } from "../core/config.ts";
 import { classifyNetworkError } from "../core/errors.ts";
 import { ensureDir, fileSize, isFile, listNames, readJsonFile, writeFileAtomic, writeTextFile } from "../core/fsx.ts";
@@ -45,16 +51,19 @@ export function versionFilePath(voiceRoot: string): string {
   return path.join(voiceRoot, "version.json");
 }
 
-async function fetchWithTimeout(url: string, timeoutMs: number, signal?: AbortSignal): Promise<Response> {
+async function consumeResponse<T>(url: string, timeoutMs: number, signal: AbortSignal | undefined, consume: (response: Response, signal: AbortSignal) => Promise<T>): Promise<T> {
+  signal?.throwIfAborted();
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   const onAbort = () => controller.abort();
   signal?.addEventListener("abort", onAbort, { once: true });
   try {
-    return await fetch(url, {
+    const response = await fetch(url, {
       signal: controller.signal,
       headers: { "User-Agent": "LeagueVoiceToolkit/1.0 (+https://github.com/Chosen11111111/LoL_voice_packtool)" }
     });
+    try { return await consume(response, controller.signal); }
+    finally { await response.body?.cancel().catch(() => undefined); }
   } finally {
     clearTimeout(timer);
     signal?.removeEventListener("abort", onAbort);
@@ -72,22 +81,35 @@ export interface FetchFileOptions {
 /** 下载单个文件到指定路径(url 为图片/音频等二进制)。 */
 export async function fetchFile(url: string, dest: string, options: FetchFileOptions = {}): Promise<boolean> {
   const timeoutMs = options.timeoutMs ?? 30000;
-  const retries = Math.max(1, options.retries ?? 3);
+  const retries = Number.isFinite(options.retries ?? 3) ? Math.max(1, Math.min(10, Math.trunc(options.retries ?? 3))) : 3;
+  if (options.signal?.aborted) return false;
   if (options.skipExisting !== false && (await isFile(dest)) && (await fileSize(dest)) > 0) return true;
   await ensureDir(path.dirname(dest));
   for (let attempt = 0; attempt < retries; attempt += 1) {
     if (options.signal?.aborted) return false;
+    const temp = `${dest}.download-${randomUUID()}`;
     try {
-      const response = await fetchWithTimeout(url, timeoutMs, options.signal);
-      if (!response.ok) throw new Error(`HTTP ${response.status}`);
-      const buffer = Buffer.from(await response.arrayBuffer());
-      if (!buffer.length) throw new Error("空响应");
-      await writeFileAtomic(dest, buffer);
-      return true;
+      return await consumeResponse(url, timeoutMs, options.signal, async (response, signal) => {
+        if (!response.ok) {
+          if (response.status === 404 || response.status === 410) return false;
+          throw new Error(`HTTP ${response.status}`);
+        }
+        if (!response.body) throw new Error("空响应");
+        await pipeline(Readable.fromWeb(response.body as any), createWriteStream(temp, { flags: "wx" }), { signal });
+        signal.throwIfAborted();
+        if ((await fs.stat(temp)).size === 0) throw new Error("空响应");
+        await fs.rename(temp, dest);
+        return true;
+      });
     } catch (error) {
       if (options.signal?.aborted) return false;
       logger.debug(`下载失败(${attempt + 1}/${retries}) ${url}: ${classifyNetworkError(error)}`);
-      await new Promise((resolve) => setTimeout(resolve, 400 * (attempt + 1)));
+      if (attempt + 1 < retries) {
+        try { await delay(400 * (attempt + 1), undefined, { signal: options.signal }); }
+        catch { return false; }
+      }
+    } finally {
+      await fs.rm(temp, { force: true }).catch(() => undefined);
     }
   }
   return false;
@@ -103,7 +125,7 @@ export async function mapLimit<T, R>(
   const results: R[] = new Array(items.length);
   let cursor = 0;
   const workers: Promise<void>[] = [];
-  const size = Math.max(1, Math.min(limit, items.length || 1));
+  const size = Math.max(1, Math.min(Number.isFinite(limit) ? Math.trunc(limit) : 1, 64, items.length || 1));
   for (let i = 0; i < size; i += 1) {
     workers.push(
       (async () => {
@@ -112,12 +134,15 @@ export async function mapLimit<T, R>(
           const index = cursor;
           cursor += 1;
           if (index >= items.length) return;
-          results[index] = await worker(items[index]!, index);
+          try { results[index] = await worker(items[index]!, index); }
+          catch (error) { cursor = items.length; throw error; }
         }
       })()
     );
   }
-  await Promise.all(workers);
+  const settled = await Promise.allSettled(workers);
+  const failure = settled.find((result) => result.status === "rejected");
+  if (failure?.status === "rejected") throw failure.reason;
   return results;
 }
 
@@ -125,32 +150,24 @@ export async function mapLimit<T, R>(
 
 const EXPECTED = { wads: 180, choose: 170, ban: 170 };
 
-export async function checkRemoteVersion(config: AppConfig, voiceRoot: string): Promise<RemoteInfo> {
+export async function checkRemoteVersion(config: AppConfig, voiceRoot: string, signal?: AbortSignal): Promise<RemoteInfo> {
   let remoteVersion = "";
   let offline = false;
   try {
-    const response = await fetchWithTimeout(`${config.cdnBase}/content-metadata.json`, 8000);
-    if (response.ok) {
-      const data = (await response.json()) as { version?: string };
-      remoteVersion = data.version ?? "";
-    } else {
-      offline = true;
-    }
+    remoteVersion = await consumeResponse(`${config.cdnBase}/content-metadata.json`, 8000, signal, async (response) => {
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      const data = await response.json() as { version?: string };
+      return data.version ?? "";
+    });
+    offline = !remoteVersion;
   } catch (error) {
+    signal?.throwIfAborted();
     offline = true;
     logger.debug(`版本检查失败: ${classifyNetworkError(error)}`);
   }
 
-  let missing = 0;
-  for (const code of config.supportedLocales) {
-    const base = path.join(voiceRoot, code);
-    const wads = (await listNames(path.join(base, "DATA", "FINAL", "Champions"))).filter((name) => name.endsWith(".wad.client")).length;
-    const choose = (await listNames(path.join(base, "assets", "champion-choose-vo"))).filter((name) => name.toLowerCase().endsWith(".ogg")).length;
-    const ban = (await listNames(path.join(base, "assets", "champion-ban-vo"))).filter((name) => name.toLowerCase().endsWith(".ogg")).length;
-    if (wads < EXPECTED.wads) missing += EXPECTED.wads - wads;
-    if (choose < EXPECTED.choose) missing += EXPECTED.choose - choose;
-    if (ban < EXPECTED.ban) missing += EXPECTED.ban - ban;
-  }
+  const inventory = await inventorySnapshot(voiceRoot, config.supportedLocales);
+  const missing = inventory.reduce((sum, row) => sum + Math.max(0, EXPECTED.wads - row.wads) + Math.max(0, EXPECTED.choose - row.choose) + Math.max(0, EXPECTED.ban - row.ban), 0);
 
   const local = (await readJsonFile<VersionFile>(versionFilePath(voiceRoot)))?.cdragon_version ?? "";
   const label = remoteVersion || "未知";
@@ -295,7 +312,7 @@ export async function downloadLobbyAssets(
   let championIds: number[] = [];
   const summary = await readJsonFile<Array<{ id: number }>>(summaryFile);
   if (Array.isArray(summary)) {
-    championIds = summary.map((item) => Number(item.id)).filter((id) => Number.isFinite(id) && id > 0 && id < 1000);
+    championIds = [...new Set(summary.map((item) => Number(item.id)).filter((id) => Number.isFinite(id) && id > 0 && id < 1000))];
   }
   if (!championIds.length) {
     // 拿不到英雄列表就退化成官方 ID 区间, 保证仍能补全资源
@@ -424,18 +441,22 @@ export async function syncLocale(
 
 /** 资源完整性快照(同步后校验用)。 */
 export async function inventorySnapshot(voiceRoot: string, codes: string[]): Promise<Array<{ code: string; wads: number; choose: number; ban: number; champions: number }>> {
-  const rows: Array<{ code: string; wads: number; choose: number; ban: number; champions: number }> = [];
-  for (const code of codes) {
+  return mapLimit(codes, 4, async (code) => {
     const base = path.join(voiceRoot, code);
-    rows.push({
+    const [wads, choose, ban, champions] = await Promise.all([
+      listNames(path.join(base, "DATA", "FINAL", "Champions")),
+      listNames(path.join(base, "assets", "champion-choose-vo")),
+      listNames(path.join(base, "assets", "champion-ban-vo")),
+      listNames(path.join(base, "assets", "champions"))
+    ]);
+    return {
       code,
-      wads: (await listNames(path.join(base, "DATA", "FINAL", "Champions"))).filter((name) => name.endsWith(".wad.client")).length,
-      choose: (await listNames(path.join(base, "assets", "champion-choose-vo"))).filter((name) => name.toLowerCase().endsWith(".ogg")).length,
-      ban: (await listNames(path.join(base, "assets", "champion-ban-vo"))).filter((name) => name.toLowerCase().endsWith(".ogg")).length,
-      champions: (await listNames(path.join(base, "assets", "champions"))).filter((name) => name.endsWith(".json")).length
-    });
-  }
-  return rows;
+      wads: wads.filter((name) => name.endsWith(".wad.client")).length,
+      choose: choose.filter((name) => name.toLowerCase().endsWith(".ogg")).length,
+      ban: ban.filter((name) => name.toLowerCase().endsWith(".ogg")).length,
+      champions: champions.filter((name) => name.endsWith(".json")).length
+    };
+  });
 }
 
 /** 导出给 CLI 的便捷文本写入(避免 CLI 直接依赖 fsx)。 */

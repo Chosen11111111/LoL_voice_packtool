@@ -24,10 +24,16 @@ export interface LcuCredentials {
 }
 
 let snapshotCache: { at: number; items: ProcessInfo[] } | null = null;
+let snapshotPending: Promise<ProcessInfo[]> | null = null;
+let snapshotGeneration = 0;
+const presencePending = new Map<string, Promise<boolean>>();
 const SNAPSHOT_TTL_MS = 2000;
 
 export function clearProcessCache(): void {
   snapshotCache = null;
+  snapshotPending = null;
+  snapshotGeneration += 1;
+  presencePending.clear();
 }
 
 function parseSnapshot(stdout: string): ProcessInfo[] {
@@ -62,6 +68,18 @@ export async function processSnapshot(force = false): Promise<ProcessInfo[]> {
   if (!force && snapshotCache && Date.now() - snapshotCache.at < SNAPSHOT_TTL_MS) {
     return snapshotCache.items;
   }
+  if (snapshotPending) return snapshotPending;
+  const generation = snapshotGeneration;
+  const pending = readProcessSnapshot().then((items) => {
+    if (generation === snapshotGeneration) snapshotCache = { at: Date.now(), items };
+    return items;
+  });
+  snapshotPending = pending;
+  try { return await pending; }
+  finally { if (snapshotPending === pending) snapshotPending = null; }
+}
+
+async function readProcessSnapshot(): Promise<ProcessInfo[]> {
   const filter = CLIENT_EXES.map((name) => `Name='${name}'`).concat(`Name='${GAME_EXE}'`).join(" or ");
   const script = `@(Get-CimInstance Win32_Process -Filter "${filter}" | Select-Object ProcessId,Name,ExecutablePath,CommandLine) | ConvertTo-Json -Compress -Depth 3`;
   const result = await runPowerShell(script, { timeoutMs: 20000 });
@@ -69,12 +87,21 @@ export async function processSnapshot(force = false): Promise<ProcessInfo[]> {
   if (!items.length && !result.ok) {
     logger.debug(`进程快照不可用: code=${result.code} err=${result.error}`);
   }
-  snapshotCache = { at: Date.now(), items };
   return items;
 }
 
 /** 用 tasklist 做轻量存在性判断(比 WMI 快一个数量级)。 */
 export async function isProcessRunning(exeName: string): Promise<boolean> {
+  const key = exeName.toLowerCase();
+  const existing = presencePending.get(key);
+  if (existing) return existing;
+  const pending = probeProcessRunning(exeName);
+  presencePending.set(key, pending);
+  try { return await pending; }
+  finally { if (presencePending.get(key) === pending) presencePending.delete(key); }
+}
+
+async function probeProcessRunning(exeName: string): Promise<boolean> {
   const result = await run("tasklist", ["/FI", `IMAGENAME eq ${exeName}`, "/NH"], { timeoutMs: 10000 });
   if (result.outputUnavailable) {
     // 管道被拒: 用快照兜底
@@ -91,10 +118,19 @@ export async function isGameRunning(): Promise<boolean> {
 
 /** 大厅客户端是否在跑。 */
 export async function isClientRunning(): Promise<boolean> {
-  for (const exe of CLIENT_EXES) {
-    if (await isProcessRunning(exe)) return true;
-  }
-  return false;
+  const key = "LeagueClient*";
+  const existing = presencePending.get(key);
+  if (existing) return existing;
+  const pending = (async () => {
+    const result = await run("tasklist", ["/FI", "IMAGENAME eq LeagueClient*", "/FO", "CSV", "/NH"], { timeoutMs: 10000 });
+    if (result.outputUnavailable || !result.ok) {
+      return (await processSnapshot()).some((item) => CLIENT_EXES.some((exe) => exe.toLowerCase() === item.name.toLowerCase()));
+    }
+    return CLIENT_EXES.some((exe) => result.stdout.toLowerCase().includes(exe.toLowerCase()));
+  })();
+  presencePending.set(key, pending);
+  try { return await pending; }
+  finally { if (presencePending.get(key) === pending) presencePending.delete(key); }
 }
 
 /** 找到正在运行的 UX 进程(带可执行路径与命令行)。 */
@@ -271,18 +307,24 @@ async function credentialsFromLogs(): Promise<LcuCredentials[]> {
 
 /** 由配置指定的客户端目录(日志回退时用, 因为受保护进程拿不到路径)。 */
 export function setClientDirHint(dir: string | null): void {
-  clientDirFromConfig = dir ? path.resolve(dir) : null;
+  const next = dir ? path.resolve(dir) : null;
+  if (next !== clientDirFromConfig) clearCredentialCache();
+  clientDirFromConfig = next;
 }
 
 let clientDirFromConfig: string | null = null;
 
 /** 缓存: 进程命令行读不到时改读日志, 但不必每次轮询都读盘。 */
 let credentialCache: { at: number; value: LcuCredentials | null } | null = null;
+let credentialPending: Promise<LcuCredentials | null> | null = null;
+let credentialGeneration = 0;
 const CREDENTIAL_TTL_MS = 20000;
 
 /** 清空 LCU 凭据缓存(客户端重启后调用)。 */
 export function clearCredentialCache(): void {
   credentialCache = null;
+  credentialPending = null;
+  credentialGeneration += 1;
 }
 
 /** 探测一组凭据是不是**英雄联盟**的 LCU(Riot 客户端会返回 Invalid URI format)。 */
@@ -321,13 +363,25 @@ export async function lcuCredentials(force = false): Promise<LcuCredentials | nu
   if (!force && credentialCache && Date.now() - credentialCache.at < CREDENTIAL_TTL_MS) {
     return credentialCache.value;
   }
+  if (credentialPending) return credentialPending;
+  const generation = credentialGeneration;
+  const pending = discoverCredentials(force).then((value) => {
+    if (generation === credentialGeneration) credentialCache = { at: Date.now(), value };
+    return value;
+  });
+  credentialPending = pending;
+  try { return await pending; }
+  finally { if (credentialPending === pending) credentialPending = null; }
+}
+
+async function discoverCredentials(force: boolean): Promise<LcuCredentials | null> {
   const candidates: LcuCredentials[] = [];
   try {
     candidates.push(...(await credentialsFromLogs()));
   } catch (error) {
     logger.debug(`日志凭据失败: ${String((error as Error).message ?? error)}`);
   }
-  const items = await processSnapshot(true);
+  const items = await processSnapshot(force);
   for (const proc of items) {
     if (proc.name.toLowerCase() !== CLIENT_UX_EXE.toLowerCase()) continue;
     candidates.push(...parseLcuCandidates(proc.commandLine));
@@ -350,7 +404,6 @@ export async function lcuCredentials(force = false): Promise<LcuCredentials | nu
     value = unique[0]!;
     logger.warn(`LCU 候选都未通过验证, 暂用端口 ${value.port}（${value.source}）`);
   }
-  credentialCache = { at: Date.now(), value };
   return value;
 }
 

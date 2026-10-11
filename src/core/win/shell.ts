@@ -185,6 +185,7 @@ export async function runStreaming(
   args: string[],
   options: RunOptions & { onLine?: (line: string) => void; signal?: AbortSignal; maxBuffer?: number } = {}
 ): Promise<RunResult> {
+  if (options.signal?.aborted) return { ok: false, code: null, stdout: "", stderr: "", error: "aborted", outputUnavailable: false };
   const timeoutMs = options.timeoutMs && options.timeoutMs > 0 ? options.timeoutMs : 0;
   const maxBuffer = options.maxBuffer ?? 4 * 1024 * 1024;
   return new Promise<RunResult>((resolve) => {
@@ -193,6 +194,7 @@ export async function runStreaming(
     let settled = false;
     let timer: NodeJS.Timeout | null = null;
     let pending = "";
+    let stopReason = "";
     let child: ReturnType<typeof spawn>;
     const finish = (payload: RunResult) => {
       if (settled) return;
@@ -202,12 +204,13 @@ export async function runStreaming(
       resolve(payload);
     };
     const onAbort = () => {
+      if (settled || stopReason) return;
+      stopReason = "aborted";
       try {
         child?.kill();
       } catch {
         /* ignore */
       }
-      finish({ ok: false, code: null, stdout: chunks.join(""), stderr: "", error: "aborted", outputUnavailable: false });
     };
     const consume = (text: string) => {
       if (size < maxBuffer) {
@@ -222,7 +225,7 @@ export async function runStreaming(
       }
     };
     try {
-      child = spawn(exe, args, { cwd: options.cwd, windowsHide: true, stdio: ["ignore", "pipe", "pipe"] });
+      child = spawn(exe, args, { cwd: options.cwd, env: options.env, windowsHide: true, stdio: ["ignore", "pipe", "pipe"] });
     } catch (error) {
       finish({ ok: false, code: null, stdout: "", stderr: "", error: errorText(error), outputUnavailable: true });
       return;
@@ -237,23 +240,24 @@ export async function runStreaming(
         code: null,
         stdout: chunks.join(""),
         stderr: "",
-        error: message,
+        error: stopReason || message,
         outputUnavailable: /EPERM|EACCES|EPIPE|ENOTSUP|UNKNOWN/i.test(message)
       });
     });
     if (timeoutMs > 0) {
       timer = setTimeout(() => {
+        stopReason = "timeout";
         try {
           child.kill();
         } catch {
           /* ignore */
         }
-        finish({ ok: false, code: null, stdout: chunks.join(""), stderr: "", error: "timeout", outputUnavailable: false });
       }, timeoutMs);
     }
     child.on("close", (code) => {
       if (pending.trim()) options.onLine?.(pending.trim());
-      finish({ ok: code === 0, code, stdout: chunks.join(""), stderr: "", error: "", outputUnavailable: false });
+      finish({ ok: !stopReason && code === 0, code, stdout: chunks.join(""), stderr: "", error: stopReason, outputUnavailable: false });
     });
+    if (options.signal?.aborted) onAbort();
   });
 }

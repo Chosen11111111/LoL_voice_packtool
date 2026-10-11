@@ -6,7 +6,6 @@ import { APP_NAME_CN, APP_VERSION } from "./version.ts";
 import { appRoot, loadConfig, saveConfig, type AppConfig } from "./core/config.ts";
 import { removeQuietly } from "./core/fsx.ts";
 import { createLogger } from "./core/logger.ts";
-import { summarize, type ModuleResult } from "./core/result.ts";
 import type { ModuleId } from "./core/types.ts";
 import { detectCandidates, resolveGamePaths } from "./core/paths.ts";
 import { isClientRunning, isGameRunning } from "./core/win/processes.ts";
@@ -15,11 +14,8 @@ import { wadSuffix } from "./packs/baselocale.ts";
 import { scanLocales } from "./packs/locales.ts";
 import { importArchive } from "./packs/archive.ts";
 import { checkRemoteVersion, inventorySnapshot, syncLocale, writeVersionFile } from "./packs/updater.ts";
-import { applyLobbyLangEn } from "./modules/lobbyLang.ts";
 import { applyAll, restoreAll } from "./modules/oneclick.ts";
-import { applyIngameLang, restoreIngameLang } from "./modules/ingameLang.ts";
-import { applyIngameVoice, restoreIngameVoice } from "./modules/ingameVoice.ts";
-import { applyLobbyVoice, getLobbyStatus, restoreLobbyVoice, type LobbyStatus } from "./modules/lobbyVoice.ts";
+import { getLobbyStatus, type LobbyStatus } from "./modules/lobbyVoice.ts";
 import { lobbyLive } from "./modules/lobbyLive.ts";
 import { buildEnv, type SwitchEnv } from "./modules/context.ts";
 import { taskManager, type TaskSnapshot } from "./tasks/manager.ts";
@@ -246,42 +242,11 @@ export function startApplyTask(request: ApplyRequest): TaskSnapshot {
     }
     const locale = request.locale || appConfig.defaultLocale;
     const modules: ModuleId[] = request.modules?.length ? request.modules : defaultApplyModules(appConfig);
-    const onlyLobby = modules.length === 1 && modules[0] === "lobby_voice";
-    const onlyIngame = modules.every((module) => module !== "lobby_voice");
-
-    if (!onlyLobby && !onlyIngame) {
-      return applyAll(env, {
-        locale,
-        modules,
-        restartClient: request.restartClient ?? appConfig.autoRestartClient,
-        progress: handle.progress,
-        signal: handle.signal,
-        lobbyLang: request.lobbyLang
-      });
-    }
-
-    // 细分操作: 逐模块执行, 结果形状与一键一致
-    const results: ModuleResult[] = [];
-    for (const module of modules) {
-      if (handle.isCancelled()) break;
-      if (module === "lobby_voice") {
-        results.push(await applyLobbyVoice(locale, env, { progress: handle.progress, signal: handle.signal }));
-      } else if (module === "ingame_voice") {
-        results.push(await applyIngameVoice(locale, { voiceRoot: env.voiceRoot, finalDir: env.finalDir, leagueDir: env.leagueDir, baseLocale: env.baseLocale, progress: handle.progress, signal: handle.signal }));
-      } else if (module === "ingame_lang") {
-        results.push(await applyIngameLang(locale, { voiceRoot: env.voiceRoot, finalDir: env.finalDir, leagueDir: env.leagueDir, baseLocale: env.baseLocale, progress: handle.progress, signal: handle.signal }));
-      }
-    }
-    if (request.lobbyLang === "en_US") results.push(await applyLobbyLangEn(env));
-    const summary = summarize(results);
-    return {
-      ok: summary.ok,
-      partial: summary.partial,
-      restarted: false,
-      message: summary.ok ? `已完成 ${locale} 切换` : summary.lines.join("；"),
-      summary,
-      results
-    };
+    return applyAll(env, {
+      locale, modules,
+      restartClient: request.restartClient ?? appConfig.autoRestartClient,
+      progress: handle.progress, signal: handle.signal, lobbyLang: request.lobbyLang
+    });
   });
 }
 
@@ -297,42 +262,17 @@ export function startRestoreTask(request: RestoreRequest = {}): TaskSnapshot {
     const env = await buildEnvFromConfig(appConfig);
     const modules: ModuleId[] = request.modules?.length ? request.modules : await defaultRestoreModules(appConfig, env);
 
-    if (modules.length > 1) {
-      return restoreAll(env, {
-        modules,
-        restartClient: request.restartClient ?? appConfig.autoRestartClient,
-        progress: handle.progress,
-        signal: handle.signal
-      });
-    }
-
-    const results: ModuleResult[] = [];
-    const only = modules[0]!;
-    if (only === "lobby_voice") {
-      results.push(await restoreLobbyVoice(env, { progress: handle.progress, signal: handle.signal }));
-    } else if (only === "ingame_voice") {
-      results.push(await restoreIngameVoice({ voiceRoot: env.voiceRoot, finalDir: env.finalDir, leagueDir: env.leagueDir, baseLocale: env.baseLocale, progress: handle.progress, signal: handle.signal }));
-    } else if (only === "ingame_lang") {
-      results.push(await restoreIngameLang({ voiceRoot: env.voiceRoot, finalDir: env.finalDir, leagueDir: env.leagueDir, baseLocale: env.baseLocale, progress: handle.progress, signal: handle.signal }));
-    } else if (only === "lobby_lang") {
-      const { restoreLobbyLangZh } = await import("./modules/lobbyLang.ts");
-      results.push(await restoreLobbyLangZh(env));
-    }
-    const summary = summarize(results);
-    return {
-      ok: summary.ok,
-      partial: summary.partial,
-      restarted: false,
-      message: summary.ok ? "已恢复为官方默认" : summary.lines.join("；"),
-      summary,
-      results
-    };
+    return restoreAll(env, {
+      modules, restartClient: request.restartClient ?? appConfig.autoRestartClient,
+      progress: handle.progress, signal: handle.signal
+    });
   });
 }
 
 export interface ImportRequest {
   /** 压缩包路径(上传落盘的临时文件, 或用户直接给的本地路径)。 */
   archive: string;
+  archiveName?: string;
   locale?: string;
   overwrite?: boolean;
   /** 导入结束后删除压缩包(上传的临时文件用)。 */
@@ -341,15 +281,17 @@ export interface ImportRequest {
 
 /** 导入语音包压缩包: 解压 -> 识别语种 -> 装进资源目录(完成后自动出现在语音包列表)。 */
 export function startImportTask(request: ImportRequest): TaskSnapshot {
-  return taskManager.startSnapshot("pack_import", `导入语音包 ${path.basename(request.archive)}`, async (handle) => {
-    const config = await loadConfig();
-    const env = await buildEnvFromConfig(config, { skipProcess: true });
+  return taskManager.startSnapshot("pack_import", `导入语音包 ${path.basename(request.archiveName ?? request.archive)}`, async (handle) => {
     try {
+      const config = await loadConfig();
+      const env = await buildEnvFromConfig(config, { skipProcess: true });
       const result = await importArchive({
         archive: request.archive,
+        archiveName: request.archiveName,
         locale: request.locale,
         voiceRoot: env.voiceRoot,
         overwrite: request.overwrite,
+        signal: handle.signal,
         onLog: (line) => handle.log(line),
         onProgress: (phase, percent) => handle.progress(Math.round(percent), 100, phase)
       });
@@ -368,7 +310,7 @@ export function startUpdateCheckTask(): TaskSnapshot {
     const config = await loadConfig();
     const env = await buildEnvFromConfig(config, { skipProcess: true });
     handle.log("正在连接 CommunityDragon 检查版本…");
-    const info = await checkRemoteVersion(config, env.voiceRoot);
+    const info = await checkRemoteVersion(config, env.voiceRoot, handle.signal);
     const inventory = await inventorySnapshot(env.voiceRoot, config.supportedLocales);
     handle.log(info.detail);
     return { info, inventory, voiceRoot: env.voiceRoot };
@@ -384,7 +326,7 @@ export function startUpdateRunTask(request: UpdateRunRequest = {}): TaskSnapshot
   return taskManager.startSnapshot("update_run", "增量同步语音包", async (handle) => {
     const config = await loadConfig();
     const env = await buildEnvFromConfig(config, { skipProcess: true });
-    const locales = targets ?? config.supportedLocales;
+    const locales = [...new Set(targets ?? config.supportedLocales)];
     const results = [];
     let done = 0;
     const total = locales.length;
@@ -401,10 +343,14 @@ export function startUpdateRunTask(request: UpdateRunRequest = {}): TaskSnapshot
       handle.progress(done, total, code);
       handle.log(result.message);
     }
-    const remote = await checkRemoteVersion(config, env.voiceRoot);
-    await writeVersionFile(env.voiceRoot, config, remote.remoteVersion);
+    handle.signal.throwIfAborted();
+    const remote = await checkRemoteVersion(config, env.voiceRoot, handle.signal);
+    const ok = results.length === locales.length && results.every((item) => item.ok);
+    if (ok && !remote.offline && config.supportedLocales.every((code) => locales.includes(code))) {
+      await writeVersionFile(env.voiceRoot, config, remote.remoteVersion);
+    }
     const inventory = await inventorySnapshot(env.voiceRoot, config.supportedLocales);
-    return { ok: results.every((item) => item.ok), results, inventory, remote };
+    return { ok, message: ok ? "语音包同步完成" : "部分资源同步失败，请查看结果后重试", results, inventory, remote };
   });
 }
 

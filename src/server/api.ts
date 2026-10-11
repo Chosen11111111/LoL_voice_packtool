@@ -1,6 +1,7 @@
 /** REST API: 界面(未来任意前端)只需对着这一组接口写。 */
 import path from "node:path";
-import { copyFile, mkdir, readFile, rename } from "node:fs/promises";
+import { copyFile, mkdir, readFile, rename, rm } from "node:fs/promises";
+import { randomUUID } from "node:crypto";
 import { APP_NAME, APP_NAME_CN, APP_VERSION, API_VERSION } from "../version.ts";
 import { loadConfig, appRoot, type AppConfig } from "../core/config.ts";
 import { resolveVoiceRoot } from "../core/paths.ts";
@@ -230,16 +231,21 @@ export function buildRouter(): Router {
 
     let archive = "";
     let deleteAfter = false;
+    const name = context.rawFile ? uploadName || "pack.zip" : String(body.path ?? "").trim();
+    const extension = SUPPORTED_EXTENSIONS.find((ext) => name.toLowerCase().endsWith(ext));
+    if (!extension) return { ok: false, error: "bad_request", message: `不支持的格式：${path.basename(name)}（支持 ${SUPPORTED_EXTENSIONS.join(" / ")}）` };
     if (context.rawFile) {
       // 上传的临时文件移交给后台任务(同卷改名), 避免任务还没跑就被清掉
       const keepDir = path.join(appRoot(), ".tmp", "imports");
-      await mkdir(keepDir, { recursive: true }).catch(() => undefined);
-      const ext = path.extname(uploadName || ".zip") || ".zip";
-      const owned = path.join(keepDir, `pack-${Date.now()}${ext}`);
+      await mkdir(keepDir, { recursive: true });
+      const ext = name.toLowerCase().endsWith(".tar.gz") ? ".tar.gz" : extension;
+      const owned = path.join(keepDir, `pack-${randomUUID()}${ext}`);
       try {
         await rename(context.rawFile, owned);
-      } catch {
-        await copyFile(context.rawFile, owned);
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== "EXDEV") throw error;
+        try { await copyFile(context.rawFile, owned); }
+        catch (copyError) { await rm(owned, { force: true }).catch(() => undefined); throw copyError; }
       }
       archive = owned;
       deleteAfter = true;
@@ -257,7 +263,11 @@ export function buildRouter(): Router {
         message: `不支持的格式：${path.basename(archive)}（支持 ${SUPPORTED_EXTENSIONS.join(" / ")}）`
       };
     }
-    return { ok: true, task: startImportTask({ archive, locale, overwrite, deleteAfter }) };
+    try { return { ok: true, task: startImportTask({ archive, archiveName: context.rawFile ? name : undefined, locale, overwrite, deleteAfter }) }; }
+    catch (error) {
+      if (deleteAfter) await rm(archive, { force: true }).catch(() => undefined);
+      throw error;
+    }
   });
 
   router.post("/api/update/check", () => ({ ok: true, task: startUpdateCheckTask() }));
@@ -283,10 +293,10 @@ export function buildRouter(): Router {
     };
   });
 
-  router.post("/api/tasks/:id/cancel", (context) => ({
-    ok: taskManager.cancel(context.params.id!),
-    message: taskManager.cancel(context.params.id!) ? "已请求取消" : "任务不存在或已结束"
-  }));
+  router.post("/api/tasks/:id/cancel", (context) => {
+    const cancelled = taskManager.cancel(context.params.id!);
+    return { ok: cancelled, message: cancelled ? "已请求取消" : "任务不存在或已结束" };
+  });
 
   return router;
 }
@@ -307,16 +317,6 @@ export async function startApiServer(
   const token = options.token ?? (host === "127.0.0.1" || host === "localhost" ? config.server.token : config.server.token || "");
   const router = buildRouter();
 
-  // 任务事件 -> SSE
-  taskManager.subscribe((event: TaskEvent) => {
-    router.broadcast(event.type, event);
-  });
-
-  // 选人语音实时播报事件 -> SSE(前端收到后用它播音频)
-  lobbyLive.subscribe((event) => {
-    router.broadcast("lobby", event);
-  });
-
   // 启动兜底: 上次若被本工具静音过、但这次并没有在监听选人语音, 把原版台词还原回去
   // (客户端设置是持久化的, 不还原会一直留在静音状态)
   void recoverOnStartup(lobbyLive.isRunning());
@@ -332,8 +332,13 @@ export async function startApiServer(
     token,
     router,
     staticDir: hasWeb ? staticDir : undefined,
-    spaFallback: hasWeb
+    spaFallback: hasWeb,
+    maxUploadBytes: config.server.maxUploadBytes,
+    uploadDir: path.join(appRoot(), ".tmp", "uploads")
   });
+  const unsubscribeTasks = taskManager.subscribe((event: TaskEvent) => router.broadcast(event.type, event));
+  const unsubscribeLobby = lobbyLive.subscribe((event) => router.broadcast("lobby", event));
+  running.server.once("close", () => { unsubscribeTasks(); unsubscribeLobby(); });
   return { running, router, staticDir: hasWeb ? staticDir : null };
 }
 

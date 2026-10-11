@@ -13,6 +13,8 @@ export interface ServerConfig {
   token: string;
   /** 前端静态目录(相对项目根或绝对路径)。换成自己的 UI 时指到这里即可。 */
   webDir: string;
+  /** 二进制上传大小上限，0 表示不限制。 */
+  maxUploadBytes: number;
 }
 
 export interface DownloadConfig {
@@ -74,12 +76,13 @@ const DEFAULT_CONFIG: AppConfig = {
   supportedLocales: ["ja_JP", "ko_KR", "en_US"],
   autoRestartClient: true,
   features: { lobbyVoice: false, lobbyLang: true },
-  server: { host: "127.0.0.1", port: 43110, token: "", webDir: "web" },
+  server: { host: "127.0.0.1", port: 43110, token: "", webDir: "web", maxUploadBytes: 0 },
   download: { threads: 16, concurrency: 16, timeoutMs: 30000, retries: 3 },
   logLevel: "info"
 };
 
-let cache: AppConfig | null = null;
+let cache: { file: string; config: AppConfig } | null = null;
+let saveQueue: Promise<unknown> = Promise.resolve();
 
 /** 项目根目录(可用 LEAGUE_VOICE_HOME 覆盖, 打包后可指向安装目录)。 */
 export function appRoot(): string {
@@ -123,20 +126,28 @@ function mergeConfig(base: AppConfig, patch: Partial<AppConfig> | null | undefin
 
 /** 读取配置(带缓存)。文件不存在时返回默认值, 不落盘。 */
 export async function loadConfig(force = false): Promise<AppConfig> {
-  if (cache && !force) return cache;
-  const stored = (await readJsonFile<Partial<AppConfig>>(configPath())) ?? {};
-  cache = mergeConfig(defaultConfig(), stored);
-  return cache;
+  const file = configPath();
+  if (cache?.file === file && !force) return structuredClone(cache.config);
+  const stored = (await readJsonFile<Partial<AppConfig>>(file)) ?? {};
+  const config = mergeConfig(defaultConfig(), stored);
+  cache = { file, config };
+  return structuredClone(config);
 }
 
 /** 合并并落盘(原子写)。 */
-export async function saveConfig(patch: Partial<AppConfig>): Promise<AppConfig> {
-  const current = await loadConfig(true);
-  const next = mergeConfig(current, patch);
-  await ensureDir(path.dirname(configPath()));
-  await writeFileAtomic(configPath(), JSON.stringify(next, null, 2) + "\n");
-  cache = next;
-  return next;
+export function saveConfig(patch: Partial<AppConfig>): Promise<AppConfig> {
+  const file = configPath();
+  const ownedPatch = structuredClone(patch);
+  const saving = saveQueue.then(async () => {
+    const stored = (await readJsonFile<Partial<AppConfig>>(file)) ?? {};
+    const next = mergeConfig(mergeConfig(defaultConfig(), stored), ownedPatch);
+    await ensureDir(path.dirname(file));
+    await writeFileAtomic(file, JSON.stringify(next, null, 2) + "\n");
+    cache = { file, config: next };
+    return structuredClone(next);
+  });
+  saveQueue = saving.catch(() => undefined);
+  return saving;
 }
 
 export async function resetConfig(): Promise<AppConfig> {

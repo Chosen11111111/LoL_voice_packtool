@@ -8,9 +8,9 @@
  */
 import path from "node:path";
 import fs from "node:fs/promises";
-import { ensureDir, isDirectory, isFile, listNames, removeQuietly, pathExists } from "../core/fsx.ts";
+import { ensureDir, isDirectory, isFile, listNames, pathExists, walkFiles } from "../core/fsx.ts";
 import { createLogger } from "../core/logger.ts";
-import { run } from "../core/win/shell.ts";
+import { runStreaming, encodePowerShell } from "../core/win/shell.ts";
 import { isLocaleCode, LOCALE_NAMES } from "./locales.ts";
 
 const logger = createLogger("archive");
@@ -49,21 +49,23 @@ export interface ExtractResult {
 }
 
 /** 解压压缩包到目标目录。zip/tar 用系统自带工具, 7z/rar 需要本机 7-Zip 或 WinRAR。 */
-export async function extractArchive(archive: string, destDir: string, onLog?: (line: string) => void): Promise<ExtractResult> {
+export async function extractArchive(archive: string, destDir: string, onLog?: (line: string) => void, signal?: AbortSignal): Promise<ExtractResult> {
+  signal?.throwIfAborted();
   await ensureDir(destDir);
   const lower = archive.toLowerCase();
 
   if (lower.endsWith(".zip") || lower.endsWith(".tar") || lower.endsWith(".tar.gz") || lower.endsWith(".tgz")) {
     // 1) 系统自带 bsdtar(Win10+): 同时认 zip 与 tar
-    const tar = await run("tar", ["-xf", archive, "-C", destDir], { timeoutMs: 0 });
+    const tar = await runStreaming("tar", ["-xf", archive, "-C", destDir], { timeoutMs: 0, signal });
+    signal?.throwIfAborted();
     if (tar.ok) return { ok: true, tool: "tar", message: "解压完成" };
     onLog?.(tar.error ? `tar 解压失败: ${tar.error}，尝试 PowerShell` : "tar 解压返回非零，尝试 PowerShell");
 
     // 2) 退回 PowerShell 的 Expand-Archive(仅 zip)
     if (lower.endsWith(".zip")) {
       const script = `Expand-Archive -LiteralPath '${archive.replace(/'/g, "''")}' -DestinationPath '${destDir.replace(/'/g, "''")}' -Force`;
-      const { runPowerShell } = await import("../core/win/shell.ts");
-      const powershell = await runPowerShell(script, { timeoutMs: 0 });
+      const powershell = await runStreaming(process.env.LEAGUE_VOICE_POWERSHELL || "powershell.exe", ["-NoProfile", "-NonInteractive", "-EncodedCommand", encodePowerShell(script)], { timeoutMs: 0, signal });
+      signal?.throwIfAborted();
       if (powershell.ok) return { ok: true, tool: "Expand-Archive", message: "解压完成" };
       return { ok: false, tool: "Expand-Archive", message: `解压失败: ${powershell.error || powershell.stderr.slice(0, 200)}` };
     }
@@ -86,7 +88,8 @@ export async function extractArchive(archive: string, destDir: string, onLog?: (
     const args = isUnrar
       ? ["x", "-y", archive, `${destDir}\\`]
       : ["x", "-y", `-o${destDir}`, archive];
-    const result = await run(tool, args, { timeoutMs: 0 });
+    const result = await runStreaming(tool, args, { timeoutMs: 0, signal });
+    signal?.throwIfAborted();
     if (result.ok) return { ok: true, tool: path.basename(tool), message: "解压完成" };
     return { ok: false, tool: path.basename(tool), message: `解压失败: ${result.error || result.stderr.slice(0, 200)}` };
   }
@@ -106,7 +109,7 @@ const NAME_HINTS: Array<[RegExp, string]> = [
 
 function normalizeLocaleCode(raw: string): string | null {
   const text = raw.replace("-", "_");
-  const match = /([a-z]{2})_([A-Za-z]{2})/.exec(text);
+  const match = /(?:^|[^A-Za-z])([a-z]{2})_([A-Za-z]{2})(?=$|[^A-Za-z])/.exec(text);
   if (!match) return null;
   const code = `${match[1]!.toLowerCase()}_${match[2]!.toUpperCase()}`;
   return isLocaleCode(code) ? code : code;
@@ -164,34 +167,20 @@ export interface PackLayout {
 }
 
 async function countIn(dir: string, match: (name: string) => boolean, recursive = false): Promise<number> {
-  if (!(await isDirectory(dir))) return 0;
-  let count = 0;
-  const queue: Array<{ dir: string; depth: number }> = [{ dir, depth: 0 }];
-  while (queue.length) {
-    const current = queue.shift()!;
-    for (const name of await listNames(current.dir)) {
-      const full = path.join(current.dir, name);
-      if (await isDirectory(full)) {
-        if (recursive && current.depth < 3) queue.push({ dir: full, depth: current.depth + 1 });
-        continue;
-      }
-      if (match(name)) count += 1;
-    }
-  }
-  return count;
+  return (await walkFiles(dir, { match, recursive })).length;
 }
 
 /** 在解压结果里找出真正的语音包根目录。 */
 export async function findPackLayout(extractedRoot: string): Promise<PackLayout | null> {
   const candidates: string[] = [];
   const queue: Array<{ dir: string; depth: number }> = [{ dir: extractedRoot, depth: 0 }];
-  while (queue.length) {
-    const current = queue.shift()!;
+  for (let cursor = 0; cursor < queue.length; cursor += 1) {
+    const current = queue[cursor]!;
     candidates.push(current.dir);
     if (current.depth >= 3) continue;
-    for (const name of await listNames(current.dir)) {
-      const full = path.join(current.dir, name);
-      if (await isDirectory(full)) queue.push({ dir: full, depth: current.depth + 1 });
+    const entries = await fs.readdir(current.dir, { withFileTypes: true }).catch(() => []);
+    for (const entry of entries) {
+      if (entry.isDirectory() && !entry.isSymbolicLink()) queue.push({ dir: path.join(current.dir, entry.name), depth: current.depth + 1 });
     }
   }
 
@@ -234,12 +223,15 @@ export async function findPackLayout(extractedRoot: string): Promise<PackLayout 
 export interface ImportOptions {
   /** 压缩包路径(上传后的临时文件, 或用户直接给的本地路径)。 */
   archive: string;
+  /** 上传落盘时使用随机文件名，识别仍使用用户提供的原文件名。 */
+  archiveName?: string;
   /** 用户/前端显式指定的语种。 */
   locale?: string;
   /** 资源根目录。 */
   voiceRoot: string;
   /** 已存在同语种目录时是否覆盖(旧目录会被改名保留, 不会直接删)。 */
   overwrite?: boolean;
+  signal?: AbortSignal;
   onLog?: (line: string) => void;
   onProgress?: ArchiveProgress;
 }
@@ -259,7 +251,7 @@ export interface ImportResult {
 export async function importArchive(options: ImportOptions): Promise<ImportResult> {
   const log = options.onLog ?? (() => undefined);
   const progress = options.onProgress ?? (() => undefined);
-  const archiveName = path.basename(options.archive);
+  const archiveName = path.basename(options.archiveName ?? options.archive);
   const empty: ImportResult = {
     ok: false,
     code: "",
@@ -271,6 +263,11 @@ export async function importArchive(options: ImportOptions): Promise<ImportResul
     stats: { champions: 0, maps: 0, localized: 0, lobby: 0 }
   };
 
+  if (options.signal?.aborted) return { ...empty, message: "已取消导入" };
+  const explicitLocale = (options.locale ?? "").trim();
+  if (explicitLocale && !/^[\w\u4e00-\u9fa5-]+$/.test(explicitLocale)) {
+    return { ...empty, message: "语种必须是单个目录名，不能包含路径分隔符或上级目录" };
+  }
   if (!(await isFile(options.archive))) {
     return { ...empty, message: `压缩包不存在：${options.archive}` };
   }
@@ -279,18 +276,22 @@ export async function importArchive(options: ImportOptions): Promise<ImportResul
   }
 
   // 临时目录放在资源目录内(同卷), 安装时改名即可, 不额外拷贝几个 GB
-  const staging = path.join(options.voiceRoot, `.importing_${Date.now()}`);
-  await ensureDir(staging);
+  const resourceRoot = path.resolve(options.voiceRoot);
+  const staging = await fs.mkdtemp(path.join(resourceRoot, ".importing_"));
   const extracted = path.join(staging, "extracted");
+  let retired: string | null = null;
+  let target = "";
+  let published = false;
   try {
     progress("正在解压…", 5);
     log(`解压 ${archiveName} …`);
-    const extract = await extractArchive(options.archive, extracted, log);
+    const extract = await extractArchive(options.archive, extracted, log, options.signal);
     if (!extract.ok) return { ...empty, message: extract.message };
     log(`解压完成（工具：${extract.tool}）`);
 
     progress("正在识别语音包结构…", 55);
     const layout = await findPackLayout(extracted);
+    options.signal?.throwIfAborted();
     if (!layout) {
       return {
         ...empty,
@@ -327,10 +328,17 @@ export async function importArchive(options: ImportOptions): Promise<ImportResul
 
     const code = guess.code;
     const name = LOCALE_NAMES[code] ?? `${code}`;
-    const target = path.join(options.voiceRoot, code);
+    target = path.join(resourceRoot, code);
     log(`识别语种：${code}（${guess.detail}）`);
 
     progress("正在安装到资源目录…", 75);
+    options.signal?.throwIfAborted();
+    if (layout.root === layout.finalDir) {
+      const normalized = path.join(staging, "normalized");
+      await fs.mkdir(path.join(normalized, "DATA"), { recursive: true });
+      await fs.rename(layout.root, path.join(normalized, "DATA", "FINAL"));
+      layout.root = normalized;
+    }
     if (await pathExists(target)) {
       if (!options.overwrite) {
         return {
@@ -342,37 +350,34 @@ export async function importArchive(options: ImportOptions): Promise<ImportResul
           message: `资源目录里已经存在 ${code} 了（${target}）。\n如需替换请选择覆盖，旧目录会被改名保留而不会被删除。`
         };
       }
-      const retired = `${target}.chosen_old_${Date.now()}`;
+      const old = `${target}.chosen_old_${path.basename(staging)}`;
       try {
-        await fs.rename(target, retired);
-        log(`已存在同语种目录，旧目录保留为 ${path.basename(retired)}`);
+        await fs.rename(target, old);
+        retired = old;
       } catch (error) {
         return { ...empty, code, name, locale_source: guess.source, target, message: `覆盖失败：旧目录无法改名（${String((error as Error).message ?? error)}）` };
       }
+      log(`已存在同语种目录，旧目录保留为 ${path.basename(old)}`);
     }
 
-    // 同卷改名优先, 跨卷退回递归复制
-    try {
-      await fs.rename(layout.root, target);
-    } catch {
-      await copyTree(layout.root, target);
-    }
+    // 解压目录与资源目录同卷，原子发布；失败时恢复旧目录。
+    options.signal?.throwIfAborted();
+    await fs.rename(layout.root, target);
+    published = true;
 
     // 校验安装结果
     const installedChampions = await countIn(path.join(target, "DATA", "FINAL", "Champions"), (file) => file.endsWith(".wad.client"));
     const installedLobby = await countIn(path.join(target, "assets", "champion-choose-vo"), (file) => file.endsWith(".ogg"));
-    const installed = installedChampions + installedLobby > 0;
+    const [installedMaps, installedLocalized] = await Promise.all([
+      countIn(path.join(target, "DATA", "FINAL", "Maps"), (file) => file.endsWith(".wad.client"), true),
+      countIn(path.join(target, "DATA", "FINAL", "Localized"), (file) => file.endsWith(".wad.client"))
+    ]);
+    const installed = installedChampions + installedLobby + installedMaps + installedLocalized > 0;
+    options.signal?.throwIfAborted();
     progress("完成", 100);
 
     if (!installed) {
-      return {
-        ...empty,
-        code,
-        name,
-        locale_source: guess.source,
-        target,
-        message: `安装后校验失败：${target} 里没有可用的语音资源。`
-      };
+      throw new Error(`安装后校验失败：${target} 里没有可用的语音资源。`);
     }
 
     log(`已安装到 ${target}`);
@@ -387,24 +392,19 @@ export async function importArchive(options: ImportOptions): Promise<ImportResul
       stats: layout
     };
   } catch (error) {
-    return { ...empty, message: `导入失败：${String((error as Error).message ?? error)}` };
+    let recovery = "";
+    try {
+      if (published) await fs.rename(target, path.join(staging, "failed-install"));
+      if (retired) await fs.rename(retired, target);
+    } catch (restoreError) {
+      recovery = `；旧目录恢复失败：${String((restoreError as Error).message ?? restoreError)}（保留在 ${retired ?? target}）`;
+    }
+    return { ...empty, message: (options.signal?.aborted ? "已取消导入" : `导入失败：${String((error as Error).message ?? error)}`) + recovery };
   } finally {
     // 只清临时目录(已安装的目标不在其中)
-    await removeQuietly(staging);
-  }
-}
-
-async function copyTree(from: string, to: string): Promise<void> {
-  await ensureDir(to);
-  for (const name of await listNames(from)) {
-    const src = path.join(from, name);
-    const dst = path.join(to, name);
-    const stat = await fs.stat(src).catch(() => null);
-    if (!stat) continue;
-    if (stat.isDirectory()) await copyTree(src, dst);
-    else {
-      await ensureDir(path.dirname(dst));
-      await fs.copyFile(src, dst);
+    const relative = path.relative(resourceRoot, staging);
+    if (relative.startsWith(".importing_") && !relative.includes(path.sep) && !path.isAbsolute(relative)) {
+      await fs.rm(staging, { recursive: true, force: true }).catch((error) => log(`临时目录清理失败：${String(error)}`));
     }
   }
 }

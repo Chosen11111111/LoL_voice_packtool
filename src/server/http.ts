@@ -2,6 +2,9 @@
 import http from "node:http";
 import fs from "node:fs/promises";
 import path from "node:path";
+import { createReadStream } from "node:fs";
+import { randomUUID } from "node:crypto";
+import { pipeline } from "node:stream/promises";
 import { createLogger } from "../core/logger.ts";
 
 const logger = createLogger("http");
@@ -107,9 +110,15 @@ export class Router {
       try {
         client.send(event, data);
       } catch {
+        client.close();
         this.sseClients.delete(client);
       }
     }
+  }
+
+  closeSseClients(): void {
+    for (const client of this.sseClients) client.close();
+    this.sseClients.clear();
   }
 }
 
@@ -137,7 +146,7 @@ export interface RunningServer {
 }
 
 function jsonResponse(res: http.ServerResponse, status: number, payload: unknown): void {
-  const text = JSON.stringify(payload, null, 2);
+  const text = JSON.stringify(payload);
   res.writeHead(status, {
     "Content-Type": "application/json; charset=utf-8",
     "Content-Length": Buffer.byteLength(text),
@@ -157,24 +166,29 @@ const MIME: Record<string, string> = {
 };
 
 async function serveStatic(res: http.ServerResponse, staticDir: string, pathname: string): Promise<boolean> {
-  const relative = pathname === "/" ? "index.html" : pathname.replace(/^\/+/, "");
-  const target = path.join(staticDir, relative);
-  if (!target.startsWith(path.resolve(staticDir))) return false;
+  const root = path.resolve(staticDir);
+  const relative = pathname === "/" ? "index.html" : decodeURIComponent(pathname).replace(/^\/+/, "");
+  const target = path.resolve(root, relative);
+  const outside = (base: string, file: string) => {
+    const rel = path.relative(base, file);
+    return rel === ".." || rel.startsWith(`..${path.sep}`) || path.isAbsolute(rel);
+  };
+  if (outside(root, target)) return false;
   try {
+    if (outside(await fs.realpath(root), await fs.realpath(target))) return false;
     const stat = await fs.stat(target);
     if (!stat.isFile()) return false;
-    const data = await fs.readFile(target);
     res.writeHead(200, {
       "Content-Type": MIME[path.extname(target).toLowerCase()] ?? "application/octet-stream",
-      "Content-Length": data.length,
+      "Content-Length": stat.size,
       // 界面文件很小, 且应用窗口用的是持久化 profile —— 禁止缓存, 避免窗口一直跑旧的前端
       "Cache-Control": "no-store, must-revalidate",
       Expires: "0"
     });
-    res.end(data);
+    await pipeline(createReadStream(target), res);
     return true;
   } catch {
-    return false;
+    return res.headersSent;
   }
 }
 
@@ -182,6 +196,7 @@ export async function startHttpServer(options: ServerOptions): Promise<RunningSe
   const bodyLimit = options.bodyLimitBytes ?? 1_000_000;
 
   const server = http.createServer((req, res) => {
+    let uploadedFile: string | undefined;
     void (async () => {
       const url = new URL(req.url ?? "/", `http://${req.headers.host ?? "127.0.0.1"}`);
       res.setHeader("Access-Control-Allow-Origin", "*");
@@ -204,7 +219,7 @@ export async function startHttpServer(options: ServerOptions): Promise<RunningSe
       }
 
       // SSE: 长连接, 专门处理
-      if (url.pathname === "/api/events") {
+      if (url.pathname === "/api/events" && req.method === "GET") {
         res.writeHead(200, {
           "Content-Type": "text/event-stream; charset=utf-8",
           "Cache-Control": "no-cache, no-transform",
@@ -215,19 +230,25 @@ export async function startHttpServer(options: ServerOptions): Promise<RunningSe
         const client: SseClient = {
           closed: false,
           send: (event, data) => {
+            if (client.closed) return;
+            if (res.writableLength > 1024 * 1024) { client.close(); return; }
             res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
           },
           close: () => {
+            if (client.closed) return;
             client.closed = true;
-            res.end();
+            clearInterval(ping);
+            remove();
+            if (res.writableNeedDrain) res.destroy();
+            else res.end();
           }
         };
         const remove = options.router.addSseClient(client);
         const ping = setInterval(() => {
-          if (client.closed) return;
+          if (client.closed || res.writableNeedDrain) return;
           res.write(`: ping\n\n`);
         }, 20000);
-        req.on("close", () => {
+        res.once("close", () => {
           clearInterval(ping);
           client.closed = true;
           remove();
@@ -253,26 +274,28 @@ export async function startHttpServer(options: ServerOptions): Promise<RunningSe
       let rawFile: string | undefined;
       if (matched.route.raw && !contentType.includes("application/json")) {
         const uploadDir = options.uploadDir ?? path.join(process.cwd(), ".tmp", "uploads");
-        await fs.mkdir(uploadDir, { recursive: true }).catch(() => undefined);
-        rawFile = path.join(uploadDir, `upload-${Date.now()}-${Math.random().toString(36).slice(2, 8)}.bin`);
+        await fs.mkdir(uploadDir, { recursive: true });
+        rawFile = path.join(uploadDir, `upload-${randomUUID()}.bin`);
+        uploadedFile = rawFile;
         const limit = options.maxUploadBytes ?? 0;
         let size = 0;
         let tooLarge = false;
         const handle = await fs.open(rawFile, "w");
         try {
-          for await (const chunk of req) {
+          for await (const chunk of req.iterator({ destroyOnReturn: false })) {
             const buffer = chunk as Buffer;
             size += buffer.length;
             if (limit > 0 && size > limit) {
               tooLarge = true;
               break;
             }
-            await handle.write(buffer);
+            await handle.writeFile(buffer);
           }
         } finally {
           await handle.close().catch(() => undefined);
         }
         if (tooLarge) {
+          req.resume();
           await fs.rm(rawFile, { force: true }).catch(() => undefined);
           jsonResponse(res, 413, { ok: false, error: "payload_too_large", message: `上传体积超过上限（${limit} 字节）` });
           return;
@@ -289,7 +312,7 @@ export async function startHttpServer(options: ServerOptions): Promise<RunningSe
         const chunks: Buffer[] = [];
         let size = 0;
         let overflow = false;
-        for await (const chunk of req) {
+        for await (const chunk of req.iterator({ destroyOnReturn: false })) {
           const buffer = chunk as Buffer;
           size += buffer.length;
           if (size > bodyLimit) {
@@ -299,6 +322,7 @@ export async function startHttpServer(options: ServerOptions): Promise<RunningSe
           chunks.push(buffer);
         }
         if (overflow) {
+          req.resume();
           jsonResponse(res, 413, { ok: false, error: "payload_too_large", message: "请求体过大" });
           return;
         }
@@ -341,14 +365,19 @@ export async function startHttpServer(options: ServerOptions): Promise<RunningSe
       } catch (error) {
         const message = String((error as Error).message ?? error);
         logger.warn(`接口异常 ${req.method} ${url.pathname}: ${message}`);
-        jsonResponse(res, 500, { ok: false, error: "internal_error", message });
+        if (!res.headersSent && !res.destroyed) jsonResponse(res, 500, { ok: false, error: "internal_error", message });
+        else if (!res.destroyed) res.destroy();
       } finally {
         // 上传的临时文件: 处理器若已把它移交给后台任务会先移走, 这里只清理残留
         if (rawFile) await fs.rm(rawFile, { force: true }).catch(() => undefined);
       }
     })().catch((error) => {
-      logger.error(`请求处理失败: ${String((error as Error).message ?? error)}`);
-      if (!res.headersSent) jsonResponse(res, 500, { ok: false, error: "internal_error" });
+      if (req.aborted) logger.debug("客户端中断请求，正在清理临时文件");
+      else logger.error(`请求处理失败: ${String((error as Error).message ?? error)}`);
+      if (!res.headersSent && !res.destroyed) jsonResponse(res, error instanceof URIError ? 400 : 500, { ok: false, error: error instanceof URIError ? "bad_request" : "internal_error" });
+      else if (!res.writableEnded && !res.destroyed) res.destroy();
+    }).finally(async () => {
+      if (uploadedFile) await fs.rm(uploadedFile, { force: true }).catch(() => undefined);
     });
   });
 
@@ -361,13 +390,17 @@ export async function startHttpServer(options: ServerOptions): Promise<RunningSe
   const port = typeof address === "object" && address ? address.port : options.port;
   logger.info(`HTTP 服务已启动: http://${options.host}:${port}`);
 
+  let closing: Promise<void> | undefined;
   return {
     server,
     port,
     host: options.host,
-    close: async () => {
-      for (const client of (options.router as unknown as { sseClients: Set<SseClient> }).sseClients ?? []) client.close();
-      await new Promise<void>((resolve) => server.close(() => resolve()));
+    close: () => {
+      if (closing) return closing;
+      options.router.closeSseClients();
+      closing = new Promise<void>((resolve) => server.close(() => resolve()));
+      server.closeIdleConnections();
+      return closing;
     }
   };
 }

@@ -2,7 +2,9 @@
 import { after, before, describe, test } from "node:test";
 import assert from "node:assert/strict";
 import path from "node:path";
-import { invalidateConfigCache } from "../src/core/config.ts";
+import { invalidateConfigCache, loadConfig, saveConfig } from "../src/core/config.ts";
+import { taskManager } from "../src/tasks/manager.ts";
+import { lobbyLive } from "../src/modules/lobbyLive.ts";
 import { startApiServer } from "../src/server/api.ts";
 import type { RunningServer } from "../src/server/http.ts";
 import { cleanupSuite, exists, makeDirSafe, makeFinalDir, makePack, makeTempDir, readFile, useSuite, writeFile } from "./helpers.ts";
@@ -206,6 +208,7 @@ test("大厅选人语音: 语音包里没有该语种时明确失败", async () 
   assert.equal(json.ok, true);
   const finished = await waitTask(json.task.id);
   assert.equal(finished.result.ok, false);
+  assert.equal(finished.task.status, "failed");
   assert.match(String(finished.result.results[0].reason), /资源缺失/);
   const state = await get("/api/state");
   assert.equal(state.json.state.lobby_live.running, false);
@@ -341,5 +344,37 @@ test("并发保护: 语音任务互斥, 第二个任务被拒绝", async () => {
   else assert.match(b.json.message ?? "", /已有任务在进行中/);
   await waitTask(a.json.task.id);
   await post("/api/restore", { restartClient: false }).then((response) => waitTask(response.json.task.id));
+});
+
+test("关闭 API 服务会解除任务和选人事件订阅", async (t) => {
+  let taskUnsubscribed = 0;
+  let lobbyUnsubscribed = 0;
+  const subscribeTask = taskManager.subscribe.bind(taskManager);
+  const subscribeLobby = lobbyLive.subscribe.bind(lobbyLive);
+  t.mock.method(taskManager, "subscribe", (listener: Parameters<typeof taskManager.subscribe>[0]) => {
+    const off = subscribeTask(listener);
+    return () => { taskUnsubscribed++; off(); };
+  });
+  t.mock.method(lobbyLive, "subscribe", (listener: Parameters<typeof lobbyLive.subscribe>[0]) => {
+    const off = subscribeLobby(listener);
+    return () => { lobbyUnsubscribed++; off(); };
+  });
+  for (let i = 0; i < 3; i++) {
+    const started = await startApiServer({ port: 0 });
+    await started.running.close();
+  }
+  assert.equal(taskUnsubscribed, 3);
+  assert.equal(lobbyUnsubscribed, 3);
+});
+
+test("server.maxUploadBytes 配置实际约束 API 上传", async () => {
+  const saved = await loadConfig();
+  await saveConfig({ server: { ...saved.server, maxUploadBytes: 4 } });
+  const started = await startApiServer({ port: 0 });
+  try {
+    const response = await fetch(`http://127.0.0.1:${started.running.port}/api/packs/import?name=test.zip`, { method: "POST", body: "too-large" });
+    assert.equal(response.status, 413);
+    assert.equal((await response.json() as any).error, "payload_too_large");
+  } finally { await started.running.close(); await saveConfig({ server: saved.server }); }
 });
 });

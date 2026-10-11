@@ -9,7 +9,7 @@ where node >nul 2>nul && goto run
 if exist "%ProgramFiles%\nodejs\node.exe" set "NODE=%ProgramFiles%\nodejs\node.exe" && goto run
 if exist "%LOCALAPPDATA%\Programs\nodejs\node.exe" set "NODE=%LOCALAPPDATA%\Programs\nodejs\node.exe" && goto run
 if exist "%ProgramFiles(x86)%\nodejs\node.exe" set "NODE=%ProgramFiles(x86)%\nodejs\node.exe" && goto run
-echo [x] Node.js is required. Please install Node.js 20.11 or newer:
+echo [x] Node.js is required. Please install Node.js 22.18+ (22.x) or 24+:
 echo     https://nodejs.org/
 echo.
 pause
