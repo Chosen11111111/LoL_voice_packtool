@@ -13,7 +13,6 @@ import { checkModuleResources, estimateSpaceRequirement, getIngameStatus, type I
 import { wadSuffix } from "./packs/baselocale.ts";
 import { scanLocales } from "./packs/locales.ts";
 import { importArchive } from "./packs/archive.ts";
-import { checkRemoteVersion, inventorySnapshot, syncLocale, writeVersionFile } from "./packs/updater.ts";
 import { applyAll, restoreAll } from "./modules/oneclick.ts";
 import { getLobbyStatus, type LobbyStatus } from "./modules/lobbyVoice.ts";
 import { lobbyLive } from "./modules/lobbyLive.ts";
@@ -323,56 +322,6 @@ export function startImportTask(request: ImportRequest): TaskSnapshot {
     } finally {
       if (request.deleteAfter) await removeQuietly(request.archive);
     }
-  });
-}
-
-export function startUpdateCheckTask(): TaskSnapshot {
-  return taskManager.startSnapshot("update_check", "检查语音包更新", async (handle) => {
-    const config = await loadConfig();
-    const env = await buildEnvFromConfig(config, { skipProcess: true });
-    handle.log("正在连接 CommunityDragon 检查版本…");
-    const info = await checkRemoteVersion(config, env.voiceRoot, handle.signal);
-    const inventory = await inventorySnapshot(env.voiceRoot, config.supportedLocales);
-    handle.log(info.detail);
-    return { info, inventory, voiceRoot: env.voiceRoot };
-  });
-}
-
-export interface UpdateRunRequest {
-  locales?: string[];
-}
-
-export function startUpdateRunTask(request: UpdateRunRequest = {}): TaskSnapshot {
-  const targets = request.locales?.length ? request.locales : null;
-  return taskManager.startSnapshot("update_run", "增量同步语音包", async (handle) => {
-    const config = await loadConfig();
-    const env = await buildEnvFromConfig(config, { skipProcess: true });
-    const locales = [...new Set(targets ?? config.supportedLocales)];
-    const results = [];
-    let done = 0;
-    const total = locales.length;
-    for (const code of locales) {
-      if (handle.isCancelled()) break;
-      handle.log(`开始同步 ${code} …`);
-      const result = await syncLocale(code, config, env.voiceRoot, {
-    region: env.region,
-        signal: handle.signal,
-        onProgress: (_inner, _innerTotal, current) => handle.progress(done, total, current),
-        onLine: (line) => handle.log(line)
-      });
-      results.push(result);
-      done += 1;
-      handle.progress(done, total, code);
-      handle.log(result.message);
-    }
-    handle.signal.throwIfAborted();
-    const remote = await checkRemoteVersion(config, env.voiceRoot, handle.signal);
-    const ok = results.length === locales.length && results.every((item) => item.ok);
-    if (ok && !remote.offline && config.supportedLocales.every((code) => locales.includes(code))) {
-      await writeVersionFile(env.voiceRoot, config, remote.remoteVersion);
-    }
-    const inventory = await inventorySnapshot(env.voiceRoot, config.supportedLocales);
-    return { ok, message: ok ? "语音包同步完成" : "部分资源同步失败，请查看结果后重试", results, inventory, remote };
   });
 }
 

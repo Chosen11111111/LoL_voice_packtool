@@ -36,8 +36,6 @@ import {
   startApplyTask,
   startImportTask,
   startRestoreTask,
-  startUpdateCheckTask,
-  startUpdateRunTask,
   updateConfig
 } from "../service.ts";
 
@@ -363,14 +361,6 @@ export function buildRouter(): Router {
     }
     files.sort((a, b) => b.at - a.at);
     return { ok: true, files: files.slice(0, 20) };
-  });
-
-  router.post("/api/update/check", () => ({ ok: true, task: startUpdateCheckTask() }));
-
-  router.post("/api/update/run", (context) => {
-    const body = asRecord(context.body);
-    const locales = Array.isArray(body.locales) ? body.locales.filter((item): item is string => typeof item === "string") : undefined;
-    return { ok: true, task: startUpdateRunTask({ locales }) };
   });
 
   router.post("/api/doctor", async () => ({ ok: true, doctor: await doctor() }));

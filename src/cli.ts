@@ -14,7 +14,7 @@ import { locateClientAssetWad } from "./packs/wadfile.ts";
 import { getLobbyLangState } from "./modules/lobbyLang.ts";
 import { lobbyLive } from "./modules/lobbyLive.ts";
 import { buildEnv } from "./modules/context.ts";
-import { buildEnvFromConfig, doctor, getLocales, inspectPaths, planSwitch, startApplyTask, startRestoreTask, startUpdateCheckTask, startUpdateRunTask, updateConfig } from "./service.ts";
+import { buildEnvFromConfig, doctor, getLocales, inspectPaths, planSwitch, startApplyTask, startRestoreTask, updateConfig } from "./service.ts";
 import { taskManager } from "./tasks/manager.ts";
 import { startApiServer } from "./server/api.ts";
 import { setLogFile, setLogLevel, type LogLevel } from "./core/logger.ts";
@@ -425,14 +425,6 @@ export async function runCli(argv = process.argv.slice(2)): Promise<number> {
         if (!jsonMode) print(`[*] 一键开启全套 ${locale}…`);
         return await runTask(jsonMode, () => startApplyTask({ locale, modules: ["lobby_voice", "ingame_voice", "ingame_lang"], restartClient: true }));
       }
-      case "update": {
-        const action = args.positionals[0] ?? "check";
-        if (action === "run" || action === "sync") {
-          if (!jsonMode) print("[*] 开始增量同步语言包…");
-          return await runTask(jsonMode, () => startUpdateRunTask({ locales: flagString(args, "locales")?.split(",") }));
-        }
-        return await runTask(jsonMode, () => startUpdateCheckTask());
-      }
       case "lobby":
         return await runLobbyCommand(args);
       case "lobby-live":
@@ -510,7 +502,7 @@ export function printHelp(): void {
   print("  apply [--locale ja_JP]     切换语音包/语言包 [--modules lobby_voice,ingame_voice,ingame_lang] [--restart=false]");
   print("  restore                    恢复官方国服默认 [--modules ...] [--restart=false]");
   print("  oneclick apply|restore     一键全套 / 一键还原");
-  print("  update check|run           检查更新 / 增量同步语言包 [--locales ja_JP,ko_KR]");
+
   print("  lobby-live [--locale ja_JP] [--others]   选人语音实时播报(LCU 监听, 音频由工具窗口播放)");
   print("  lobby [on|off|status|wad-restore] [--locale ja_JP] [--others] [--league <目录>]");
   print("                             对局前选人语音(LCU 监听 + 本地播报, 不改客户端)");

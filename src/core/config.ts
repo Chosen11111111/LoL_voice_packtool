@@ -17,15 +17,6 @@ export interface ServerConfig {
   maxUploadBytes: number;
 }
 
-export interface DownloadConfig {
-  /** 局内 wad 下载线程数(传给 ManifestDownloader)。 */
-  threads: number;
-  /** 大厅资源并发数。 */
-  concurrency: number;
-  timeoutMs: number;
-  retries: number;
-}
-
 export interface FeatureFlags {
   /** 大厅选人语音(需要加载器 + 客户端注入, 默认关闭, 仅保留后端能力)。 */
   lobbyVoice: boolean;
@@ -54,13 +45,7 @@ export interface AppConfig {
   leaguePath: string;
   /** 游戏本体目录(含 League of Legends.exe, 留空=跟随客户端推导)。 */
   gamePath: string;
-  /** 清单下载器可执行文件(相对项目根或绝对路径)。 */
-  manifestDownloader: string;
-  /** 清单 ID。 */
-  manifestId: string;
-  /** wad 切片加速代理。 */
-  bundleProxy: string;
-  /** CommunityDragon 资源根。 */
+  /** CommunityDragon 资源根(仅用于识别 wad 条目指纹, 不影响语音包切换)。 */
   cdnBase: string;
   /** 默认语种。 */
   defaultLocale: string;
@@ -73,7 +58,6 @@ export interface AppConfig {
   /** 功能开关: 关掉的能力仍留在后端, 只是不在界面/默认流程里出现。 */
   features: FeatureFlags;
   server: ServerConfig;
-  download: DownloadConfig;
   ui: UiConfig;
   logLevel: string;
 }
@@ -84,9 +68,6 @@ const DEFAULT_CONFIG: AppConfig = {
   voiceRoot: "",
   leaguePath: "",
   gamePath: "",
-  manifestDownloader: "ManifestDownloader.exe",
-  manifestId: "37D5BB71755990B9",
-  bundleProxy: "https://gh.chosen.cc.cd/channels/public/bundles",
   cdnBase: "https://raw.communitydragon.org/latest",
   defaultLocale: "ja_JP",
   baseLocale: "",
@@ -94,7 +75,6 @@ const DEFAULT_CONFIG: AppConfig = {
   autoRestartClient: true,
   features: { lobbyVoice: false, lobbyLang: true },
   server: { host: "127.0.0.1", port: 43110, token: "", webDir: "web", maxUploadBytes: 0 },
-  download: { threads: 16, concurrency: 16, timeoutMs: 30000, retries: 3 },
   ui: {
     selectedLocale: null,
     modules: ["ingame_voice", "ingame_lang", "lobby_voice"],
@@ -136,10 +116,6 @@ function mergeConfig(base: AppConfig, patch: ConfigPatch | null | undefined): Ap
     if (value === undefined || value === null) continue;
     if (key === "server" && typeof value === "object") {
       merged.server = { ...base.server, ...(value as Partial<ServerConfig>) };
-      continue;
-    }
-    if (key === "download" && typeof value === "object") {
-      merged.download = { ...base.download, ...(value as Partial<DownloadConfig>) };
       continue;
     }
     if (key === "features" && typeof value === "object") {

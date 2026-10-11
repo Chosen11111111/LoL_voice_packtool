@@ -30,7 +30,7 @@
 { "ok": false, "error": "not_found | bad_json | payload_too_large | internal_error | unauthorized", "message": "可直接展示给用户的中文说明" }
 ```
 
-**长任务模型**：`/api/apply`、`/api/restore`、`/api/update/*` 不会阻塞等待，而是立刻返回 `task` 快照：
+**长任务模型**：`/api/apply`、`/api/restore`、 不会阻塞等待，而是立刻返回 `task` 快照：
 
 ```json
 {
@@ -189,11 +189,6 @@
 
 ### POST /api/oneclick/apply ・ POST /api/oneclick/restore
 语义与上面一致，但固定"全套"：`apply` 默认三模块 + `restartClient: true`，`restore` 默认四模块。
-
-### POST /api/update/check ・ POST /api/update/run
-- `check` → `result`: `{ info: { remoteVersion, localVersion, hasUpdate, missingItems, detail, offline }, inventory: [...], voiceRoot }`
-- `run` 请求体 `{ "locales": ["ja_JP","ko_KR"] }`（省略=配置里的 `supportedLocales`）
-  → `result`: `{ ok, results: [{ code, ok, message, wads, lobby }], inventory, remote }`
 
 ### POST /api/packs/import —— 导入语音包压缩包
 

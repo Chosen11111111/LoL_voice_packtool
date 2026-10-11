@@ -17,7 +17,7 @@
 | 启动（后端 + 应用窗口） | 双击 `start.cmd`，或 `npm run app` |
 | 只起后端（浏览器访问） | `npm run serve` |
 | 查看当前状态 | 双击 `status.cmd`，或 `npm run status` |
-| 增量同步语言包 | 双击 `update-packs.cmd` |
+| 导入语音包(压缩包/文件夹) | 界面『语音包选择』, 或『下载语音包』按钮 |
 | 环境自检 | `npm run doctor` |
 | 类型检查 / 测试 | `npm run typecheck` / `npm test` |
 
@@ -49,7 +49,6 @@ plan [--locale ja_JP]        切换前干跑预检(只读)
 apply [--locale ja_JP]       切换 [--modules ingame_voice,ingame_lang] [--restart=false]
 restore                      恢复客户端原版 [--modules ...] [--restart=false]
 oneclick apply|restore       一键全套 / 一键还原
-update check|run             检查更新 / 增量同步语言包 [--locales ja_JP,ko_KR]
 plugin install [--force]     安装大厅语音插件到加载器
 paths                        列出所有探测到的游戏安装路径
 doctor                       环境自检
@@ -81,12 +80,9 @@ serve [--host] [--port]      启动后端服务(默认 http://127.0.0.1:43110)
 | --- | --- | --- |
 | 客户端收录 | WeGame/Tencent | Riot |
 | 自带语种(探测不到时的兜底) | `zh_CN` | `en_US` |
-| 资源下载基址 | 国内镜像(`chosen.cc.cd`) | Riot 官方 CDN(`lol.secure.dyn.riotcdn.net`) |
-| 清单 ID | 内置(`37D5BB71755990B9`) | 随版本变化, 需在 `config.json` 填 `manifestId` |
 
 - 客户端的**自带语种**决定要替换哪个槽位文件(`<名字>.zh_CN.wad.client` / `.en_US.wad.client`), 绝不用固定语种写死;
-- 下载地址只有**用户没改过默认值**时才按渠道替换(自己填了 `bundleProxy`/`manifestId` 就一律听用户的);
-- 外服只玩**选人语音**的话不需要清单: 压缩包/文件夹导入即可;
+- 语音包用压缩包/文件夹导入, **两个渠道通用**, 不需要任何外部下载工具(清单/ManifestDownloader 已删除);
 - 界面按钮悬停会显示"当前方式", 日志里也会写一条(`渠道 外服(右上角按钮) · 基准语种 en_US · …`)。
 
 ## 5. 语音包压缩包导入
@@ -123,7 +119,7 @@ serve [--host] [--port]      启动后端服务(默认 http://127.0.0.1:43110)
 | POST | `/api/apply` | 启动切换任务 |
 | POST | `/api/restore` | 启动还原任务 |
 | POST | `/api/packs/import` | 导入语音包压缩包（上传或本机路径） |
-| POST | `/api/update/check` `/run` | 检查更新 / 增量同步 |
+
 | GET | `/api/tasks` `/api/tasks/:id` | 任务列表 / 详情（含结果与日志） |
 | POST | `/api/tasks/:id/cancel` | 取消任务 |
 | GET | `/api/events` | SSE：`progress` / `log` / `done` / `state` 事件 |
@@ -179,8 +175,7 @@ src/
     inventory.ts      资源校验/状态/工作量/磁盘估算
     archive.ts        压缩包解压/结构识别/语种识别/导入
     wadfile.ts        客户端自带资源包(RW WAD)定位与解析
-    updater.ts        清单下载、CommunityDragon 增量同步、版本检查
-  modules/
+    modules/
     applyPlan.ts      替换计划执行器(预检槽位 + 逐文件安全替换)
     ingameVoice.ts    对局语音
     ingameLang.ts     对局语言
@@ -217,8 +212,6 @@ docs/API.md           接口契约
 | `gamePath` | 游戏本体目录（含 `League of Legends.exe`），一般留空自动推导 |
 | `baseLocale` | 客户端基准语种（决定替换哪个槽位文件）。留空 = 自动探测 |
 | `defaultLocale` | 默认语音包语种 |
-| `supportedLocales` | 需要维护的语种列表（增量同步用） |
-| `manifestDownloader` / `bundleProxy` / `manifestId` | wad 增量下载工具与代理、官方清单 ID |
 | `autoRestartClient` | 切换/还原成功后是否自动重启客户端 UX |
 | `features.lobbyVoice` | 对局前选人语音（默认 `false`；LCU 监听 + 本地播报，界面勾选即开启） |
 | `features.lobbyLang` | 大厅界面语言（改 `LeagueClientSettings.yaml`，与语音包无关） |

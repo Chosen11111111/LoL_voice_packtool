@@ -2,7 +2,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { detectBaseLocale } from "../src/packs/baselocale.ts";
-import { CN_BUNDLE_PROXY, CN_MANIFEST_ID, downloadProfile, regionProfile, resolveRegion } from "../src/packs/region.ts";
+import { regionProfile, resolveRegion } from "../src/packs/region.ts";
 
 test("右上角按钮优先: 选了外服就走外服, 只有 auto 才用探测结果", () => {
   assert.deepEqual(resolveRegion("global", "cn"), { region: "global", source: "ui" });
@@ -12,28 +12,12 @@ test("右上角按钮优先: 选了外服就走外服, 只有 auto 才用探测�
   assert.deepEqual(resolveRegion("", "cn"), { region: "cn", source: "detected" }, "空值等于自动");
 });
 
-test("渠道档案: 自带语种与下载地址都不一样", () => {
+test("渠道档案: 两个渠道的自带语种与说明都不一样", () => {
+  assert.equal(regionProfile("cn").label, "国服");
+  assert.equal(regionProfile("global").label, "外服");
   assert.equal(regionProfile("cn").fallbackBaseLocale, "zh_CN");
-  assert.equal(regionProfile("global").fallbackBaseLocale, "en_US");
-  assert.match(regionProfile("cn").bundleBase, /chosen\.cc\.cd/, "国服走国内镜像");
-  assert.match(regionProfile("global").bundleBase, /riotcdn\.net/, "外服直连 Riot 官方 CDN");
-});
-
-test("下载档案: 默认值按渠道替换, 用户自己改过的就听用户的", () => {
-  const cn = downloadProfile({ bundleProxy: CN_BUNDLE_PROXY, manifestId: CN_MANIFEST_ID }, "cn");
-  assert.equal(cn.bundleBase, CN_BUNDLE_PROXY);
-  assert.equal(cn.manifestId, CN_MANIFEST_ID);
-
-  // 外服 + 还是国服默认值 -> 换成 Riot CDN; 清单 ID 不能瞎猜, 留空让用户填
-  const global = downloadProfile({ bundleProxy: CN_BUNDLE_PROXY, manifestId: CN_MANIFEST_ID }, "global");
-  assert.match(global.bundleBase, /riotcdn\.net/);
-  assert.equal(global.manifestOrigin, "https://lol.secure.dyn.riotcdn.net");
-  assert.equal(global.manifestId, "", "外服清单 ID 随版本变化, 不能沿用国服的");
-
-  // 用户显式填过 -> 一律尊重
-  const custom = downloadProfile({ bundleProxy: "https://my.mirror/bundles", manifestId: "ABC123" }, "global");
-  assert.equal(custom.bundleBase, "https://my.mirror/bundles");
-  assert.equal(custom.manifestId, "ABC123");
+  assert.equal(regionProfile("global").fallbackBaseLocale, "en_US", "外服客户端多半是英文, 不能拿 zh_CN 去替换槽位");
+  assert.match(regionProfile("global").detail, /Riot/);
 });
 
 test("基准语种兜底跟随渠道(探测不到时: 国服 zh_CN / 外服 en_US)", async () => {
