@@ -366,6 +366,9 @@ button, input, select {
   display: flex;
   align-items: center;
   gap: 10px;
+  row-gap: 8px;
+  /* 窗口实在放不下时让品牌图换到下一行(正常情况下它一直待在右边的空位里) */
+  flex-wrap: wrap;
   margin-top: 10px;
 }
 
@@ -890,12 +893,12 @@ button, input, select {
   background-color: rgba(100, 116, 139, 0.12);
 }
 
-/* ---------------- 品牌图按钮(和按钮同一行, 占空位) ---------------- */
+/* ---------------- 品牌图按钮(和三个勾选框同一行, 占右边空位) ---------------- */
 .brand-banner {
-  flex: 0 1 auto;        /* 一行内参与布局, 窗口变窄时可以收缩, 不把别的挤下去 */
+  flex: 0 1 auto;        /* 行内弹性项: 窗口变窄可以收缩, 不会把勾选框挤到下一行 */
   width: 200px;
-  min-width: 96px;
-  margin: 0;             /* 跟同一行的其他控件对齐, 不加外边距 */
+  min-width: 88px;
+  margin: 0 0 0 auto;    /* 靠右: 吃掉勾选框右边的空位 */
   padding: 0;
   background: none;      /* 不要底板 */
   border: none;          /* 不要边框线 */
@@ -907,9 +910,9 @@ button, input, select {
   display: block;
   width: 100%;
   height: 100%;
-  max-height: 34px;
+  max-height: 30px;
   object-fit: contain;
-  object-position: center;
+  object-position: right center;
   -webkit-user-select: none;
   user-select: none;
   pointer-events: none;
