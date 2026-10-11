@@ -17,6 +17,8 @@ import { ensureDir, fileSize, isFile, listNames, readJsonFile, writeFileAtomic, 
 import { createLogger } from "../core/logger.ts";
 import { runStreaming } from "../core/win/shell.ts";
 import { cdnLocale } from "./locales.ts";
+import { downloadProfile } from "./region.ts";
+import type { ClientRegion } from "./baselocale.ts";
 
 const logger = createLogger("updater");
 
@@ -209,16 +211,29 @@ export async function writeVersionFile(voiceRoot: string, config: AppConfig, rem
 /* ---------------------------------------------------------------- 清单 */
 
 /** 确保本地有清单文件(没有就经反代拉一份)。 */
-export async function ensureManifest(config: AppConfig, voiceRoot: string, options: FetchFileOptions = {}): Promise<{ ok: boolean; file: string; message: string }> {
-  const file = path.join(voiceRoot, `${config.manifestId}.manifest`);
+export async function ensureManifest(
+  config: AppConfig,
+  voiceRoot: string,
+  options: FetchFileOptions & { region?: ClientRegion } = {}
+): Promise<{ ok: boolean; file: string; message: string }> {
+  const plan = downloadProfile(config, options.region ?? "cn");
+  if (!plan.manifestId) {
+    return {
+      ok: false,
+      file: "",
+      message:
+        "外服的清单 ID 随版本变化，需要在 config.json 里填 manifestId（或手动把清单文件放到资源目录）\n" +
+        "只想玩选人语音的话，用压缩包/文件夹导入就不需要清单。"
+    };
+  }
+  const file = path.join(voiceRoot, `${plan.manifestId}.manifest`);
   if ((await isFile(file)) && (await fileSize(file)) > 1_000_000) return { ok: true, file, message: "本地清单可用" };
-  const origin = new URL(config.bundleProxy).origin;
-  const url = `${origin}/channels/public/releases/${config.manifestId}.manifest`;
+  const url = `${plan.manifestOrigin}/channels/public/releases/${plan.manifestId}.manifest`;
   const ok = await fetchFile(url, file, { ...options, skipExisting: false });
   return {
     ok,
     file,
-    message: ok ? "清单已下载" : `清单下载失败：${url}（可手动放置 ${path.basename(file)} 后重试）`
+    message: ok ? `清单已下载（${plan.manifestOrigin}）` : `清单下载失败：${url}（可手动放置 ${path.basename(file)} 后重试）`
   };
 }
 
@@ -236,7 +251,7 @@ export async function downloadIngameWads(
   code: string,
   config: AppConfig,
   voiceRoot: string,
-  options: { signal?: AbortSignal; onLine?: (line: string) => void } = {}
+  options: { signal?: AbortSignal; onLine?: (line: string) => void; region?: ClientRegion } = {}
 ): Promise<WadsResult> {
   const exe = path.isAbsolute(config.manifestDownloader)
     ? config.manifestDownloader
@@ -244,15 +259,17 @@ export async function downloadIngameWads(
   if (!(await isFile(exe))) {
     return { ok: false, code: null, message: `找不到下载工具：${exe}`, output: "" };
   }
-  const manifest = await ensureManifest(config, voiceRoot, { signal: options.signal });
+  const plan = downloadProfile(config, options.region ?? "cn");
+  const manifest = await ensureManifest(config, voiceRoot, { signal: options.signal, region: options.region });
   if (!manifest.ok) return { ok: false, code: null, message: manifest.message, output: "" };
 
   const output = path.join(voiceRoot, code);
   await ensureDir(output);
+  logger.info(`下载基址(${plan.bundleBase.includes("riotcdn") ? "外服 Riot CDN" : "国服镜像"}): ${plan.bundleBase}`);
   const args = [
     manifest.file,
     "-b",
-    config.bundleProxy,
+    plan.bundleBase,
     "-l",
     code,
     "-t",
@@ -423,9 +440,18 @@ export async function syncLocale(
   code: string,
   config: AppConfig,
   voiceRoot: string,
-  options: { signal?: AbortSignal; onProgress?: (done: number, total: number, current: string) => void; onLine?: (line: string) => void } = {}
+  options: {
+    signal?: AbortSignal;
+    onProgress?: (done: number, total: number, current: string) => void;
+    onLine?: (line: string) => void;
+    region?: ClientRegion;
+  } = {}
 ): Promise<SyncResult> {
-  const wads = await downloadIngameWads(code, config, voiceRoot, { signal: options.signal, onLine: options.onLine });
+  const wads = await downloadIngameWads(code, config, voiceRoot, {
+    signal: options.signal,
+    onLine: options.onLine,
+    region: options.region
+  });
   if (options.signal?.aborted) {
     return { code, ok: false, wads, lobby: null, message: "已取消" };
   }

@@ -48,7 +48,10 @@ export function pathsPayload(env: SwitchEnv): PathsPayload {
 export function clientInfoPayload(env: SwitchEnv) {
   return {
     region: env.region,
-    region_label: env.region === "cn" ? "国服" : "外服",
+    region_label: env.regionProfile.label,
+    /** ui=右上角按钮指定, detected=按客户端路径探测 */
+    region_source: env.regionSource,
+    region_detail: env.regionProfile.detail,
     base_locale: env.baseLocale,
     base_locale_source: env.baseLocaleSource,
     base_locale_detail: env.baseLocaleDetail,
@@ -352,6 +355,7 @@ export function startUpdateRunTask(request: UpdateRunRequest = {}): TaskSnapshot
       if (handle.isCancelled()) break;
       handle.log(`开始同步 ${code} …`);
       const result = await syncLocale(code, config, env.voiceRoot, {
+    region: env.region,
         signal: handle.signal,
         onProgress: (_inner, _innerTotal, current) => handle.progress(done, total, current),
         onLine: (line) => handle.log(line)

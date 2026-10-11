@@ -223,6 +223,22 @@
     return null;
   }
 
+  /** 渠道(国服/外服)的实际方式由后端判定: 取回来挂在按钮上, 便于确认按钮真的生效。 */
+  async function loadRegionInfo() {
+    try {
+      const info = await api("/api/client");
+      if (!info || !info.region_label) return;
+      const button = $("btnServerRegion");
+      if (button) button.title = "当前方式：" + info.region_label + "（" + (info.region_source === "ui" ? "右上角按钮指定" : "按客户端路径探测") + "）\n" + (info.region_detail || "");
+      if (info.region_source === "ui" && info.region_detail && lastRegionLogged !== info.region_label + info.region_detail) {
+        lastRegionLogged = info.region_label + info.region_detail;
+        log("当前方式：" + info.region_label + " —— " + info.region_detail + "（基准语种 " + info.base_locale + "）");
+      }
+    } catch {
+      /* ignore */
+    }
+  }
+
   function setServerRegion(targetRegion, silent) {
     if (!targetRegion || store.region === targetRegion) {
       // 原本就是该区服则不用切换
@@ -365,6 +381,8 @@
    * 启动时恒为 false —— 关软件再打开不会自己开起来(用户要求"退出即清零")。
    */
   let lobbyVoiceSessionOn = false;
+  /** 渠道说明只记一次日志, 免得每轮刷新都刷屏。 */
+  let lastRegionLogged = "";
   /** 监听器的启动/停止串行队列(避免并发起两个监听器)。 */
   let syncQueue = Promise.resolve();
 
@@ -679,6 +697,7 @@
   });
 
   // 国服 / 外服 按钮
+  void loadRegionInfo();
   $("btnServerRegion").onclick = () => {
     const next = store.region === "cn" ? "global" : "cn";
     setServerRegion(next, true);

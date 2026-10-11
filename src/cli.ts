@@ -86,7 +86,10 @@ async function runLobbyCommand(args: ParsedArgs): Promise<number> {
   const env = await buildEnv({ config, appDir: appRoot(), voiceRoot: voiceRootOverride, skipProcess: false });
 
   print(`客户端目录: ${env.leagueDir ?? "(未定位)"}`);
-  print(`基准语种: ${env.baseLocale}（${env.baseLocaleSource}）  渠道: ${env.region === "cn" ? "国服" : "外服"}`);
+  print(
+    `基准语种: ${env.baseLocale}（${env.baseLocaleSource}）  ` +
+      `渠道: ${env.regionProfile.label}（${env.regionSource === "ui" ? "右上角按钮" : "按路径探测"}）`
+  );
   print(`资源根: ${env.voiceRoot}`);
 
   if (action === "status") {
@@ -269,7 +272,10 @@ async function commandStatus(jsonMode: boolean): Promise<number> {
   print(`  客户端目录: ${env.resolution.leagueDir || "(未定位)"}`);
   if (env.resolution.finalDir) print(`  游戏文件目录: ${env.resolution.finalDir}`);
   else print(`  [!] ${env.resolution.message.split("\n")[0]}`);
-  print(`  客户端渠道: ${env.region === "cn" ? "国服" : "外服"}（基准语种 ${env.baseLocale}，槽位 ${wadSuffix(env.baseLocale)}）`);
+  print(
+    `  客户端渠道: ${env.regionProfile.label}（${env.regionSource === "ui" ? "右上角按钮" : "按路径探测"}）` +
+      `  基准语种 ${env.baseLocale}  槽位 ${wadSuffix(env.baseLocale)}  方式 ${env.regionProfile.detail}`
+  );
   print("-".repeat(60));
   print(`  【对局端】语音/播报: ${ingame.voice} | 语言: ${ingame.lang}`);
   print(`  【大厅端】选人语音: ${lobby.voice} | 语言: ${lobbyLang.label}`);

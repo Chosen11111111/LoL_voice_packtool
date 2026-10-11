@@ -35,6 +35,8 @@ export interface BaseLocaleOptions {
   leagueDir: string | null;
   /** 配置里显式指定的基准语种(空=自动)。 */
   configured?: string;
+  /** 渠道自带的语种: 什么都探测不到时用它(国服 zh_CN / 外服 en_US)。缺省 zh_CN。 */
+  fallbackLocale?: string;
 }
 
 const LOCALE_SUFFIX = /\.([a-z]{2}_[A-Z]{2})\.wad\.client$/;
@@ -107,8 +109,9 @@ export async function detectBaseLocale(options: BaseLocaleOptions): Promise<Base
     return { locale: fromSettings, source: "client-settings", detail: "客户端设置", tally };
   }
 
-  logger.debug(`未探测到基准语种, 使用兜底值 ${DEFAULT_BASE_LOCALE}`);
-  return { locale: DEFAULT_BASE_LOCALE, source: "default", detail: "未探测到，使用国服默认", tally };
+  const fallback = (options.fallbackLocale ?? "").trim() || DEFAULT_BASE_LOCALE;
+  logger.debug(`未探测到基准语种, 使用渠道兜底值 ${fallback}`);
+  return { locale: fallback, source: "default", detail: `未探测到，使用该渠道自带语种 ${fallback}`, tally };
 }
 
 export type ClientRegion = "cn" | "global";
