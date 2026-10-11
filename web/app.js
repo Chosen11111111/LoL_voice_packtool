@@ -354,6 +354,13 @@
 
   let lastAppliedLogged = "";
   let lastAppliedWarned = "";
+  /**
+   * 本次会话是否开启了选人语音。
+   * 启动时恒为 false —— 关软件再打开不会自己开起来(用户要求"退出即清零")。
+   */
+  let lobbyVoiceSessionOn = false;
+  /** 监听器的启动/停止串行队列(避免并发起两个监听器)。 */
+  let syncQueue = Promise.resolve();
 
   /** 选人语音的开关状态(只看状态, 不看勾选框)。 */
   function lobbyVoiceStateOn() {
@@ -434,7 +441,7 @@
     const record = lastAppliedText();
     if (record && record !== lastAppliedLogged) {
       lastAppliedLogged = record;
-      log(record);
+      log(record + "（记录：本次启动未开启选人语音，需要点『开启语音包』）");
     }
   }
 
@@ -760,7 +767,12 @@
         method: "POST",
         body: JSON.stringify({ locale, modules })
       })
-    );
+    ).then((result) => {
+      // 只有真的成功了才算"本次会话已开启选人语音"
+      if (result === "failed" || (result && result.ok === false)) return;
+      lobbyVoiceSessionOn = modules.includes("lobby_voice");
+      void refresh();
+    });
   };
 
   $("btnRestore").onclick = () => {
@@ -773,7 +785,11 @@
         method: "POST",
         body: JSON.stringify({ modules: targetModules })
       })
-    );
+    ).then((result) => {
+      if (result === "failed" || (result && result.ok === false)) return;
+      lobbyVoiceSessionOn = false;
+      void refresh();
+    });
   };
 
   // 第五排：日志弹窗
@@ -1163,18 +1179,27 @@
   document.addEventListener("click", unlockAudio, { once: true });
 
   /**
-   * 选人语音的开关**只看状态**, 不看勾选框。
+   * 选人语音的开关: **本次会话**点过"开启语音包"(且含选人语音)才开启。
    *
-   * 状态 = 上次"开启语音包"是否包含选人语音(config.json 的 ui.lastApplied.modules)。
-   *   - 勾选"选人语音" + 点"开启语音包" -> 状态变开启 -> 这里启动监听
-   *   - 点"恢复原版" -> 状态清空 -> 这里停止监听
-   *   - 软件重启 -> 后端回报上次状态 -> 没还原过就自动恢复监听
-   * 勾选框/下拉栏只是"下次开启时要用的参数", 点了按钮才真正改变状态。
+   *   - 勾选"选人语音" + 点"开启语音包" -> 本次会话开启 -> 这里启动监听
+   *   - 点"恢复原版" -> 关闭 -> 这里停止监听
+   *   - 关掉软件再打开 -> 状态清零(**不会自己开起来**), 需要重新点一次"开启语音包"
+   * 勾选框/下拉栏只是"这次开启要用的参数"。config.json 里的 ui.lastApplied 只作为
+   * "上次开启"的记录显示(日志/悬停), 不再用来自动开启 —— 用户明确要求退出即结束。
    */
   async function syncLobbyLive() {
+    // 串行化: 并发调用会各自越过下面的判断, 结果起两个监听器(换语种时实测出现过)
+    syncQueue = syncQueue.then(() => doSyncLobbyLive()).catch(() => undefined);
+    return syncQueue;
+  }
+
+  async function doSyncLobbyLive() {
     if (!preferencesReady) return;
     const modules = (lastApplied && lastApplied.modules) || [];
-    const wanted = lastApplied && lastApplied.locale && modules.includes("lobby_voice") ? lastApplied.locale : "";
+    const wanted =
+      lobbyVoiceSessionOn && lastApplied && lastApplied.locale && modules.includes("lobby_voice")
+        ? lastApplied.locale
+        : "";
     if (!wanted) {
       await stopLobbyLive();
       return;

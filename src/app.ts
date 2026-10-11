@@ -7,11 +7,43 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
-import { appRoot, loadConfig } from "./core/config.ts";
+import { appRoot, loadConfig, saveConfig } from "./core/config.ts";
 import { createLogger, setLogFile, setLogLevel, type LogLevel } from "./core/logger.ts";
 import { startApiServer } from "./server/api.ts";
 
 const logger = createLogger("app");
+
+/**
+ * 退出 = 还原(用户要求: 关掉软件就相当于点了"恢复原版")。
+ *
+ * 只清理**选人语音**这套实时功能, 不动已经写进游戏目录的补丁文件:
+ *   1. 停掉 LCU 监听
+ *   2. 把客户端"播放选择语音/播放禁用语音"两栏还原成开启(选人期间才由工具静音)
+ *   3. 清掉 ui.lastApplied —— 下次打开显示"未开启", 也不会自己开起来
+ */
+async function cleanupOnExit(): Promise<void> {
+  try {
+    const { lobbyLive } = await import("./modules/lobbyLive.ts");
+    if (lobbyLive.isRunning()) await lobbyLive.stop();
+  } catch (error) {
+    logger.warn(`退出清理: 停止监听失败(${String((error as Error).message ?? error)})`);
+  }
+  try {
+    const { setClientOriginalVoice } = await import("./modules/clientVoice.ts");
+    await setClientOriginalVoice(false, "tool");
+  } catch (error) {
+    logger.warn(`退出清理: 还原客户端原版台词失败(${String((error as Error).message ?? error)})`);
+  }
+  try {
+    const config = await loadConfig();
+    if (config.ui?.lastApplied) {
+      await saveConfig({ ...config, ui: { ...config.ui, lastApplied: null } });
+      logger.info("退出清理: 已清空『上次开启』记录");
+    }
+  } catch (error) {
+    logger.warn(`退出清理: 清空记录失败(${String((error as Error).message ?? error)})`);
+  }
+}
 
 function argValue(name: string): string | undefined {
   const argv = process.argv.slice(2);
@@ -134,6 +166,7 @@ async function main(): Promise<void> {
 
   if (hideWindow) {
     await waitForever();
+    await cleanupOnExit();
     await running.close();
     return;
   }
@@ -143,6 +176,7 @@ async function main(): Promise<void> {
     console.log("[!] 未找到 Edge/Chrome，改用系统默认浏览器打开；关闭本窗口即退出。");
     openDefaultBrowser(url);
     await waitForever();
+    await cleanupOnExit();
     await running.close();
     return;
   }
@@ -154,6 +188,7 @@ async function main(): Promise<void> {
     logger.warn(`打开应用窗口失败, 改用默认浏览器: ${String((error as Error).message ?? error)}`);
     openDefaultBrowser(url);
     await waitForever();
+    await cleanupOnExit();
     await running.close();
     return;
   }
@@ -178,6 +213,7 @@ async function main(): Promise<void> {
     });
   });
 
+  await cleanupOnExit();
   await running.close();
   console.log("[*] 已退出。");
 }
