@@ -246,25 +246,23 @@ test("换语种: 直接原地切换, 不能先停(否则会还原客户端设置
   assert.equal(JSON.parse(starts[starts.length - 1]!.options.body).locale, "ja_JP", "最后用的是新语种");
 });
 
-test("下载语音包: 弹窗显示网盘链接/提取码, 并能直接从路径导入(不走上传)", async () => {
-  const ui = { selectedLocale: "ja_JP", modules: ["lobby_voice"], volume: 60, followClient: false, voiceDelayMs: 1000, lastApplied: null, region: "auto" };
-  const page = await openWindow({ defaultLocale: "ja_JP", ui }, {}, false, { last_applied: null });
+test("下载语音包: 弹窗只放链接和提取码, 点 × 关闭", async () => {
+  const config = { selectedLocale: "ja_JP", modules: ["lobby_voice"], volume: 60, followClient: false, voiceDelayMs: 1000, lastApplied: null, region: "auto" };
+  const page = await openWindow({ defaultLocale: "ja_JP", ui: config }, {}, false, { last_applied: null });
   await page.settle();
 
   const modal = page.el("packDownloadModal");
   modal.classList.add("hidden"); // 沙箱元素是空的, 补上 HTML 里初始的 hidden
   assert.equal(modal.classList.contains("hidden"), true, "默认不显示");
+
   page.el("btnPackDownload").onclick!();
   await page.settle();
   assert.equal(modal.classList.contains("hidden"), false, "点『下载语音包』应弹出");
   assert.equal(page.el("packDownloadLink").value, "https://pan.baidu.com/s/1ymzAEQ_GzHOcwXWThqakbQ?pwd=q3gf");
   assert.equal(page.el("packDownloadCode").value, "q3gf");
 
-  page.el("packImportPath").value = "D:\\packs\\voice.zip";
-  page.el("btnImportPackPath").onclick!();
+  page.el("btnClosePackDownload").onclick!();
   await page.settle();
-  const request = page.requests.find((item) => item.url === "/api/packs/import" && item.options.method === "POST");
-  assert.ok(request, "应把路径交给后端导入");
-  assert.equal(JSON.parse(request!.options.body).path, "D:\\packs\\voice.zip", "走路径导入, 不经过浏览器上传");
-  assert.equal(modal.classList.contains("hidden"), true, "导入后自动关掉弹窗");
+  assert.equal(modal.classList.contains("hidden"), true, "点 × 应关闭");
+  assert.equal(page.el("btnClosePackDownload").textContent, "", "× 是图标按钮, 不放文字");
 });

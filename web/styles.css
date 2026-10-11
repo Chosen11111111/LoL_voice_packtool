@@ -870,3 +870,22 @@ button, input, select {
   border: 1px solid var(--control-border);
   border-radius: var(--radius);
 }
+.modal-close {
+  width: 26px;
+  height: 26px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 18px;
+  line-height: 1;
+  color: var(--muted);
+  background: transparent;
+  border: none;
+  border-radius: var(--radius-pill);
+  cursor: pointer;
+  transition: color 0.18s ease, background-color 0.18s ease;
+}
+.modal-close:hover {
+  color: var(--text-strong);
+  background-color: rgba(100, 116, 139, 0.12);
+}

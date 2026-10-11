@@ -662,66 +662,12 @@
     }
   }
 
-  function formatSize(bytes) {
-    if (!bytes) return "";
-    const mb = bytes / 1024 / 1024;
-    return mb >= 1024 ? (mb / 1024).toFixed(1) + " GB" : Math.round(mb) + " MB";
-  }
-
-  /** 导入本地文件/文件夹: 直接把路径给后端(不经过浏览器上传, 大包快几十倍)。 */
-  function importPackPath(target) {
-    const value = String(target || $("packImportPath").value || "").trim();
-    if (!value) {
-      setStatus("请先填压缩包或文件夹的路径", "err", 3000);
-      return;
-    }
-    $("packDownloadModal").classList.add("hidden");
-    void startTask("导入语音包", () =>
-      api("/api/packs/import", { method: "POST", body: JSON.stringify({ path: value }) })
-    );
-  }
-
-  /** 列出本机现成的压缩包(下载目录/桌面/文档/软件目录), 点一下就能导入。 */
-  async function loadLocalPacks() {
-    const list = $("packLocalList");
-    list.innerHTML = "";
-    try {
-      const data = await api("/api/packs/local-files");
-      const files = data.files || [];
-      if (!files.length) {
-        list.innerHTML = '<div class="path-cand-item"><div class="path-cand-info"><span class="path-cand-dir">没在下载目录/桌面找到压缩包</span><span class="path-cand-meta">把上面链接下载的文件路径填到上面那行即可</span></div></div>';
-        return;
-      }
-      for (const file of files) {
-        const row = document.createElement("div");
-        row.className = "path-cand-item";
-        row.innerHTML =
-          '<div class="path-cand-info">' +
-          '<span class="path-cand-dir">' + escapeHtml(file.name) + "</span>" +
-          '<span class="path-cand-meta">' + escapeHtml(formatSize(file.size)) + " · " + escapeHtml(file.path) + "</span>" +
-          "</div>" +
-          '<button type="button" class="btn tiny primary">导入</button>';
-        row.onclick = () => importPackPath(file.path);
-        list.appendChild(row);
-      }
-    } catch (error) {
-      list.innerHTML = '<div class="path-cand-item"><div class="path-cand-info"><span class="path-cand-dir">读取失败</span><span class="path-cand-meta">' + escapeHtml(error.message) + "</span></div></div>";
-    }
-  }
-
   $("packDownloadLink").value = PACK_DOWNLOAD.url;
   $("packDownloadCode").value = PACK_DOWNLOAD.code;
-  $("btnPackDownload").onclick = () => {
-    $("packDownloadModal").classList.remove("hidden");
-    void loadLocalPacks();
-  };
+  $("btnPackDownload").onclick = () => $("packDownloadModal").classList.remove("hidden");
   $("btnClosePackDownload").onclick = () => $("packDownloadModal").classList.add("hidden");
-  $("btnCopyPackLink").onclick = () => void copyToClipboard($("packDownloadLink").value, "下载链接");
-  $("btnCopyPackCode").onclick = () => void copyToClipboard($("packDownloadCode").value, "提取码");
-  $("btnImportPackPath").onclick = () => importPackPath("");
-  $("packImportPath").addEventListener("keydown", (event) => {
-    if (event.key === "Enter") importPackPath("");
-  });
+  $("btnCopyPackLink").onclick = () => void copyToClipboard(PACK_DOWNLOAD.url, "下载链接");
+  $("btnCopyPackCode").onclick = () => void copyToClipboard(PACK_DOWNLOAD.code, "提取码");
 
   $("btnClosePathSelect").onclick = () => {
     $("pathSelectModal").classList.add("hidden");

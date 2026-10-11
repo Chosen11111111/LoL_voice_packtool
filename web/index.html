@@ -151,7 +151,7 @@
   <div class="modal-box glass-modal">
     <div class="modal-head">
       <h3>下载语音包</h3>
-      <button type="button" class="btn tiny soft-btn" id="btnClosePackDownload">关闭</button>
+      <button type="button" class="modal-close" id="btnClosePackDownload" aria-label="关闭" title="关闭">×</button>
     </div>
     <div class="dl-line">
       <span class="dl-label">链接</span>
@@ -163,16 +163,6 @@
       <input type="text" id="packDownloadCode" readonly value="q3gf" />
       <button type="button" class="btn tiny soft-btn" id="btnCopyPackCode">复制</button>
     </div>
-    <p class="modal-tip">
-      网盘下载完以后，别用上面的"选择文件"（那样会把几个 GB 重新上传一遍，慢）；
-      把文件路径填在下面，或直接点列表里的文件，工具直接读本地文件。
-    </p>
-    <div class="dl-line">
-      <span class="dl-label">路径</span>
-      <input type="text" id="packImportPath" placeholder="例如：C:\Users\你\Downloads\语音包.zip（也可以选已解开的文件夹）" autocomplete="off" spellcheck="false" />
-      <button type="button" class="btn tiny primary" id="btnImportPackPath">导入</button>
-    </div>
-    <div class="path-cand-list" id="packLocalList"></div>
   </div>
 </div>
 
