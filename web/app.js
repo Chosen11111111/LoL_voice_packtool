@@ -52,9 +52,15 @@
   // 客户端是否在运行(null = 还不知道)。"开启语音包"要求客户端在跑, 因为选人语音必须连 LCU
   let clientRunning = null;
 
+  // 只有勾选了"选人语音"(lobby_voice)才需要客户端在运行 —— 它必须连 LCU
+  function lobbyVoiceNeedsClient() {
+    const box = $("modLobbyVoice");
+    return Boolean(box && box.checked) && clientRunning === false;
+  }
+
   function applyDisabledStates() {
     const busy = Boolean(store.busy);
-    const clientDown = clientRunning === false;
+    const clientDown = lobbyVoiceNeedsClient();
     for (const id of [
       "btnAutoSearchPath",
       "btnConfirmPath",
@@ -66,11 +72,13 @@
     ]) {
       const el = $(id);
       if (!el) continue;
-      // 恢复原版永远可用(出问题时要能还原); 开启语音包在客户端未启动时不可点
+      // 恢复原版永远可用(出问题时要能还原)
       const blockedByClient = id === "btnApply" && clientDown;
       el.disabled = busy || blockedByClient;
       if (id === "btnApply") {
-        el.title = clientDown ? "英雄联盟未启动：请先启动客户端并登录到大厅，再开启语音包" : "";
+        el.title = clientDown
+          ? "勾选了选人语音，但英雄联盟没在运行：先启动客户端并登录到大厅（只勾对局语音/语言不需要）"
+          : "";
       }
     }
   }
@@ -584,6 +592,8 @@
       void savePreferences();
       void syncLobbyLive();
       renderStatusRow();
+      // 勾/取消"选人语音"会改变"客户端必须在运行"的判定
+      applyDisabledStates();
     });
   }
 

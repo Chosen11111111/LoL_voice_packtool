@@ -162,6 +162,29 @@ test("POST /api/apply 全链路切换(对局语音+对局语言)", async () => {
   assert.equal(state.json.state.ingame.is_voice_active, true);
 });
 
+test("客户端未启动: 只有勾选选人语音才拦截(对局语音/语言不受影响)", async () => {
+  setClientRunningOverride(async () => false);
+  try {
+    // 含选人语音 -> 明确拒绝
+    const blocked = await post("/api/apply", { locale: "ja_JP", modules: ["lobby_voice"] });
+    assert.equal(blocked.json.ok, false);
+    assert.equal(blocked.json.blocked, true);
+    assert.match(blocked.json.message, /英雄联盟未启动/);
+
+    // 一键开启默认包含选人语音 -> 同样拒绝
+    const oneClick = await post("/api/oneclick/apply", { locale: "ja_JP" });
+    assert.equal(oneClick.json.blocked, true);
+
+    // 只勾对局语音 -> 允许(只改游戏文件, 不需要客户端在运行)
+    const allowed = await post("/api/apply", { locale: "ja_JP", restartClient: false, modules: ["ingame_voice"] });
+    assert.equal(allowed.json.blocked, undefined, "纯对局模块不该被拦截");
+    assert.equal(allowed.json.ok, true);
+    if (allowed.json.task?.id) await waitTask(allowed.json.task.id);
+  } finally {
+    setClientRunningOverride(async () => true);
+  }
+});
+
 test("POST /api/restore 全部还原为官方默认", async () => {
   const { json } = await post("/api/restore", { restartClient: false, modules: ["lobby_lang", "ingame_voice", "ingame_lang"] });
   assert.equal(json.ok, true);

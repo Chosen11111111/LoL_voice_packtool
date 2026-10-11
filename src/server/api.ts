@@ -44,6 +44,14 @@ function asModules(value: unknown): ModuleId[] | undefined {
   return modules.length ? modules : undefined;
 }
 
+/**
+ * 这些模块需要英雄联盟客户端在运行(选人语音必须连 LCU, 客户端没开就做不了)。
+ * 对局语音/对局语言只改游戏文件, 不在此列。
+ */
+function needsClient(modules: ModuleId[] | null | undefined): boolean {
+  return Array.isArray(modules) && modules.some((item) => item === "lobby_voice" || item === "lobby_lang");
+}
+
 export function buildRouter(): Router {
   const router = new Router();
 
@@ -177,18 +185,19 @@ export function buildRouter(): Router {
     const body = asRecord(context.body);
     const config = await loadConfig();
     const locale = typeof body.locale === "string" && body.locale ? body.locale : config.defaultLocale;
-    // 设计约定: 英雄联盟没启动就不能"开启语音包" —— 选人语音必须连 LCU,
-    // 客户端没开时做不了任何事, 与其半途失败不如直接明确拒绝(恢复原版仍然允许)
-    if (!(await isClientRunning())) {
+    const modules = asModules(body.modules);
+    // 设计约定: 只有勾选了"选人语音"才要求客户端在运行(它必须连 LCU);
+    // 对局语音/对局语言只改游戏文件, 客户端没开也能做。恢复原版不受任何限制。
+    if (needsClient(modules) && !(await isClientRunning())) {
       return {
         ok: false,
         blocked: true,
-        message: "英雄联盟未启动：请先启动客户端并登录到大厅，再开启语音包"
+        message: "英雄联盟未启动：选人语音需要客户端运行，请先启动客户端并登录到大厅"
       };
     }
     const task = startApplyTask({
       locale,
-      modules: asModules(body.modules),
+      modules,
       restartClient: typeof body.restartClient === "boolean" ? body.restartClient : undefined,
       lobbyLang: body.lobbyLang === "en_US" || body.lobbyLang === "zh_CN" ? body.lobbyLang : "keep"
     });
@@ -208,9 +217,17 @@ export function buildRouter(): Router {
     const body = asRecord(context.body);
     const config = await loadConfig();
     const locale = typeof body.locale === "string" && body.locale ? body.locale : config.defaultLocale;
+    const oneClickModules = asModules(body.modules) ?? ["lobby_voice", "ingame_voice", "ingame_lang"];
+    if (needsClient(oneClickModules) && !(await isClientRunning())) {
+      return {
+        ok: false,
+        blocked: true,
+        message: "英雄联盟未启动：一键开启包含选人语音，请先启动客户端并登录到大厅"
+      };
+    }
     const task = startApplyTask({
       locale,
-      modules: asModules(body.modules) ?? ["lobby_voice", "ingame_voice", "ingame_lang"],
+      modules: oneClickModules,
       restartClient: typeof body.restartClient === "boolean" ? body.restartClient : true,
       lobbyLang: body.lobbyLang === "en_US" ? "en_US" : "keep"
     });
