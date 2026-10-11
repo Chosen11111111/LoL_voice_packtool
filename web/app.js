@@ -5,6 +5,9 @@
   const $ = (id) => document.getElementById(id);
   const MAX_LOG = 500;
 
+  /** 品牌图点开的链接(要换只改这一处)。 */
+  const BRAND_LINK = "https://github.com/Chosen11111111/LoL_voice_packtool";
+
   /** 语音包网盘下载信息(要换下载地址只改这一处)。 */
   const PACK_DOWNLOAD = {
     url: "https://pan.baidu.com/s/1ymzAEQ_GzHOcwXWThqakbQ?pwd=q3gf",
@@ -683,6 +686,19 @@
   $("packDownloadLink").value = PACK_DOWNLOAD.url;
   $("packDownloadCode").value = PACK_DOWNLOAD.code;
   $("btnPackDownload").onclick = () => $("packDownloadModal").classList.remove("hidden");
+  // 品牌图是个按钮: 点击打开品牌链接(链接未配置/被拦时不报错, 只记一条日志)
+  $("btnBrand").onclick = () => {
+    if (!BRAND_LINK) {
+      log("品牌链接还没配置(见 app.js 的 BRAND_LINK)");
+      return;
+    }
+    try {
+      window.open(BRAND_LINK, "_blank", "noopener");
+      log("已打开品牌链接：" + BRAND_LINK);
+    } catch (error) {
+      log("打开品牌链接失败：" + (error && error.message ? error.message : error) + " → " + BRAND_LINK);
+    }
+  };
   $("btnClosePackDownload").onclick = () => $("packDownloadModal").classList.add("hidden");
   $("btnCopyPackLink").onclick = () => void copyToClipboard(PACK_DOWNLOAD.url, "下载链接");
   $("btnCopyPackCode").onclick = () => void copyToClipboard(PACK_DOWNLOAD.code, "提取码");

@@ -333,6 +333,24 @@ test("静态托管: 前端路由刷新不 404(SPA 兜底), /api 未知路径仍�
   assert.equal(payload.error, "not_found");
 });
 
+test("品牌图: /brand/<文件> 直接把软件目录 assets 里的素材发出去(不用复制一份到 web/)", async () => {
+  const response = await fetch(`${base}/brand/ChosenLoLskins-logo.png`);
+  assert.equal(response.status, 200);
+  assert.match(String(response.headers.get("content-type")), /image\/png/);
+  const buffer = Buffer.from(await response.arrayBuffer());
+  assert.ok(buffer.length > 1000, "应返回真实的图片数据");
+  assert.equal(buffer.subarray(1, 4).toString("latin1"), "PNG", "文件头应是 PNG");
+
+  const bad = await fetch(`${base}/brand/no-such-file.png`);
+  assert.equal(bad.status, 404);
+  // 想越出 assets 目录: 必须被挡掉(返回错误的 JSON, 而不是把磁盘文件发出去)
+  const traversal = await fetch(`${base}/brand/..%2Fconfig.json`);
+  const body = await traversal.text();
+  assert.ok(!body.includes("leaguePath"), "绝不能把 config.json 的内容发出去");
+  assert.match(String(traversal.headers.get("content-type")), /application\/json/, "越权请求应得到一条错误说明");
+  assert.equal((JSON.parse(body) as { ok?: boolean }).ok, false);
+});
+
 test("错误处理: 未知任务返回 not_found, 非法 JSON 返回 400", async () => {
   const missing = await get("/api/tasks/not-a-task");
   assert.equal(missing.json.ok, false);

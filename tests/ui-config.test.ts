@@ -35,7 +35,11 @@ async function openWindow(config: any, legacy: Record<string, string> = {}, fail
   const el = (id: string) => { if (!elements.has(id)) elements.set(id, new Element()); return elements.get(id)!; };
   const requests: { url: string; options: any }[] = [];
   const windowHandlers: Record<string, Function> = {};
-  const window = { addEventListener(name: string, fn: Function) { windowHandlers[name] = fn; } };
+  const opened: string[] = [];
+  const window = {
+    addEventListener(name: string, fn: Function) { windowHandlers[name] = fn; },
+    open: (url: string) => { opened.push(url); return null; }
+  };
   const context = vm.createContext({
     document: { getElementById: el, createElement: () => new Element(), addEventListener() {}, activeElement: null },
     window, localStorage: { getItem: (k: string) => legacy[k] ?? null, setItem() {} },
@@ -71,7 +75,7 @@ async function openWindow(config: any, legacy: Record<string, string> = {}, fail
   vm.runInContext(source, context);
   const settle = async () => { for (let i = 0; i < 20; i++) await new Promise((resolve) => setImmediate(resolve)); };
   await settle();
-  return { el, requests, settle, windowHandlers };
+  return { el, requests, settle, windowHandlers, opened };
 }
 
 test("改变语种、勾选项、音量和区服后，全新窗口从文件配置恢复", async () => {
@@ -265,4 +269,13 @@ test("下载语音包: 弹窗只放链接和提取码, 点 × 关闭", async () 
   await page.settle();
   assert.equal(modal.classList.contains("hidden"), true, "点 × 应关闭");
   assert.equal(page.el("btnClosePackDownload").textContent, "", "× 是图标按钮, 不放文字");
+});
+
+test("品牌图是一个按钮: 点击会打开品牌链接", async () => {
+  const config = { selectedLocale: "ja_JP", modules: ["lobby_voice"], volume: 60, followClient: false, voiceDelayMs: 1000, lastApplied: null, region: "auto" };
+  const page = await openWindow({ defaultLocale: "ja_JP", ui: config }, {}, false, { last_applied: null });
+  await page.settle();
+  page.el("btnBrand").onclick!();
+  assert.equal((page as any).opened.length, 1, "点一下应打开一次链接");
+  assert.match((page as any).opened[0], /^https:\/\//, "必须是外链");
 });

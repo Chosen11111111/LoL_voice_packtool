@@ -86,6 +86,27 @@ export function buildRouter(): Router {
     };
   });
 
+  /** 品牌图等静态素材: <软件目录>/assets/<文件>。避免为了显示一张图去复制一份到 web/。 */
+  router.get("/brand/:file", async (context) => {
+    const name = path.basename(String(context.params.file ?? ""));
+    if (!/^[\w.-]+\.(png|jpg|jpeg|webp|gif|svg)$/i.test(name)) {
+      return { ok: false, error: "bad_request", message: "不支持的素材文件名" };
+    }
+    const file = path.join(appRoot(), "assets", name);
+    const data = await readFile(file).catch(() => null);
+    if (!data) {
+      context.res.writeHead(404, { "Content-Type": "application/json; charset=utf-8" });
+      context.res.end(JSON.stringify({ ok: false, error: "not_found", message: `没有这个素材：${file}` }));
+      return undefined;
+    }
+    const ext = path.extname(name).toLowerCase();
+    const type =
+      ext === ".png" ? "image/png" : ext === ".svg" ? "image/svg+xml" : ext === ".webp" ? "image/webp" : ext === ".gif" ? "image/gif" : "image/jpeg";
+    context.res.writeHead(200, { "Content-Type": type, "Content-Length": data.length, "Cache-Control": "no-cache" });
+    context.res.end(data);
+    return undefined;
+  });
+
   /* ------------------------------------------------ 选人语音实时播报 */
 
   /** 工具窗口播放的音频来源: <资源根>/<语种>/assets/champion-{choose,ban}-vo/<id>.ogg */
