@@ -1,20 +1,22 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="894" height="168" viewBox="0 0 894 168" role="img" aria-label="LoLskins 稳定换肤">
+<svg xmlns="http://www.w3.org/2000/svg" width="790" height="120" viewBox="0 0 790 120" role="img" aria-label="LoLskins 稳定换肤">
   <title>LoLskins 稳定换肤</title>
 
   <!--
-    不要背景色: 直接是深蓝文字, 贴在浅色毛玻璃卡片上最不突兀。
-    字号按**显示尺寸**倒推: 界面里显示 208px 宽 => 缩放 0.233
-      英文 LoLskins  50px -> 显示约 12px
-      中文 稳定换肤  82px -> 显示约 19px
-    两段用 textLength 锁宽(260 / 410), 换字体也不会重叠或跑版。
+    为什么这样定尺寸(显示宽度 208px, 缩放 0.263):
+      英文 78px: 大写字母高约 0.72em -> 显示约 14.8px
+      中文 66px: 汉字高约 0.86em   -> 显示约 14.9px
+    两者**视觉等高**, 所以大小协调; 换字体也不会跑版(用 textLength 锁宽)。
+    颜色取界面主色 #2563eb(浅蓝), 描边用深一点的蓝, 做出艺术字的层次。
   -->
-  <text x="80" y="116" fill="#1e3a8a"
-        font-family="'Segoe UI Semibold','Segoe UI',system-ui,-apple-system,'Helvetica Neue',Arial,sans-serif"
-        font-size="50" font-weight="700"
-        textLength="260" lengthAdjust="spacingAndGlyphs">LoLskins</text>
-
-  <text x="384" y="116" fill="#1e3a8a"
-        font-family="'Microsoft YaHei','PingFang SC','Hiragino Sans GB','Noto Sans CJK SC',sans-serif"
-        font-size="82" font-weight="700"
-        textLength="410" lengthAdjust="spacingAndGlyphs">稳定换肤</text>
+  <g fill="#2563eb" stroke="#1d4ed8" stroke-width="2.4" stroke-linejoin="round" paint-order="stroke"
+     font-weight="900" text-anchor="start">
+    <text x="60" y="84"
+          font-family="'Segoe UI Black','Arial Black','Segoe UI',system-ui,-apple-system,sans-serif"
+          font-size="78" letter-spacing="1"
+          textLength="345" lengthAdjust="spacingAndGlyphs">LoLskins</text>
+    <text x="445" y="84"
+          font-family="'Microsoft YaHei','PingFang SC','Hiragino Sans GB','Noto Sans CJK SC',sans-serif"
+          font-size="66" letter-spacing="5"
+          textLength="270" lengthAdjust="spacingAndGlyphs">稳定换肤</text>
+  </g>
 </svg>
