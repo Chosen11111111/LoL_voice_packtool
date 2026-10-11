@@ -367,9 +367,14 @@
       : live.playback_ok
         ? "｜已播放 " + live.playback_ok + " 次"
         : "";
+    const clientNote = clientVoice && clientVoice.supported
+      ? "｜原版台词：" + (clientVoice.suppressed ? "已静音" : "开着")
+      : clientRunning === false
+        ? "｜原版台词：客户端未启动"
+        : "";
     $("statusLobbyVoice").textContent = lobbyActive
       ? "【监听中：" + (lobbyLocaleName || "默认语种") + "】" +
-        (live.presence === "in" ? "选人进行中" : "等待进入选人") + "｜已播报 " + live.played + " 条" + playbackNote
+        (live.presence === "in" ? "选人进行中" : "等待进入选人") + "｜已播报 " + live.played + " 条" + playbackNote + clientNote
       : $("modLobbyVoice").checked ? "未开启（选择语音包后开始监听）" : "未开启（未勾选选人语音）";
   }
 
@@ -873,8 +878,11 @@
     // 音量对齐: 跟随客户端音量时, 用它的总音量 × 音效来设置播报音量
     if (followClient && clientVoice.aligned > 0 && clientVoice.aligned !== volume) {
       setVolume(clientVoice.aligned, false);
-      const volumes = clientVoice.volumes || { master: "?", sfx: "?" };
-      log("播报音量已按客户端音量对齐：" + clientVoice.aligned + "%（总音量 " + volumes.master + "% × 音效 " + volumes.sfx + "%）");
+      const volumes = clientVoice.volumes || { master: "?", sfx: "?", voice: "?" };
+      log(
+        "播报音量已对齐客户端总音量：" + clientVoice.aligned + "%" +
+          "（客户端 总音量 " + volumes.master + " / 音效 " + volumes.sfx + " / 语音 " + volumes.voice + "）"
+      );
     }
     applyFollowLabel();
   }
@@ -965,8 +973,20 @@
     setStatus("播报音频加载失败（code " + code + " " + message + "）", "warn", 0);
   });
 
+  let lastPlayKey = "";
+  let lastPlayAt = 0;
+
   function playLobbyVoice(data) {
     if (!data || !data.url) return;
+    // 双保险: 同一句台词短时间重复推送时忽略(否则第二遍会把第一遍打断, 声音反而迟迟不出来)
+    const key = data.kind + ":" + data.championId;
+    const now = Date.now();
+    if (key === lastPlayKey && now - lastPlayAt < 1500) {
+      log("忽略重复推送：" + key);
+      return;
+    }
+    lastPlayKey = key;
+    lastPlayAt = now;
     lastVoice = { kind: data.kind, championId: data.championId };
     // 换英雄时立刻切掉上一条, 避免两条台词叠在一起
     try {

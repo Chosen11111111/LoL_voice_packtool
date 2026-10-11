@@ -122,13 +122,14 @@ export function readVolumes(data: Record<string, unknown> | null | undefined): C
 }
 
 /**
- * 播报音量对齐: 客户端听众实际听到的响度大致是 总音量 × 音效音量,
- * 所以播报音量取这两者的乘积, 让语音包台词与客户端其它声音齐平。
+ * 播报音量对齐: 直接用客户端的**总音量**。
+ *
+ * 之前用"总音量 × 音效"的乘积, 用户看到的是 85 而工具显示 28(x 音效 33), 对不上号 ——
+ * 播报来自另一个进程, 本来就不经过客户端的混音链路, 用总音量最直观也最好解释。
  */
 export function computeAlignedVolume(volumes: ClientVolumes | null): number | null {
   if (!volumes) return null;
-  const scaled = (volumes.master / 100) * (volumes.sfx / 100) * 100;
-  return Math.max(5, Math.min(100, Math.round(scaled)));
+  return Math.max(5, Math.min(100, Math.round(volumes.master)));
 }
 
 async function readJson<T>(file: string): Promise<T | null> {

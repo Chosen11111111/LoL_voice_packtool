@@ -162,6 +162,34 @@ test("客户端在运行时: 正常进入监听状态", async () => {
   await engine.stop();
 });
 
+test("并发 start 只创建一个轮询器(否则同一场锁定会被播两遍)", async () => {
+  const voiceRoot = await makeVoiceRoot();
+  const engine = new LobbyLiveEngine();
+  let watchers = 0;
+  const locked: ChampSelectSession = { localPlayerCellId: 0, gameId: 1, actions: [[pick(0, 103, true)]] };
+  const received: LobbyLiveEvent[] = [];
+  engine.subscribe((event) => received.push(event));
+
+  const options = {
+    voiceRoot,
+    locale: "ja_JP",
+    clientRunning: async () => true,
+    watcher: (watchOptions: Parameters<typeof import("../src/core/win/lcuEvents.ts").watchChampSelect>[0]) => {
+      watchers += 1;
+      watchOptions.onPresence?.("in");
+      watchOptions.onSession({ localPlayerCellId: 0, gameId: 1, actions: [] }, "in"); // 基线
+      watchOptions.onSession(locked, "in");
+      return () => undefined;
+    }
+  };
+
+  // 界面会在多处同时调用 start(页面加载/刷新/勾选框变化/模块应用)
+  await Promise.all([engine.start(options), engine.start(options), engine.start(options)]);
+  assert.equal(watchers, 1, "并发启动只能创建一个轮询器");
+  assert.equal(received.length, 1, "同一场锁定只能播一条");
+  await engine.stop();
+});
+
 test.after(async () => {
   await cleanupSuite();
 });

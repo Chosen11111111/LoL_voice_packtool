@@ -38,10 +38,11 @@ test.after(async () => {
   await cleanupSuite();
 });
 
-test("computeAlignedVolume: 播报音量 = 客户端总音量 × 音效", () => {
+test("computeAlignedVolume: 播报音量 = 客户端总音量(与游戏里看到的数字一致)", () => {
   assert.equal(computeAlignedVolume({ master: 100, sfx: 100, voice: 100 }), 100);
-  assert.equal(computeAlignedVolume({ master: 85, sfx: 95, voice: 47.5 }), 81);
-  assert.equal(computeAlignedVolume({ master: 50, sfx: 50, voice: 100 }), 25);
+  assert.equal(computeAlignedVolume({ master: 85, sfx: 95, voice: 47.5 }), 85, "音效滑块不参与");
+  assert.equal(computeAlignedVolume({ master: 85, sfx: 33, voice: 100 }), 85, "以前这里会算成 28, 与游戏里看到的对不上");
+  assert.equal(computeAlignedVolume({ master: 60, sfx: 50, voice: 100 }), 60);
   assert.equal(computeAlignedVolume({ master: 0, sfx: 95, voice: 47.5 }), 5, "下限 5%, 避免静音成 0");
   assert.equal(computeAlignedVolume(null), null);
 });

@@ -99,6 +99,8 @@ export class LobbyLiveEngine {
   private baselined = false;
   /** 当前是否处于选人流程(用于判断"选人结束"从而还原原版台词)。 */
   private inChampSelect = false;
+  /** 正在进行的启动(串行化, 防止并发创建多个轮询器)。 */
+  private pendingStart: Promise<{ ok: boolean; message: string; state: LobbyLiveState }> | null = null;
   /** 窗口回报的播放结果。 */
   private lastPlayback: PlaybackReport | null = null;
   private playbackOk = 0;
@@ -135,7 +137,25 @@ export class LobbyLiveEngine {
     return total;
   }
 
+  /**
+   * 启动监听。
+   *
+   * **必须串行**: 界面会在多处同时调用(页面加载/刷新/勾选框变化/模块应用),
+   * 并发调用会各自通过"是否已在监听"的检查, 于是创建出两个轮询器 —— 同一个锁定事件
+   * 被播两遍, 第二遍把第一遍打断(AbortError), 音频还会被推迟很久才出来。
+   */
   async start(options: LobbyLiveOptions): Promise<{ ok: boolean; message: string; state: LobbyLiveState }> {
+    if (this.pendingStart) return this.pendingStart;
+    const task = this.doStart(options);
+    this.pendingStart = task;
+    try {
+      return await task;
+    } finally {
+      if (this.pendingStart === task) this.pendingStart = null;
+    }
+  }
+
+  private async doStart(options: LobbyLiveOptions): Promise<{ ok: boolean; message: string; state: LobbyLiveState }> {
     // 已经在用同一个语种监听: 直接返回, 不重启(重启会重新建基线, 也不会重播)
     if (this.stopWatch && this.options?.locale === options.locale && Boolean(this.options?.includeOthers) === Boolean(options.includeOthers)) {
       return { ok: true, message: this.message, state: this.state() };
