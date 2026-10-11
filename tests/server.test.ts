@@ -338,8 +338,9 @@ test("品牌图: 自绘的矢量图能被托管(文字是矢量的, 任何缩放
   assert.equal(response.status, 200);
   assert.match(String(response.headers.get("content-type")), /image\/svg\+xml/);
   const text = await response.text();
-  assert.match(text, /ChosenLoLskins/);
-  assert.match(text, /稳定换肤/, "中文副标要在图里(矢量文字, 不再靠缩放后糊掉的位图)");
+  assert.match(text, /LoLskins/, "品牌英文");
+  assert.match(text, /稳定换肤/, "中文要在图里(矢量文字, 不再靠缩放后糊掉的位图)");
+  assert.ok(!/Gradient/i.test(text), "不要渐变(用户明确要求纯色)");
   assert.match(text, /<svg/);
 });
 

@@ -1,22 +1,22 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="1000" height="168" viewBox="0 0 1000 168" role="img" aria-label="ChosenLoLskins 稳定换肤">
-  <title>ChosenLoLskins 稳定换肤</title>
+<svg xmlns="http://www.w3.org/2000/svg" width="1000" height="168" viewBox="0 0 1000 168" role="img" aria-label="LoLskins 稳定换肤">
+  <title>LoLskins 稳定换肤</title>
 
-  <!-- 纯色底(不要渐变), 与界面同一个蓝 -->
+  <!-- 纯色底(无渐变), 与界面同一个蓝 -->
   <rect x="0" y="0" width="1000" height="168" rx="30" fill="#2563eb"/>
 
   <!--
-    字号是按**显示尺寸**倒推的: 界面里显示 208px 宽 => 缩放 0.208
-      英文 64px -> 显示约 13px
-      中文 76px -> 显示约 16px(比英文更大, 保证看得清)
-    两段都用 textLength 锁宽, 换任何字体/机器都不会重叠或跑版。
+    字号按**显示尺寸**倒推: 界面里显示 208px 宽 => 缩放 0.208
+      英文 LoLskins  64px -> 显示约 13px
+      中文 稳定换肤 112px -> 显示约 23px(英文缩短后省出的宽度全给了中文)
+    两段用 textLength 锁宽(300 / 520), 换字体也不会重叠或跑版。
   -->
-  <text x="60" y="108" fill="#ffffff"
+  <text x="60" y="118" fill="#ffffff"
         font-family="'Segoe UI Semibold','Segoe UI',system-ui,-apple-system,'Helvetica Neue',Arial,sans-serif"
         font-size="64" font-weight="700"
-        textLength="560" lengthAdjust="spacingAndGlyphs">ChosenLoLskins</text>
+        textLength="300" lengthAdjust="spacingAndGlyphs">LoLskins</text>
 
-  <text x="648" y="108" fill="#ffffff"
+  <text x="400" y="118" fill="#ffffff"
         font-family="'Microsoft YaHei','PingFang SC','Hiragino Sans GB','Noto Sans CJK SC',sans-serif"
-        font-size="76" font-weight="700"
-        textLength="304" lengthAdjust="spacingAndGlyphs">稳定换肤</text>
+        font-size="112" font-weight="700"
+        textLength="520" lengthAdjust="spacingAndGlyphs">稳定换肤</text>
 </svg>
