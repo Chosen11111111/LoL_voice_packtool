@@ -893,29 +893,35 @@ button, input, select {
   background-color: rgba(100, 116, 139, 0.12);
 }
 
-/* ---------------- 品牌图按钮(和三个勾选框同一行, 占右边空位) ---------------- */
-.brand-banner {
-  flex: 0 1 auto;
-  display: inline-flex;
+/* ---------------- 两个按钮 + 品牌图(品牌图居中在它们下方) ---------------- */
+.pack-actions {
+  flex: 0 0 auto;          /* 宽度由两个按钮决定, 品牌图在这块里居中 */
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
   align-items: center;
-  min-width: 0;
-  margin: 0 0 0 auto;    /* 靠右: 吃掉勾选框右边的空位 */
+  gap: 8px;
+}
+.brand-banner {
+  flex: 0 0 100%;          /* 独占第二行 */
+  display: flex;
+  justify-content: center;
   padding: 0;
   background: none;
   border: none;
   cursor: pointer;
-  border-radius: 8px;
-  transition: transform 0.16s ease, filter 0.16s ease, box-shadow 0.16s ease;
+  transition: transform 0.16s ease, filter 0.16s ease;
   will-change: transform;
+  margin-top: 2px;
 }
 .brand-banner img {
   display: block;
-  width: 118px;          /* ← 想改大小只改这一处(两行字标, 显示高约 43px) */
+  width: 118px;            /* ← 想改大小只改这一处(两行字标, 显示高约 43px) */
   height: auto;
   -webkit-user-select: none;
   user-select: none;
   pointer-events: none;
-  /* 无底色、无描边、无投影: 只是一行深蓝文字, 与浅色界面融合 */
+  /* 无底色、无描边、无投影: 只有两行深蓝文字, 与浅色界面融合 */
 }
 .brand-banner:hover {
   transform: translateY(-1px) scale(1.04);

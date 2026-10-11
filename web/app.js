@@ -6,7 +6,7 @@
   const MAX_LOG = 500;
 
   /** 品牌图点开的链接(要换只改这一处)。 */
-  const BRAND_LINK = "https://github.com/Chosen11111111/LoL_voice_packtool";
+  const BRAND_LINK = "https://chosen1.lol";
 
   /** 语音包网盘下载信息(要换下载地址只改这一处)。 */
   const PACK_DOWNLOAD = {

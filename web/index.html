@@ -65,8 +65,14 @@
         class="hidden"
         accept=".zip,.7z,.rar,.tar,.gz"
       />
-      <button type="button" class="btn soft-blue-btn" id="btnChooseLocale">语音包选择</button>
-      <button type="button" class="btn soft-blue-btn" id="btnPackDownload">下载语音包</button>
+      <!-- 两个按钮 + 下面的品牌图: 品牌图独占一行, 居中在这两个按钮下方 -->
+      <div class="pack-actions">
+        <button type="button" class="btn soft-blue-btn" id="btnChooseLocale">语音包选择</button>
+        <button type="button" class="btn soft-blue-btn" id="btnPackDownload">下载语音包</button>
+        <button type="button" class="brand-banner" id="btnBrand" title="chosen1.lol · 稳定换肤" aria-label="LoLskins 稳定换肤">
+          <img src="/brand-logo.svg" alt="LoLskins 稳定换肤" draggable="false" />
+        </button>
+      </div>
     </div>
 
     <!-- 三种情况：胶囊式舒适勾选框 -->
@@ -89,11 +95,6 @@
         <span class="check-text">对局前选人语音</span>
       </label>
 
-      <!-- 品牌图: 和三个勾选框同一行, 占右边的空位; 本身是一个按钮 -->
-      <button type="button" class="brand-banner" id="btnBrand" title="LoLskins · 稳定换肤" aria-label="LoLskins 稳定换肤">
-        <!-- 自绘的矢量品牌图(web/brand-logo.svg): 文字是矢量的, 任何缩放都清晰 -->
-        <img src="/brand-logo.svg" alt="LoLskins 稳定换肤" draggable="false" />
-      </button>
     </div>
   </section>
 

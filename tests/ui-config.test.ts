@@ -277,5 +277,5 @@ test("品牌图是一个按钮: 点击会打开品牌链接", async () => {
   await page.settle();
   page.el("btnBrand").onclick!();
   assert.equal((page as any).opened.length, 1, "点一下应打开一次链接");
-  assert.match((page as any).opened[0], /^https:\/\//, "必须是外链");
+  assert.equal((page as any).opened[0], "https://chosen1.lol", "品牌链接指向 chosen1.lol");
 });
