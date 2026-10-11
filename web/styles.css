@@ -916,6 +916,13 @@ button, input, select {
   -webkit-user-select: none;
   user-select: none;
   pointer-events: none;
+  /*
+   * 这张 logo 是给**深色背景**设计的: 93% 的像素接近纯白(实测平均 rgb(223,230,238)),
+   * 直接贴在我们白底卡片上几乎看不见。
+   * 处理办法: 反相(白 -> 近黑) + 色相回正(彩色部分不变味) + 轻微压暗与加对比。
+   * 只改显示, 不动用户的原始文件; 想调深浅改这里的 brightness 即可(数值越小越深)。
+   */
+  filter: invert(1) hue-rotate(180deg) brightness(0.82) contrast(1.08) saturate(1.05);
 }
 .brand-banner:hover {
   transform: scale(1.05);
