@@ -715,11 +715,14 @@
     const button = $("btnClientVoice");
     if (!button) return;
     if (!clientVoice.supported && !clientVoice.suppressed) {
-      button.textContent = "原版台词：不可用";
+      // 客户端没启动 / 读不到设置: 明确禁用, 不做无效操作
+      button.textContent = "原版台词：客户端未启动";
       button.dataset.mode = "off";
-      button.title = clientVoice.message || "没读到客户端的音频设置（客户端没在运行？）";
+      button.disabled = true;
+      button.title = clientVoice.message || "英雄联盟没在运行，读不到也改不了它的设置；客户端启动后这个按钮会自动可用。";
       return;
     }
+    button.disabled = false;
     button.dataset.mode = clientVoice.auto ? "on" : "off";
     if (!clientVoice.auto) {
       button.textContent = "原版台词：不自动";

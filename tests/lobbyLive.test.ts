@@ -134,6 +134,34 @@ test("播放结果上报会记入状态(排障用)", async () => {
   assert.equal(engine.state().playback_ok, 1);
 });
 
+test("客户端未启动: 只提示待机等待, 不假装已生效", async () => {
+  const voiceRoot = await makeVoiceRoot();
+  const engine = new LobbyLiveEngine();
+  const started = await engine.start({
+    voiceRoot,
+    locale: "ja_JP",
+    clientRunning: async () => false,
+    watcher: () => () => undefined
+  });
+  assert.equal(started.ok, true);
+  assert.match(started.message, /英雄联盟未启动/);
+  assert.match(started.message, /待机等待/);
+  await engine.stop();
+});
+
+test("客户端在运行时: 正常进入监听状态", async () => {
+  const voiceRoot = await makeVoiceRoot();
+  const engine = new LobbyLiveEngine();
+  const started = await engine.start({
+    voiceRoot,
+    locale: "ja_JP",
+    clientRunning: async () => true,
+    watcher: () => () => undefined
+  });
+  assert.match(started.message, /正在监听选人流程/);
+  await engine.stop();
+});
+
 test.after(async () => {
   await cleanupSuite();
 });

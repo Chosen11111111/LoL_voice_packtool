@@ -12,7 +12,8 @@ import path from "node:path";
 import { createLogger } from "../core/logger.ts";
 import { isDirectory, isFile } from "../core/fsx.ts";
 import { watchChampSelect, type ChampSelectPresence, type StopWatch } from "../core/win/lcuEvents.ts";
-import { restoreAfterChampSelect, suppressForChampSelect } from "./clientVoice.ts";
+import { recoverOnStartup, restoreAfterChampSelect, suppressForChampSelect } from "./clientVoice.ts";
+import { isClientRunning } from "../core/win/processes.ts";
 import {
   ChampSelectTracker,
   VOICE_TRIGGER,
@@ -39,6 +40,8 @@ export interface LobbyLiveOptions {
   idleIntervalMs?: number;
   /** 会话来源可注入(测试用)。 */
   watcher?: (options: Parameters<typeof watchChampSelect>[0]) => StopWatch;
+  /** 客户端是否在运行(可注入, 便于测试)。 */
+  clientRunning?: () => Promise<boolean>;
 }
 
 export interface PlaybackReport {
@@ -184,10 +187,19 @@ export class LobbyLiveEngine {
       },
       onSession: (session, presence) => this.handleSession(session, presence)
     });
-    this.message = `正在监听选人流程，使用 ${options.locale} 的语音包（${this.available} 个音频，锁定才播）`;
+    // 客户端没启动时: 照常待机等待(客户端起来后进选人会自动接管), 但不假装已经生效
+    const clientRunning = await (options.clientRunning ?? isClientRunning)();
+    this.message = clientRunning
+      ? `正在监听选人流程，使用 ${options.locale} 的语音包（${this.available} 个音频，锁定才播）`
+      : `英雄联盟未启动：已待机等待，客户端启动后进选人会自动接管（${options.locale}，${this.available} 个音频）`;
     logger.info(this.message);
-    // 闭环第 1 步: 启动就静音客户端原版台词(禁用阶段来得很快, 不能等到进选人)
-    void suppressForChampSelect();
+    // 闭环第 1 步: 只有客户端在运行才去静音原版台词(禁用阶段来得很快, 不能等到进选人)
+    if (clientRunning) {
+      void suppressForChampSelect();
+    } else {
+      // 客户端没开时顺便兜底: 上次工具静音过的话, 等客户端起来再还原
+      void recoverOnStartup(true);
+    }
     return { ok: true, message: this.message, state: this.state() };
   }
 

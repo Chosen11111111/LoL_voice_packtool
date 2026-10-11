@@ -9,7 +9,7 @@ import { isDirectory } from "../core/fsx.ts";
 import type { ModuleId } from "../core/types.ts";
 import { invalidateConfigCache } from "../core/config.ts";
 import { createLogger, setLogLevel, type LogLevel } from "../core/logger.ts";
-import { clientVoiceState, setAutoSuppress, setClientOriginalVoice } from "../modules/clientVoice.ts";
+import { clientVoiceState, recoverOnStartup, setAutoSuppress, setClientOriginalVoice } from "../modules/clientVoice.ts";
 
 const logger = createLogger("api");
 import { Router, startHttpServer, type RunningServer } from "./http.ts";
@@ -316,6 +316,10 @@ export async function startApiServer(
   lobbyLive.subscribe((event) => {
     router.broadcast("lobby", event);
   });
+
+  // 启动兜底: 上次若被本工具静音过、但这次并没有在监听选人语音, 把原版台词还原回去
+  // (客户端设置是持久化的, 不还原会一直留在静音状态)
+  void recoverOnStartup(lobbyLive.isRunning());
 
   // 前端目录: 绝对路径直接用, 相对路径相对项目根
   const webDir = (config.server.webDir ?? "web").trim();

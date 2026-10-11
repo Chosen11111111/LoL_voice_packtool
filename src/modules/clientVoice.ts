@@ -277,6 +277,24 @@ export async function suppressForChampSelect(): Promise<void> {
   if (!result.ok) logger.warn(`自动静音原版台词失败: ${result.message}`);
 }
 
+/**
+ * 启动兜底: 如果上次是工具自动静音的, 但这次工具启动时并没有在监听选人语音,
+ * 就把原版台词还原回去 —— 否则客户端设置会一直留在"静音"状态(它是持久化的)。
+ */
+export async function recoverOnStartup(listening: boolean): Promise<void> {
+  const auto = await readAuto();
+  if (!auto.suppressedByTool) return;
+  if (listening) return;
+  const settings = await readAudioSettings();
+  if (!settings) {
+    // 客户端没开: 保留标记, 等客户端起来后再还原(见下方 noteSuppressed 状态的保留)
+    logger.info("上次静音过客户端原版台词，但客户端未运行，稍后再还原");
+    return;
+  }
+  const result = await setClientOriginalVoice(false, "tool");
+  logger.info(result.ok ? "启动兜底: 已还原客户端原版台词" : `启动兜底还原失败: ${result.message}`);
+}
+
 /** 选人结束/关闭功能: 还原原版台词。 */
 export async function restoreAfterChampSelect(reason: string): Promise<void> {
   const auto = await readAuto();
