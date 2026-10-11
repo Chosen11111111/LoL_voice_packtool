@@ -1,12 +1,13 @@
 /** REST API: 界面(未来任意前端)只需对着这一组接口写。 */
 import path from "node:path";
-import { copyFile, mkdir, readFile, rename, rm } from "node:fs/promises";
+import os from "node:os";
+import { copyFile, mkdir, readFile, rename, rm, stat } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
 import { APP_NAME, APP_NAME_CN, APP_VERSION, API_VERSION } from "../version.ts";
 import { loadConfig, appRoot, configPath, type ConfigPatch } from "../core/config.ts";
 import { resolveVoiceRoot } from "../core/paths.ts";
 import { lobbyLive } from "../modules/lobbyLive.ts";
-import { isDirectory } from "../core/fsx.ts";
+import { isDirectory, listNames } from "../core/fsx.ts";
 import { isClientRunning } from "../core/win/processes.ts";
 import type { ModuleId } from "../core/types.ts";
 import { invalidateConfigCache } from "../core/config.ts";
@@ -294,8 +295,12 @@ export function buildRouter(): Router {
     let archive = "";
     let deleteAfter = false;
     const name = context.rawFile ? uploadName || "pack.zip" : String(body.path ?? "").trim();
+    // 允许直接给"已经解开的文件夹"(不需要任何解压工具, 也不用经过浏览器上传)
+    const givenDir = !context.rawFile && name ? await isDirectory(name) : false;
     const extension = SUPPORTED_EXTENSIONS.find((ext) => name.toLowerCase().endsWith(ext));
-    if (!extension) return { ok: false, error: "bad_request", message: `不支持的格式：${path.basename(name)}（支持 ${SUPPORTED_EXTENSIONS.join(" / ")}）` };
+    if (!context.rawFile && !givenDir && !extension) {
+      return { ok: false, error: "bad_request", message: `不支持的格式：${path.basename(name)}（支持 ${SUPPORTED_EXTENSIONS.join(" / ")}，也可以直接选已解开的文件夹）` };
+    }
     if (context.rawFile) {
       // 上传的临时文件移交给后台任务(同卷改名), 避免任务还没跑就被清掉
       const keepDir = path.join(appRoot(), ".tmp", "imports");
@@ -330,6 +335,34 @@ export function buildRouter(): Router {
       if (deleteAfter) await rm(archive, { force: true }).catch(() => undefined);
       throw error;
     }
+  });
+
+  /**
+   * 找本机现成的语音包压缩包(下载目录/桌面/文档/软件目录), 供界面"从路径导入"一键选中。
+   * 这样就不用把几个 GB 通过浏览器上传给后端 —— 直接读路径, 快得多。
+   */
+  router.get("/api/packs/local-files", async () => {
+    const home = process.env["USERPROFILE"] ?? os.homedir();
+    const dirs = [
+      path.join(home, "Downloads"),
+      path.join(home, "Desktop"),
+      path.join(home, "Documents"),
+      appRoot()
+    ];
+    const files: Array<{ path: string; name: string; size: number; at: number }> = [];
+    for (const dir of dirs) {
+      if (!(await isDirectory(dir))) continue;
+      for (const name of await listNames(dir)) {
+        const lower = name.toLowerCase();
+        if (!SUPPORTED_EXTENSIONS.some((ext) => lower.endsWith(ext))) continue;
+        const full = path.join(dir, name);
+        const info = await stat(full).catch(() => null);
+        if (!info?.isFile()) continue;
+        files.push({ path: full, name, size: info.size, at: info.mtimeMs });
+      }
+    }
+    files.sort((a, b) => b.at - a.at);
+    return { ok: true, files: files.slice(0, 20) };
   });
 
   router.post("/api/update/check", () => ({ ok: true, task: startUpdateCheckTask() }));

@@ -9,7 +9,22 @@ class Element {
   value = ""; checked = true; disabled = false; textContent = ""; title = "";
   dataset: Record<string, string> = {}; style = {}; children: Element[] = [];
   handlers: Record<string, Function> = {}; onclick?: Function;
-  classList = { add() {}, remove() {}, toggle() { return false; } };
+  private classes = new Set<string>();
+  classList = {
+    add: (name: string) => { this.classes.add(name); },
+    remove: (name: string) => { this.classes.delete(name); },
+    toggle: (name: string, force?: boolean) => {
+      if (force === undefined) {
+        if (this.classes.has(name)) { this.classes.delete(name); return false; }
+        this.classes.add(name);
+        return true;
+      }
+      if (force) { this.classes.add(name); return true; }
+      this.classes.delete(name);
+      return false;
+    },
+    contains: (name: string) => this.classes.has(name)
+  };
   set innerHTML(_: string) { this.children = []; }
   appendChild(child: Element) { this.children.push(child); }
   addEventListener(name: string, fn: Function) { this.handlers[name] = fn; }
@@ -229,4 +244,27 @@ test("换语种: 直接原地切换, 不能先停(否则会还原客户端设置
   const starts = page.requests.filter((r) => r.url === "/api/lobby-live/start");
   assert.ok(starts.length >= 2, "每次开启都应走 start(后端原地换语种)");
   assert.equal(JSON.parse(starts[starts.length - 1]!.options.body).locale, "ja_JP", "最后用的是新语种");
+});
+
+test("下载语音包: 弹窗显示网盘链接/提取码, 并能直接从路径导入(不走上传)", async () => {
+  const ui = { selectedLocale: "ja_JP", modules: ["lobby_voice"], volume: 60, followClient: false, voiceDelayMs: 1000, lastApplied: null, region: "auto" };
+  const page = await openWindow({ defaultLocale: "ja_JP", ui }, {}, false, { last_applied: null });
+  await page.settle();
+
+  const modal = page.el("packDownloadModal");
+  modal.classList.add("hidden"); // 沙箱元素是空的, 补上 HTML 里初始的 hidden
+  assert.equal(modal.classList.contains("hidden"), true, "默认不显示");
+  page.el("btnPackDownload").onclick!();
+  await page.settle();
+  assert.equal(modal.classList.contains("hidden"), false, "点『下载语音包』应弹出");
+  assert.equal(page.el("packDownloadLink").value, "https://pan.baidu.com/s/1ymzAEQ_GzHOcwXWThqakbQ?pwd=q3gf");
+  assert.equal(page.el("packDownloadCode").value, "q3gf");
+
+  page.el("packImportPath").value = "D:\\packs\\voice.zip";
+  page.el("btnImportPackPath").onclick!();
+  await page.settle();
+  const request = page.requests.find((item) => item.url === "/api/packs/import" && item.options.method === "POST");
+  assert.ok(request, "应把路径交给后端导入");
+  assert.equal(JSON.parse(request!.options.body).path, "D:\\packs\\voice.zip", "走路径导入, 不经过浏览器上传");
+  assert.equal(modal.classList.contains("hidden"), true, "导入后自动关掉弹窗");
 });

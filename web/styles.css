@@ -848,3 +848,25 @@ button, input, select {
 
 /* 上次开启记录(状态区下方一行) */
 
+/* ---------------- 下载语音包弹窗 ---------------- */
+.dl-line {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 8px 0;
+}
+.dl-line .dl-label {
+  flex: 0 0 52px;
+  font-size: 12px;
+  color: var(--muted);
+}
+.dl-line input {
+  flex: 1;
+  min-width: 0;
+  padding: 7px 10px;
+  font-size: 12px;
+  color: var(--text-strong);
+  background-color: rgba(255, 255, 255, 0.72);
+  border: 1px solid var(--control-border);
+  border-radius: var(--radius);
+}

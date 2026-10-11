@@ -66,6 +66,7 @@
         accept=".zip,.7z,.rar,.tar,.gz"
       />
       <button type="button" class="btn soft-blue-btn" id="btnChooseLocale">语音包选择</button>
+      <button type="button" class="btn soft-blue-btn" id="btnPackDownload">下载语音包</button>
     </div>
 
     <!-- 三种情况：胶囊式舒适勾选框 -->
@@ -143,6 +144,36 @@
     <button type="button" class="btn soft-btn log-btn" id="btnOpenLog">日志</button>
   </footer>
 
+</div>
+
+<!-- 下载语音包 / 从路径导入 -->
+<div class="modal hidden" id="packDownloadModal">
+  <div class="modal-box glass-modal">
+    <div class="modal-head">
+      <h3>下载语音包</h3>
+      <button type="button" class="btn tiny soft-btn" id="btnClosePackDownload">关闭</button>
+    </div>
+    <div class="dl-line">
+      <span class="dl-label">链接</span>
+      <input type="text" id="packDownloadLink" readonly value="https://pan.baidu.com/s/1ymzAEQ_GzHOcwXWThqakbQ?pwd=q3gf" />
+      <button type="button" class="btn tiny soft-btn" id="btnCopyPackLink">复制</button>
+    </div>
+    <div class="dl-line">
+      <span class="dl-label">提取码</span>
+      <input type="text" id="packDownloadCode" readonly value="q3gf" />
+      <button type="button" class="btn tiny soft-btn" id="btnCopyPackCode">复制</button>
+    </div>
+    <p class="modal-tip">
+      网盘下载完以后，别用上面的"选择文件"（那样会把几个 GB 重新上传一遍，慢）；
+      把文件路径填在下面，或直接点列表里的文件，工具直接读本地文件。
+    </p>
+    <div class="dl-line">
+      <span class="dl-label">路径</span>
+      <input type="text" id="packImportPath" placeholder="例如：C:\Users\你\Downloads\语音包.zip（也可以选已解开的文件夹）" autocomplete="off" spellcheck="false" />
+      <button type="button" class="btn tiny primary" id="btnImportPackPath">导入</button>
+    </div>
+    <div class="path-cand-list" id="packLocalList"></div>
+  </div>
 </div>
 
 <!-- 多路径选择弹窗 -->

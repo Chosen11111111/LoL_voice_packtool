@@ -48,53 +48,53 @@ export interface ExtractResult {
   message: string;
 }
 
-/** 解压压缩包到目标目录。zip/tar 用系统自带工具, 7z/rar 需要本机 7-Zip 或 WinRAR。 */
+/**
+ * 解压压缩包到目标目录。
+ *
+ * **只依赖系统自带的东西**, 不要求用户装任何软件:
+ *   - zip / tar / tar.gz / tgz: 系统自带的 tar.exe(Windows 10 1803+ 都有), 失败再退 PowerShell 的 Expand-Archive;
+ *   - 7z / rar: 也先用系统自带的 tar 试(Windows 11 24H2 起自带的 libarchive 能读), 不行就给明确提示,
+ *     让用户改用 zip, 或先把包解开后直接导入文件夹(目录导入完全不需要解压工具)。
+ */
 export async function extractArchive(archive: string, destDir: string, onLog?: (line: string) => void, signal?: AbortSignal): Promise<ExtractResult> {
   signal?.throwIfAborted();
   await ensureDir(destDir);
   const lower = archive.toLowerCase();
+  const isZip = lower.endsWith(".zip");
+  const isTarLike = lower.endsWith(".tar") || lower.endsWith(".tar.gz") || lower.endsWith(".tgz");
+  const isPacked = lower.endsWith(".7z") || lower.endsWith(".rar");
 
-  if (lower.endsWith(".zip") || lower.endsWith(".tar") || lower.endsWith(".tar.gz") || lower.endsWith(".tgz")) {
-    // 1) 系统自带 bsdtar(Win10+): 同时认 zip 与 tar
+  if (isZip || isTarLike || isPacked) {
+    if (isPacked) {
+      onLog?.("7z/rar 先交给系统自带的解压试试(Windows 11 24H2 起自带支持)…");
+    }
     const tar = await runStreaming("tar", ["-xf", archive, "-C", destDir], { timeoutMs: 0, signal });
     signal?.throwIfAborted();
     if (tar.ok) return { ok: true, tool: "tar", message: "解压完成" };
-    onLog?.(tar.error ? `tar 解压失败: ${tar.error}，尝试 PowerShell` : "tar 解压返回非零，尝试 PowerShell");
 
-    // 2) 退回 PowerShell 的 Expand-Archive(仅 zip)
-    if (lower.endsWith(".zip")) {
+    if (isZip) {
+      onLog?.(tar.error ? `tar 解压失败: ${tar.error}，尝试 PowerShell` : "tar 解压返回非零，尝试 PowerShell");
       const script = `Expand-Archive -LiteralPath '${archive.replace(/'/g, "''")}' -DestinationPath '${destDir.replace(/'/g, "''")}' -Force`;
       const powershell = await runStreaming(process.env.LEAGUE_VOICE_POWERSHELL || "powershell.exe", ["-NoProfile", "-NonInteractive", "-EncodedCommand", encodePowerShell(script)], { timeoutMs: 0, signal });
       signal?.throwIfAborted();
       if (powershell.ok) return { ok: true, tool: "Expand-Archive", message: "解压完成" };
       return { ok: false, tool: "Expand-Archive", message: `解压失败: ${powershell.error || powershell.stderr.slice(0, 200)}` };
     }
-    return { ok: false, tool: "tar", message: `解压失败: ${tar.error || tar.stderr.slice(0, 200)}` };
-  }
 
-  if (lower.endsWith(".7z") || lower.endsWith(".rar")) {
-    const tool = await firstExisting(sevenZipCandidates());
-    if (!tool) {
+    if (isPacked) {
       const kind = lower.endsWith(".rar") ? "RAR" : "7z";
       return {
         ok: false,
-        tool: "7z",
+        tool: "tar",
         message:
-          `解压 ${kind} 需要本机安装 7-Zip 或 WinRAR（未找到）。\n` +
-          `请安装后重试，或先把压缩包解压，再把其中的语种目录（含 DATA\\FINAL）手动放进资源目录。`
+          `这台电脑系统自带的解压读不了 ${kind} 包（新版 Windows 才行）。\n` +
+          `两个办法任选: ①换成 zip 包; ②先用系统自带的方式把包解开, 再点"语音包选择"直接选那个文件夹（文件夹导入不需要任何解压工具）。`
       };
     }
-    const isUnrar = /unrar\.exe$/i.test(tool);
-    const args = isUnrar
-      ? ["x", "-y", archive, `${destDir}\\`]
-      : ["x", "-y", `-o${destDir}`, archive];
-    const result = await runStreaming(tool, args, { timeoutMs: 0, signal });
-    signal?.throwIfAborted();
-    if (result.ok) return { ok: true, tool: path.basename(tool), message: "解压完成" };
-    return { ok: false, tool: path.basename(tool), message: `解压失败: ${result.error || result.stderr.slice(0, 200)}` };
+    return { ok: false, tool: "tar", message: `解压失败: ${tar.error || tar.stderr.slice(0, 200)}` };
   }
 
-  return { ok: false, tool: "", message: `不支持的压缩包格式：${path.basename(archive)}（支持 zip / 7z / rar / tar / tar.gz）` };
+  return { ok: false, tool: "", message: `不支持的压缩包格式：${path.basename(archive)}（支持 zip / tar / tar.gz / 7z / rar）` };
 }
 
 /* ------------------------------------------------------------------ 语种识别 */
@@ -268,8 +268,9 @@ export async function importArchive(options: ImportOptions): Promise<ImportResul
   if (explicitLocale && !/^[\w\u4e00-\u9fa5-]+$/.test(explicitLocale)) {
     return { ...empty, message: "语种必须是单个目录名，不能包含路径分隔符或上级目录" };
   }
-  if (!(await isFile(options.archive))) {
-    return { ...empty, message: `压缩包不存在：${options.archive}` };
+  const sourceIsDir = await isDirectory(options.archive);
+  if (!sourceIsDir && !(await isFile(options.archive))) {
+    return { ...empty, message: `找不到这个文件或文件夹：${options.archive}` };
   }
   if (!(await ensureDir(options.voiceRoot))) {
     return { ...empty, message: `资源目录不可用：${options.voiceRoot}` };
@@ -283,11 +284,20 @@ export async function importArchive(options: ImportOptions): Promise<ImportResul
   let target = "";
   let published = false;
   try {
-    progress("正在解压…", 5);
-    log(`解压 ${archiveName} …`);
-    const extract = await extractArchive(options.archive, extracted, log, options.signal);
-    if (!extract.ok) return { ...empty, message: extract.message };
-    log(`解压完成（工具：${extract.tool}）`);
+    if (sourceIsDir) {
+      // 目录导入: 完全不用解压工具(适配任何系统), 也不经过浏览器上传。
+      // 复制到暂存区而不是搬走 —— 源文件夹是用户自己的东西, 我们不动它。
+      progress("正在读取文件夹…", 5);
+      log(`从文件夹导入: ${options.archive}`);
+      await fs.cp(options.archive, extracted, { recursive: true });
+      log("已复制到暂存区，开始识别结构");
+    } else {
+      progress("正在解压…", 5);
+      log(`解压 ${archiveName} …`);
+      const extract = await extractArchive(options.archive, extracted, log, options.signal);
+      if (!extract.ok) return { ...empty, message: extract.message };
+      log(`解压完成（工具：${extract.tool}）`);
+    }
 
     progress("正在识别语音包结构…", 55);
     const layout = await findPackLayout(extracted);
