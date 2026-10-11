@@ -910,7 +910,7 @@ button, input, select {
 }
 .brand-banner img {
   display: block;
-  width: 208px;          /* ← 想改大小只改这一处 */
+  width: 118px;          /* ← 想改大小只改这一处(两行字标, 显示高约 43px) */
   height: auto;
   -webkit-user-select: none;
   user-select: none;
