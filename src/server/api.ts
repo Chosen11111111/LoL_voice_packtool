@@ -88,7 +88,14 @@ export function buildRouter(): Router {
       context.res.end(JSON.stringify({ ok: false, error: "not_found", message: `语音包里没有 ${locale}/${kind}/${id}.ogg` }));
       return undefined;
     }
-    logger.info(`播报音频已被窗口取用: ${locale}/${kind}/${id}.ogg（${data.length} 字节）`);
+    // 顺带量一下"事件发生 -> 窗口来取音频"的延迟: 正常应在几十毫秒内,
+    // 若出现几十秒, 就是窗口被节流了(见 app.ts 里关闭节流的启动参数)
+    const lastEvent = lobbyLive.state().last_event;
+    const delay = lastEvent && lastEvent.championId === id ? Date.now() - lastEvent.at : 0;
+    logger.info(
+      `播报音频已被窗口取用: ${locale}/${kind}/${id}.ogg（${data.length} 字节` +
+        `${delay > 0 ? `，距事件 ${delay}ms` : ""}）`
+    );
     context.res.writeHead(200, {
       "Content-Type": "audio/ogg",
       "Content-Length": data.length,

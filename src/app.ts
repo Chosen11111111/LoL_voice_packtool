@@ -72,10 +72,19 @@ function openAppWindow(browser: string, url: string): ChildProcess {
       `--user-data-dir=${profile}`,
       "--no-first-run",
       "--no-default-browser-check",
-      "--disable-features=msEdgeSidebarV2,msSmartScreenProtection",
+      // CalculateNativeWinOcclusion 会让被遮挡的窗口停止渲染; 其余 sidebar/smartscreen 是 Edge 的干扰项
+      "--disable-features=msEdgeSidebarV2,msSmartScreenProtection,CalculateNativeWinOcclusion",
       "--window-size=800,600",
       // 选人台词是由后端事件触发播放的, 不能受浏览器"需要用户手势才能播放"的策略限制
-      "--autoplay-policy=no-user-gesture-required"
+      "--autoplay-policy=no-user-gesture-required",
+      // ---- 关键: 选人时本窗口会被客户端盖在后面, 而 Chromium 会节流/冻结被遮挡的窗口,
+      // 导致 SSE 事件延迟几十秒才分发(实测有 31 秒才出声、甚至整场都没出声)。
+      // 下面这几项关闭节流, 保证事件到手即播。
+      "--disable-background-timer-throttling",
+      "--disable-backgrounding-occluded-windows",
+      "--disable-renderer-backgrounding",
+      "--disable-background-media-suspend",
+      "--disable-ipc-flooding-protection"
     ],
     { stdio: "ignore", windowsHide: false }
   );
