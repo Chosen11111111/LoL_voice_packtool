@@ -333,6 +333,16 @@ test("静态托管: 前端路由刷新不 404(SPA 兜底), /api 未知路径仍�
   assert.equal(payload.error, "not_found");
 });
 
+test("品牌图: 自绘的矢量图能被托管(文字是矢量的, 任何缩放都清晰)", async () => {
+  const response = await fetch(`${base}/brand-logo.svg`);
+  assert.equal(response.status, 200);
+  assert.match(String(response.headers.get("content-type")), /image\/svg\+xml/);
+  const text = await response.text();
+  assert.match(text, /ChosenLoLskins/);
+  assert.match(text, /稳定换肤/, "中文副标要在图里(矢量文字, 不再靠缩放后糊掉的位图)");
+  assert.match(text, /<svg/);
+});
+
 test("品牌图: /brand/<文件> 直接把软件目录 assets 里的素材发出去(不用复制一份到 web/)", async () => {
   const response = await fetch(`${base}/brand/ChosenLoLskins-logo.png`);
   assert.equal(response.status, 200);
