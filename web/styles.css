@@ -898,56 +898,36 @@ button, input, select {
   flex: 0 1 auto;
   display: inline-flex;
   align-items: center;
-  gap: 6px;
   min-width: 0;
   margin: 0 0 0 auto;    /* 靠右: 吃掉勾选框右边的空位 */
   padding: 0;
   background: none;
   border: none;
   cursor: pointer;
-  transition: transform 0.16s ease, filter 0.16s ease;
+  border-radius: 8px;
+  transition: transform 0.16s ease, filter 0.16s ease, box-shadow 0.16s ease;
   will-change: transform;
 }
 .brand-banner img {
   display: block;
-  width: 170px;
-  /* 原图 5986x982, 但白色主标只到 y=661(下面那句小字缩下来必然糊) —— 这里只显示主标 */
-  aspect-ratio: 5986 / 661;
-  object-fit: cover;
-  object-position: top center;
+  width: 208px;          /* ← 想改大小只改这一处 */
+  height: auto;
+  border-radius: 7px;
   -webkit-user-select: none;
   user-select: none;
   pointer-events: none;
-  /*
-   * 这张 logo 是给**深色背景**设计的: 实测 93% 的像素接近纯白(平均 rgb(223,230,238)),
-   * 直接贴在我们白底卡片上几乎看不见。
-   * 反相(白 -> 近黑) + 色相回正(彩色部分不变味) + 轻微压暗加对比。
-   * 只改显示, 不动用户的原始文件; 深浅改这里的 brightness 即可(越小越深)。
-   */
-  filter: invert(1) hue-rotate(180deg) brightness(0.82) contrast(1.08) saturate(1.05);
-}
-.brand-tag {
-  flex: 0 0 auto;
-  font-size: 11px;
-  font-weight: 600;
-  letter-spacing: 0.3px;
-  color: var(--blue);
-  background-color: rgba(37, 99, 235, 0.10);
-  border: 1px solid var(--blue-border);
-  border-radius: var(--radius-pill);
-  padding: 2px 8px;
-  white-space: nowrap;
+  /* 自绘的矢量图本身就按浅色界面配的色, 不需要反相/压暗 */
+  box-shadow: 0 2px 8px rgba(37, 99, 235, 0.18);
 }
 .brand-banner:hover {
-  transform: scale(1.04);
-  filter: brightness(1.08) saturate(1.06) drop-shadow(0 3px 8px rgba(37, 99, 235, 0.20));
-}
-.brand-banner:hover .brand-tag {
-  background-color: rgba(37, 99, 235, 0.18);
+  transform: translateY(-1px) scale(1.03);
+  filter: brightness(1.06) saturate(1.05);
+  box-shadow: 0 8px 18px rgba(37, 99, 235, 0.26);
 }
 .brand-banner:active {
-  transform: scale(0.97);
-  filter: brightness(0.94);
+  transform: translateY(1px) scale(0.98);
+  filter: brightness(0.96);
+  box-shadow: 0 2px 6px rgba(37, 99, 235, 0.18);
 }
 .brand-banner:focus-visible {
   outline: 2px solid var(--blue);

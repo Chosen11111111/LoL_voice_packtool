@@ -1,0 +1,50 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1000" height="168" viewBox="0 0 1000 168" role="img" aria-label="ChosenLoLskins 稳定换肤">
+  <title>ChosenLoLskins 稳定换肤</title>
+  <defs>
+    <!-- 主渐变: 与界面同一个蓝色系 -->
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#1d4ed8"/>
+      <stop offset="0.5" stop-color="#2563eb"/>
+      <stop offset="1" stop-color="#4f46e5"/>
+    </linearGradient>
+    <!-- 顶部高光, 做出毛玻璃那种通透感 -->
+    <linearGradient id="sheen" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#ffffff" stop-opacity="0.26"/>
+      <stop offset="0.55" stop-color="#ffffff" stop-opacity="0.05"/>
+      <stop offset="1" stop-color="#ffffff" stop-opacity="0"/>
+    </linearGradient>
+    <!-- 右下的柔光, 避免大色块死板 -->
+    <radialGradient id="glow" cx="0.88" cy="0.15" r="0.7">
+      <stop offset="0" stop-color="#93c5fd" stop-opacity="0.55"/>
+      <stop offset="1" stop-color="#93c5fd" stop-opacity="0"/>
+    </radialGradient>
+    <clipPath id="round">
+      <rect x="0" y="0" width="1000" height="168" rx="30"/>
+    </clipPath>
+  </defs>
+
+  <g clip-path="url(#round)">
+    <rect x="0" y="0" width="1000" height="168" fill="url(#bg)"/>
+    <rect x="0" y="0" width="1000" height="168" fill="url(#glow)"/>
+    <rect x="0" y="0" width="1000" height="168" fill="url(#sheen)"/>
+    <!-- 左侧竖向高光条, 让整块更像一块按钮而不是纯色块 -->
+    <rect x="0" y="0" width="10" height="168" fill="#ffffff" fill-opacity="0.5"/>
+    <!-- 内描边: 一圈很淡的白边, 增强玻璃质感 -->
+    <rect x="1" y="1" width="998" height="166" rx="29" fill="none" stroke="#ffffff" stroke-opacity="0.35" stroke-width="2"/>
+  </g>
+
+  <!-- 主标题: 用 textLength 锁死宽度, 保证不同字体下版式都不跑 -->
+  <text x="80" y="106" fill="#ffffff"
+        font-family="'Segoe UI Semibold','Segoe UI',system-ui,-apple-system,'Helvetica Neue',Arial,sans-serif"
+        font-size="68" font-weight="700" letter-spacing="0.5"
+        textLength="600" lengthAdjust="spacingAndGlyphs">ChosenLoLskins</text>
+
+  <!-- 中文副标: 真矢量文字, 任何缩放都清晰 -->
+  <text x="712" y="104" fill="#ffffff" fill-opacity="0.95"
+        font-family="'Microsoft YaHei','PingFang SC','Hiragino Sans GB','Noto Sans CJK SC',sans-serif"
+        font-size="52" font-weight="600" letter-spacing="4"
+        textLength="208" lengthAdjust="spacingAndGlyphs">稳定换肤</text>
+
+  <!-- 副标下的细线, 呼应"芯片/徽标"的感觉 -->
+  <rect x="712" y="120" width="208" height="4" rx="2" fill="#ffffff" fill-opacity="0.45"/>
+</svg>
