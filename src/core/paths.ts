@@ -457,8 +457,8 @@ export async function resolveVoiceRoot(
     };
   }
 
-  // 老版本把包放在软件目录外面(甚至写死过路径): 同盘直接改名搬进来, 用户不用重下几个 GB
-  await migrateLegacyPacks(defaultRoot, candidates.slice(1).map((item) => item.dir));
+  // 旧位置的语音包同步进来(作者机器上那个"素材库"更新完, 启动工具就能用上)
+  await syncFromLegacy(defaultRoot, candidates.slice(1).map((item) => item.dir));
   await ensureDir(defaultRoot);
   return {
     root: defaultRoot,
@@ -469,13 +469,18 @@ export async function resolveVoiceRoot(
 }
 
 /**
- * 把散落在旧位置的语音包**搬**进默认目录(只在默认目录还没有包时做)。
+ * 旧位置的语音包同步进默认目录(`<软件目录>\language`)。
  *
- * 同盘是改名(瞬间完成、不占额外空间); 跨盘才会退化成复制+删除。任何一步失败都只是放弃那一个,
- * 绝不删除源目录里的东西。
+ * 定位: 旧位置(比如作者自己用来更新素材的那个目录)是"素材库", `language\` 是工具的工作目录。
+ * 规则很简单 —— **按文件时间, 素材库里的更新(更大/更新的文件)覆盖工作目录里的同名文件;
+ * 工作目录里多出来的文件保留**。所以两边各留一份, 用户更新完启动工具就能用上。
+ *
+ * 同盘用**硬链接**(瞬间完成、不占额外空间); 跨盘退化成复制。源目录绝不改动、绝不删除。
  */
-async function migrateLegacyPacks(target: string, sources: string[]): Promise<void> {
-  if (await looksLikePackRoot(target)) return;
+async function syncFromLegacy(target: string, sources: string[]): Promise<void> {
+  let linked = 0;
+  let replaced = 0;
+  let failed = 0;
   for (const source of sources) {
     if (path.resolve(source) === path.resolve(target)) continue;
     if (!(await isDirectory(source))) continue;
@@ -483,29 +488,59 @@ async function migrateLegacyPacks(target: string, sources: string[]): Promise<vo
       if (!LOCALE_DIR_PATTERN.test(name)) continue;
       const from = path.join(source, name);
       if (!(await isDirectory(from))) continue;
-      const to = path.join(target, name);
-      if (await isDirectory(to)) continue;
-      try {
-        await ensureDir(target);
-        await fs.rename(from, to);
-        logger.info(`语音包已搬进软件目录: ${from} -> ${to}`);
-      } catch (error) {
-        // 跨盘时 rename 会失败: 退回复制
-        try {
-          await fs.cp(from, to, { recursive: true });
-          await fs.rm(from, { recursive: true, force: true });
-          logger.info(`语音包已复制进软件目录: ${from} -> ${to}`);
-        } catch (copyError) {
-          logger.warn(`搬移语音包失败(源目录保持原样): ${from} —— ${String((copyError as Error).message ?? copyError)}`);
-          await fs.rm(to, { recursive: true, force: true }).catch(() => undefined);
-        }
-      }
-    }
-    // 版本记录也一起带走, 免得增量同步重新下一个版本号
-    const versionFrom = path.join(source, "version.json");
-    const versionTo = path.join(target, "version.json");
-    if ((await isFile(versionFrom)) && !(await isFile(versionTo))) {
-      await fs.rename(versionFrom, versionTo).catch(() => undefined);
+      await ensureDir(target);
+      const counters = await mirrorTree(from, path.join(target, name));
+      linked += counters.linked;
+      replaced += counters.replaced;
+      failed += counters.failed;
     }
   }
+  if (linked || replaced || failed) {
+    logger.info(
+      `旧位置语音包已同步进软件目录: 新增 ${linked} 个文件, 更新 ${replaced} 个` + (failed ? `, 失败 ${failed} 个` : "")
+    );
+  }
+}
+
+interface MirrorCounters {
+  linked: number;
+  replaced: number;
+  failed: number;
+}
+
+/** 把 from 目录镜像到 to: 缺失的补上, 更新的覆盖(更大或更新的文件)。 */
+async function mirrorTree(from: string, to: string): Promise<MirrorCounters> {
+  const counters: MirrorCounters = { linked: 0, replaced: 0, failed: 0 };
+  const entries = await fs.readdir(from, { withFileTypes: true }).catch(() => []);
+  for (const entry of entries) {
+    const src = path.join(from, entry.name);
+    const dst = path.join(to, entry.name);
+    if (entry.isDirectory()) {
+      const nested = await mirrorTree(src, dst);
+      counters.linked += nested.linked;
+      counters.replaced += nested.replaced;
+      counters.failed += nested.failed;
+      continue;
+    }
+    if (!entry.isFile()) continue;
+    try {
+      const sourceInfo = await fs.stat(src);
+      const targetInfo = await fs.stat(dst).catch(() => null);
+      const stale = Boolean(targetInfo) && (targetInfo!.size !== sourceInfo.size || sourceInfo.mtimeMs > targetInfo!.mtimeMs + 1000);
+      if (targetInfo && !stale) continue;
+      await ensureDir(path.dirname(dst));
+      if (targetInfo) await fs.rm(dst, { force: true });
+      try {
+        await fs.link(src, dst);
+      } catch {
+        await fs.copyFile(src, dst);
+      }
+      if (targetInfo) counters.replaced += 1;
+      else counters.linked += 1;
+    } catch (error) {
+      counters.failed += 1;
+      logger.debug(`同步语音包文件失败: ${src} —— ${String((error as Error).message ?? error)}`);
+    }
+  }
+  return counters;
 }
