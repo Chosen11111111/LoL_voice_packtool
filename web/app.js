@@ -49,8 +49,12 @@
     }
   }
 
-  function setBusy(busy) {
-    store.busy = busy;
+  // 客户端是否在运行(null = 还不知道)。"开启语音包"要求客户端在跑, 因为选人语音必须连 LCU
+  let clientRunning = null;
+
+  function applyDisabledStates() {
+    const busy = Boolean(store.busy);
+    const clientDown = clientRunning === false;
     for (const id of [
       "btnAutoSearchPath",
       "btnConfirmPath",
@@ -61,8 +65,19 @@
       "selectTrigger"
     ]) {
       const el = $(id);
-      if (el) el.disabled = busy;
+      if (!el) continue;
+      // 恢复原版永远可用(出问题时要能还原); 开启语音包在客户端未启动时不可点
+      const blockedByClient = id === "btnApply" && clientDown;
+      el.disabled = busy || blockedByClient;
+      if (id === "btnApply") {
+        el.title = clientDown ? "英雄联盟未启动：请先启动客户端并登录到大厅，再开启语音包" : "";
+      }
     }
+  }
+
+  function setBusy(busy) {
+    store.busy = busy;
+    applyDisabledStates();
   }
 
   async function api(path, options) {
@@ -789,6 +804,7 @@
 
   /* 客户端原版台词开关(关掉客户端自己念的原版台词, 保留音效与音乐) */
   let clientVoice = { supported: false, suppressed: false, message: "" };
+  let clientVoiceRetry = null;
 
   function applyClientVoiceLabel() {
     const button = $("btnClientVoice");
@@ -825,10 +841,25 @@
         volumes: data.volumes || null,
         message: data.message || ""
       };
+      clientRunning = data.client_running !== false;
     } catch {
       clientVoice = { supported: false, suppressed: false, auto: true, aligned: 0, volumes: null, message: "读取失败" };
+      clientRunning = false;
     }
     applyClientVoiceLabel();
+    applyDisabledStates();
+    // 客户端可能稍后才启动: 没读到就每 10 秒重试, 起来后按钮自动可用、自动接管
+    if (clientRunning === false) {
+      if (!clientVoiceRetry) {
+        clientVoiceRetry = setTimeout(() => {
+          clientVoiceRetry = null;
+          void loadClientVoice();
+        }, 10000);
+      }
+    } else if (clientVoiceRetry) {
+      clearTimeout(clientVoiceRetry);
+      clientVoiceRetry = null;
+    }
     // 音量对齐: 跟随客户端音量时, 用它的总音量 × 音效来设置播报音量
     if (followClient && clientVoice.aligned > 0 && clientVoice.aligned !== volume) {
       setVolume(clientVoice.aligned, false);
@@ -844,6 +875,11 @@
     const clientVoiceButton = $("btnClientVoice");
     if (clientVoiceButton) {
       clientVoiceButton.addEventListener("click", async () => {
+        if (clientRunning === false) {
+          setStatus("英雄联盟未启动：读不到也改不了它的设置，客户端启动后会自动接管", "warn", 4000);
+          log("英雄联盟未启动：原版台词开关需要客户端在运行");
+          return;
+        }
         // 这个按钮切换"选人期间自动静音"这套闭环
         const next = !clientVoice.auto;
         clientVoiceButton.disabled = true;

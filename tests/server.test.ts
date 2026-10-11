@@ -3,6 +3,7 @@ import { after, before, describe, test } from "node:test";
 import assert from "node:assert/strict";
 import path from "node:path";
 import { invalidateConfigCache, loadConfig, saveConfig } from "../src/core/config.ts";
+import { setClientRunningOverride } from "../src/core/win/processes.ts";
 import { taskManager } from "../src/tasks/manager.ts";
 import { lobbyLive } from "../src/modules/lobbyLive.ts";
 import { startApiServer } from "../src/server/api.ts";
@@ -55,6 +56,9 @@ useSuite("server");
 describe("HTTP API 端到端", () => {
 before(async () => {
   for (const key of ENV_KEYS) savedEnv[key] = process.env[key];
+  // 端到端测试环境里没有真实客户端: 统一视为"客户端在运行",
+  // 这样"开启语音包需要客户端"的新规则不会挡掉正常的流程测试(另有专门用例验证拦截逻辑)
+  setClientRunningOverride(async () => true);
   const root = await makeTempDir("server-e2e");
   const voiceRoot = path.join(root, "voice");
   const leagueDir = path.join(root, "install", "LeagueClient");
@@ -97,6 +101,7 @@ before(async () => {
 
 after(async () => {
   await running?.close();
+  setClientRunningOverride(null);
   for (const key of ENV_KEYS) {
     if (savedEnv[key] === undefined) delete process.env[key];
     else process.env[key] = savedEnv[key]!;

@@ -116,8 +116,16 @@ export async function isGameRunning(): Promise<boolean> {
   return isProcessRunning(GAME_EXE);
 }
 
+/** 测试用: 覆盖"客户端是否在运行"的判断(生产代码不受影响)。 */
+let clientRunningOverride: (() => Promise<boolean>) | null = null;
+
+export function setClientRunningOverride(fn: (() => Promise<boolean>) | null): void {
+  clientRunningOverride = fn;
+}
+
 /** 大厅客户端是否在跑。 */
 export async function isClientRunning(): Promise<boolean> {
+  if (clientRunningOverride) return clientRunningOverride();
   const key = "LeagueClient*";
   const existing = presencePending.get(key);
   if (existing) return existing;

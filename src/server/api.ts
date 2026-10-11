@@ -7,6 +7,7 @@ import { loadConfig, appRoot, configPath, type ConfigPatch } from "../core/confi
 import { resolveVoiceRoot } from "../core/paths.ts";
 import { lobbyLive } from "../modules/lobbyLive.ts";
 import { isDirectory } from "../core/fsx.ts";
+import { isClientRunning } from "../core/win/processes.ts";
 import type { ModuleId } from "../core/types.ts";
 import { invalidateConfigCache } from "../core/config.ts";
 import { createLogger, setLogLevel, type LogLevel } from "../core/logger.ts";
@@ -176,6 +177,15 @@ export function buildRouter(): Router {
     const body = asRecord(context.body);
     const config = await loadConfig();
     const locale = typeof body.locale === "string" && body.locale ? body.locale : config.defaultLocale;
+    // 设计约定: 英雄联盟没启动就不能"开启语音包" —— 选人语音必须连 LCU,
+    // 客户端没开时做不了任何事, 与其半途失败不如直接明确拒绝(恢复原版仍然允许)
+    if (!(await isClientRunning())) {
+      return {
+        ok: false,
+        blocked: true,
+        message: "英雄联盟未启动：请先启动客户端并登录到大厅，再开启语音包"
+      };
+    }
     const task = startApplyTask({
       locale,
       modules: asModules(body.modules),
