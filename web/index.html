@@ -65,14 +65,15 @@
         class="hidden"
         accept=".zip,.7z,.rar,.tar,.gz"
       />
-      <!-- 两个按钮 + 下面的品牌图: 品牌图独占一行, 居中在这两个按钮下方 -->
-      <div class="pack-actions">
-        <button type="button" class="btn soft-blue-btn" id="btnChooseLocale">语音包选择</button>
-        <button type="button" class="btn soft-blue-btn" id="btnPackDownload">下载语音包</button>
-        <button type="button" class="brand-banner" id="btnBrand" title="chosen1.lol · 稳定换肤" aria-label="LoLskins 稳定换肤">
-          <img src="/brand-logo.svg" alt="LoLskins 稳定换肤" draggable="false" />
-        </button>
-      </div>
+      <button type="button" class="btn soft-blue-btn" id="btnChooseLocale">语音包选择</button>
+      <button type="button" class="btn soft-blue-btn" id="btnPackDownload">下载语音包</button>
+    </div>
+
+    <!-- 品牌图: 独占一行、水平居中 —— 上面那行的排版完全不受影响 -->
+    <div class="brand-row">
+      <button type="button" class="brand-banner" id="btnBrand" title="chosen1.lol · 稳定换肤" aria-label="LoLskins 稳定换肤">
+        <img src="/brand-logo.svg" alt="LoLskins 稳定换肤" draggable="false" />
+      </button>
     </div>
 
     <!-- 三种情况：胶囊式舒适勾选框 -->

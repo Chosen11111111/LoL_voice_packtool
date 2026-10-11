@@ -893,26 +893,24 @@ button, input, select {
   background-color: rgba(100, 116, 139, 0.12);
 }
 
-/* ---------------- 两个按钮 + 品牌图(品牌图居中在它们下方) ---------------- */
-.pack-actions {
-  flex: 0 0 auto;          /* 宽度由两个按钮决定, 品牌图在这块里居中 */
+/* ---------------- 品牌图(两个按钮正中间的下面) ---------------- */
+.brand-row {
   display: flex;
-  flex-wrap: wrap;
-  justify-content: center;
-  align-items: center;
-  gap: 8px;
+  /* 两个按钮贴右边排, 所以这里也按右边定位:
+     实测(1000px 宽窗口) 语音包选择中心 700、下载语音包中心 805 => 两者中点 752;
+     卡片右内容边 853 => 品牌图右缘 = 右边缘 - 38px 时, 它的中心正好落在这两个按钮正中间。 */
+  justify-content: flex-end;
+  padding-right: 42px;
+  margin-top: 6px;
 }
 .brand-banner {
-  flex: 0 0 100%;          /* 独占第二行 */
-  display: flex;
-  justify-content: center;
+  display: inline-flex;
   padding: 0;
   background: none;
   border: none;
   cursor: pointer;
   transition: transform 0.16s ease, filter 0.16s ease;
   will-change: transform;
-  margin-top: 2px;
 }
 .brand-banner img {
   display: block;
