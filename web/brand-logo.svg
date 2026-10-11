@@ -1,21 +1,18 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="414" height="152" viewBox="0 0 414 152" role="img" aria-label="LoLskins 稳定换肤">
-  <title>LoLskins</title>
+<svg xmlns="http://www.w3.org/2000/svg" width="790" height="59" viewBox="0 33 790 59" role="img" aria-label="LoLskins 稳定换肤">
+  <title>LoLskins 稳定换肤</title>
 
   <!--
-    上下两行品牌字标(左对齐)。尺寸按几何规则 —— **英文大写高 = 中文汉字高**:
-      英文 LoLskins 74px -> 大写高 0.72em = 53px
-      中文 稳定换肤 66px -> 汉字高 0.86em = 57px
-      行距 10px, 上下留白 9/14px
-    界面显示 118px 宽(缩放 0.285) => 每行字高约 16px, 整块约 43px。
-    中文**不加描边**: 汉字细笔画多, 加描边反而糊(实测会被误读成别的字)。
-    英文用细描边做艺术字层次; 颜色取界面主色 #2563eb。
+    viewBox 从 y=33（大写字母顶）到 y=92（笔画实际底边, 不含字体下伸空白）——**上下不留空白**,
+    这样图片的底边就是文字的底线, 和旁边那排勾选胶囊的底边能真正对齐。
+    尺寸按几何规则: 英文 74px(大写字高 0.72em=53px) = 中文 62px(汉字高 0.86em=53px)。
+    界面里图片高 17px 时, 字高约 13px, 与胶囊里的文字差不多; 宽约 200px。
   -->
-  <g font-weight="700">
-    <text x="44" y="62" fill="#2563eb" stroke="#1d4ed8" stroke-width="1.4" stroke-linejoin="round" paint-order="stroke"
+  <g fill="#2563eb">
+    <text x="40" y="86" stroke="#1d4ed8" stroke-width="1.6" stroke-linejoin="round" paint-order="stroke"
           font-family="'Segoe UI Semibold','Segoe UI',system-ui,-apple-system,'Helvetica Neue',Arial,sans-serif"
           font-size="74" font-weight="800" letter-spacing="0.5">LoLskins</text>
-    <text x="44" y="129" fill="#2563eb"
+    <text x="380" y="86"
           font-family="'Microsoft YaHei','PingFang SC','Hiragino Sans GB','Noto Sans CJK SC',sans-serif"
-          font-size="66" letter-spacing="5">稳定换肤</text>
+          font-size="62" font-weight="700" letter-spacing="5">稳定换肤</text>
   </g>
 </svg>
