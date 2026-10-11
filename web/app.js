@@ -108,6 +108,9 @@
     return modules;
   }
 
+  /** 上次"开启语音包"的记录(重启后仍能显示当前生效的是什么)。 */
+  let lastApplied = null;
+
   let preferencesReady = false;
   let preferencesDirty = false;
   let preferenceRevision = 0;
@@ -336,6 +339,38 @@
     }
   }
 
+  const MODULE_NAMES = {
+    ingame_voice: "对局语音",
+    ingame_lang: "对局文字",
+    lobby_voice: "选人语音",
+    lobby_lang: "大厅语言"
+  };
+
+  /** 显示"上次开启"的记录: 重启后仍能看出当前生效的是什么, 并与磁盘真实状态对照给出提醒。 */
+  function renderLastApplied(ingame) {
+    const box = $("statusLastApplied");
+    if (!box) return;
+    if (!lastApplied || !lastApplied.locale) {
+      box.classList.add("hidden");
+      box.textContent = "";
+      return;
+    }
+    const localeName = (store.locales.find((item) => item.code === lastApplied.locale) || {}).name || lastApplied.locale;
+    const modules = (lastApplied.modules || []).map((item) => MODULE_NAMES[item] || item).join(" + ") || "（未记录模块）";
+    const when = lastApplied.at ? new Date(lastApplied.at) : null;
+    const stamp = when && !Number.isNaN(when.getTime())
+      ? (when.getMonth() + 1) + "-" + when.getDate() + " " + String(when.getHours()).padStart(2, "0") + ":" + String(when.getMinutes()).padStart(2, "0")
+      : "";
+    // 记录里含对局模块, 但磁盘上已是原版 -> 说明被还原过(或客户端更新覆盖了)
+    const ingameInRecord = (lastApplied.modules || []).some((item) => item === "ingame_voice" || item === "ingame_lang");
+    const stale = ingameInRecord && !ingame.is_voice_active && !ingame.is_lang_active;
+    box.classList.remove("hidden");
+    box.classList.toggle("warn", stale);
+    box.textContent = stale
+      ? "上次开启：" + localeName + "（" + modules + "）" + (stamp ? "· " + stamp : "") + " —— 对局文件现在是原版，可能已被还原或客户端更新覆盖，需要重新点『开启语音包』"
+      : "上次开启：" + localeName + "（" + modules + "）" + (stamp ? "· " + stamp : "") + (ingameInRecord ? "" : " —— 选人语音已自动接管");
+  }
+
   function renderStatusRow() {
     const state = store.state;
     if (!state) return;
@@ -361,6 +396,8 @@
     const liveLocale = live.locale || lobby.locale || "";
     const lobbyLocaleObj = store.locales.find((item) => item.code === liveLocale);
     const lobbyLocaleName = lobbyLocaleObj ? lobbyLocaleObj.name : liveLocale;
+    renderLastApplied(ingame);
+
     $("cardStatusLobby").classList.toggle("active", lobbyActive);
     $("tagStatusLobby").textContent = lobbyActive ? "实时播报" : "未开启";
     const playbackNote = live.playback_failed
@@ -394,6 +431,7 @@
     renderLocaleRow();
     renderStatusRow();
     setBusy(Boolean(Object.keys(store.state.busy || {}).length));
+    lastApplied = stateRes.last_applied || null;
     await loadClientVoice();
   }
 
@@ -791,8 +829,8 @@
   let volumeBeforeMute = volume > 0 ? volume : 60;
   // 是否跟随客户端音量(总音量 × 音效), 默认开启; 手动拖过滑杆就自动关掉
   let followClient = legacyPreference(FOLLOW_KEY) !== "0";
-  // 播报固定延迟(毫秒): 官方台词比我们晚一点时, 用它对齐(用户要的"加一个固定延迟")
-  let voiceDelayMs = 0;
+  // 播报固定延迟(毫秒): 实测 1000ms 最贴合官方台词的节奏, 作为固定默认值
+  let voiceDelayMs = 1000;
   let pendingPlayTimer = null;
 
   function setVoiceDelay(ms, persist) {

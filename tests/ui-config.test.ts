@@ -142,3 +142,9 @@ test("播报延迟: 写入配置并在新窗口恢复(含边界钳制)", async (
   second.el("delayInput").handlers.change();
   assert.equal(second.el("delayInput").value, "3000");
 });
+
+test("播报延迟默认 1000ms(把实测最好用的值固定下来)", async () => {
+  const config: any = { defaultLocale: "ja_JP", ui: { selectedLocale: "", modules: [], volume: 60, followClient: false, region: "auto" } };
+  const page = await openWindow(config);
+  assert.equal(page.el("delayInput").value, "1000");
+});

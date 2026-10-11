@@ -242,11 +242,20 @@ export function startApplyTask(request: ApplyRequest): TaskSnapshot {
     }
     const locale = request.locale || appConfig.defaultLocale;
     const modules: ModuleId[] = request.modules?.length ? request.modules : defaultApplyModules(appConfig);
-    return applyAll(env, {
+    const result = await applyAll(env, {
       locale, modules,
       restartClient: request.restartClient ?? appConfig.autoRestartClient,
       progress: handle.progress, signal: handle.signal, lobbyLang: request.lobbyLang
     });
+    // 记住"上次开启": 重启工具后界面要能如实说明现在生效的是什么(否则会显示"国服原版"让人误以为没生效)
+    if (result.ok) {
+      try {
+        await saveConfig({ ui: { lastApplied: { locale, modules: [...modules], at: new Date().toISOString() } } });
+      } catch (error) {
+        logger.warn(`记录上次开启失败: ${String((error as Error).message ?? error)}`);
+      }
+    }
+    return result;
   });
 }
 
@@ -262,10 +271,19 @@ export function startRestoreTask(request: RestoreRequest = {}): TaskSnapshot {
     const env = await buildEnvFromConfig(appConfig);
     const modules: ModuleId[] = request.modules?.length ? request.modules : await defaultRestoreModules(appConfig, env);
 
-    return restoreAll(env, {
+    const result = await restoreAll(env, {
       modules, restartClient: request.restartClient ?? appConfig.autoRestartClient,
       progress: handle.progress, signal: handle.signal
     });
+    // 还原成功就把"上次开启"记录清掉(否则界面会显示一个已经失效的状态)
+    if (result.ok) {
+      try {
+        await saveConfig({ ui: { lastApplied: null } });
+      } catch (error) {
+        logger.warn(`清除上次开启记录失败: ${String((error as Error).message ?? error)}`);
+      }
+    }
+    return result;
   });
 }
 

@@ -393,5 +393,10 @@ export async function startApiServer(
 export async function stateOnce(): Promise<unknown> {
   const config = await loadConfig();
   const env = await buildEnvFromConfig(config);
-  return { dashboard: await getDashboard(), env: { voiceRoot: env.voiceRoot, baseLocale: env.baseLocale, region: env.region } };
+  return {
+    dashboard: await getDashboard(),
+    env: { voiceRoot: env.voiceRoot, baseLocale: env.baseLocale, region: env.region },
+    // 上次"开启语音包"的记录: 重启后界面据此说明当前生效的是什么
+    last_applied: config.ui?.lastApplied ?? null
+  };
 }

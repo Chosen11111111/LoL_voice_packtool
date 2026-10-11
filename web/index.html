@@ -36,7 +36,7 @@
         <button type="button" class="hud-mini" id="btnAlignVolume" title="播报音量跟随客户端总音量">对齐</button>
         <label class="hud-delay" title="播报延迟：官方台词稍晚时用它对齐（0 = 立即播）">
           延迟
-          <input type="number" id="delayInput" min="0" max="3000" step="50" value="0" aria-label="播报延迟(毫秒)" />
+          <input type="number" id="delayInput" min="0" max="3000" step="50" value="1000" aria-label="播报延迟(毫秒)" />
           ms
         </label>
       </div>
@@ -140,6 +140,8 @@
         <strong class="status-badge" id="statusLobbyVoice">读取中…</strong>
       </div>
     </div>
+    <!-- 上次"开启语音包"的记录: 重启后仍能看出当前生效的是什么 -->
+    <div class="status-last-applied hidden" id="statusLastApplied"></div>
   </section>
 
   <!-- 第四排：恢复按钮和开启按钮 -->

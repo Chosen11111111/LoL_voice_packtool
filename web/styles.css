@@ -949,3 +949,21 @@ button, input, select {
   border-color: var(--blue-border);
   box-shadow: 0 0 0 2px var(--blue-ring);
 }
+
+/* 上次开启记录(状态区下方一行) */
+.status-last-applied {
+  margin-top: 8px;
+  padding: 6px 10px;
+  font-size: 11px;
+  color: var(--muted);
+  border: 1px solid var(--blue-border);
+  border-radius: var(--radius-sm);
+  background: var(--blue-soft);
+  line-height: 1.5;
+}
+
+.status-last-applied.warn {
+  color: #92400e;
+  border-color: rgba(217, 119, 6, 0.35);
+  background: rgba(217, 119, 6, 0.08);
+}
