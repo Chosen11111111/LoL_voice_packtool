@@ -899,3 +899,25 @@ button, input, select {
   text-align: right;
   font-variant-numeric: tabular-nums;
 }
+
+.hud-mini {
+  font-size: 10.5px;
+  padding: 3px 7px;
+  border-radius: var(--radius-pill);
+  border: 1px solid var(--control-border);
+  background: var(--control-bg);
+  color: var(--muted);
+  cursor: pointer;
+  box-shadow: var(--control-shadow);
+  transition: background 0.16s ease, border-color 0.16s ease, color 0.16s ease;
+}
+
+.hud-mini[data-on="true"] {
+  color: var(--blue);
+  border-color: var(--blue-border);
+  background: var(--blue-soft);
+}
+
+.hud-mini:hover {
+  background: var(--control-hover);
+}

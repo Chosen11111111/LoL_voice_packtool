@@ -3,7 +3,14 @@ import assert from "node:assert/strict";
 import fs from "node:fs/promises";
 import { test } from "node:test";
 import { cleanupSuite, makeTempDir, useSuite } from "./helpers.ts";
-import { BAN_KEY, PICK_KEY, deriveSuppressed, supportsVoiceToggles } from "../src/modules/clientVoice.ts";
+import {
+  BAN_KEY,
+  PICK_KEY,
+  computeAlignedVolume,
+  deriveSuppressed,
+  readVolumes,
+  supportsVoiceToggles
+} from "../src/modules/clientVoice.ts";
 
 useSuite("clientVoice");
 
@@ -29,4 +36,18 @@ test("键名与客户端 schema 一致(改错名字就会静音失败)", () => {
 
 test.after(async () => {
   await cleanupSuite();
+});
+
+test("computeAlignedVolume: 播报音量 = 客户端总音量 × 音效", () => {
+  assert.equal(computeAlignedVolume({ master: 100, sfx: 100, voice: 100 }), 100);
+  assert.equal(computeAlignedVolume({ master: 85, sfx: 95, voice: 47.5 }), 81);
+  assert.equal(computeAlignedVolume({ master: 50, sfx: 50, voice: 100 }), 25);
+  assert.equal(computeAlignedVolume({ master: 0, sfx: 95, voice: 47.5 }), 5, "下限 5%, 避免静音成 0");
+  assert.equal(computeAlignedVolume(null), null);
+});
+
+test("readVolumes: 客户端没写过的键按默认 100 处理", () => {
+  assert.deepEqual(readVolumes({ masterVolume: 42 }), { master: 42, sfx: 100, voice: 100 });
+  assert.deepEqual(readVolumes({ masterVolume: 85, sfxVolume: 95, voiceVolume: 47.5 }), { master: 85, sfx: 95, voice: 47.5 });
+  assert.equal(readVolumes(null), null);
 });

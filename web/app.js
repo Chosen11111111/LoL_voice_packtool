@@ -667,10 +667,22 @@
   /* --------------------------------- 播报音量 / 触发方式(右上角) */
 
   const VOLUME_KEY = "leagueVoice.volume";
+  const FOLLOW_KEY = "leagueVoice.followClient";
 
   let volume = Number(localStorage.getItem(VOLUME_KEY));
   if (!Number.isFinite(volume)) volume = 60;
   let volumeBeforeMute = volume > 0 ? volume : 60;
+  // 是否跟随客户端音量(总音量 × 音效), 默认开启; 手动拖过滑杆就自动关掉
+  let followClient = localStorage.getItem(FOLLOW_KEY) !== "0";
+
+  function applyFollowLabel() {
+    const button = $("btnAlignVolume");
+    if (!button) return;
+    button.dataset.on = followClient ? "true" : "false";
+    button.title = followClient
+      ? "已开启：播报音量跟随客户端音量（点一下改为手动）"
+      : "手动音量（点一下改为跟随客户端音量）";
+  }
 
   function applyVolume() {
     lobbyAudio.volume = Math.max(0, Math.min(1, volume / 100));
@@ -708,21 +720,40 @@
       button.title = clientVoice.message || "没读到客户端的音频设置（客户端没在运行？）";
       return;
     }
-    button.dataset.mode = clientVoice.suppressed ? "on" : "off";
-    button.textContent = clientVoice.suppressed ? "原版台词：已静音" : "原版台词：开着";
+    button.dataset.mode = clientVoice.auto ? "on" : "off";
+    if (!clientVoice.auto) {
+      button.textContent = "原版台词：不自动";
+      button.title = "已关闭自动静音：客户端会照常念原版台词。点一下开启自动闭环。";
+      return;
+    }
+    button.textContent = clientVoice.suppressed ? "原版台词：自动静音中" : "原版台词：自动";
     button.title = clientVoice.suppressed
-      ? "客户端自己念的原版台词已关闭（音效与音乐不受影响）。点一下恢复。"
-      : "客户端自己念的原版台词还开着，会和语音包台词叠在一起。点一下关闭。";
+      ? "选人期间已自动关闭客户端原版台词（音效与音乐不受影响），选人结束后会自动打开。点一下关闭这套自动逻辑。"
+      : "已开启自动闭环：启动选人语音时自动静音客户端原版台词，选人结束自动打开。";
   }
 
   async function loadClientVoice() {
     try {
       const data = await request("/api/client-voice");
-      clientVoice = { supported: Boolean(data.supported), suppressed: Boolean(data.suppressed), message: data.message || "" };
+      clientVoice = {
+        supported: Boolean(data.supported),
+        suppressed: Boolean(data.suppressed),
+        auto: data.auto !== false,
+        aligned: Number(data.aligned_volume) || 0,
+        volumes: data.volumes || null,
+        message: data.message || ""
+      };
     } catch {
-      clientVoice = { supported: false, suppressed: false, message: "读取失败" };
+      clientVoice = { supported: false, suppressed: false, auto: true, aligned: 0, volumes: null, message: "读取失败" };
     }
     applyClientVoiceLabel();
+    // 音量对齐: 跟随客户端音量时, 用它的总音量 × 音效来设置播报音量
+    if (followClient && clientVoice.aligned > 0 && clientVoice.aligned !== volume) {
+      setVolume(clientVoice.aligned, false);
+      const volumes = clientVoice.volumes || { master: "?", sfx: "?" };
+      log("播报音量已按客户端音量对齐：" + clientVoice.aligned + "%（总音量 " + volumes.master + "% × 音效 " + volumes.sfx + "%）");
+    }
+    applyFollowLabel();
   }
 
   function initHud() {
@@ -732,12 +763,20 @@
     const clientVoiceButton = $("btnClientVoice");
     if (clientVoiceButton) {
       clientVoiceButton.addEventListener("click", async () => {
-        const next = !clientVoice.suppressed;
+        // 这个按钮切换"选人期间自动静音"这套闭环
+        const next = !clientVoice.auto;
         clientVoiceButton.disabled = true;
         try {
-          const data = await request("/api/client-voice", { method: "POST", body: { suppressed: next } });
-          clientVoice = { supported: Boolean(data.supported), suppressed: Boolean(data.suppressed), message: data.message || "" };
-          log(data.message || (next ? "已静音客户端原版台词" : "已恢复客户端原版台词"));
+          const data = await request("/api/client-voice", { method: "POST", body: { auto: next } });
+          clientVoice = {
+            supported: Boolean(data.supported),
+            suppressed: Boolean(data.suppressed),
+            auto: data.auto !== false,
+            aligned: Number(data.aligned_volume) || 0,
+            volumes: data.volumes || null,
+            message: data.message || ""
+          };
+          log(data.message || (next ? "已开启自动静音" : "已关闭自动静音"));
         } catch (error) {
           log("切换客户端原版台词失败：" + (error && error.message ? error.message : error), "warn");
         } finally {
@@ -748,7 +787,36 @@
     }
     const slider = $("volumeSlider");
     if (slider) {
-      slider.addEventListener("input", () => setVolume(Number(slider.value), true));
+      slider.addEventListener("input", () => {
+        // 手动拖过滑杆就不再让客户端音量覆盖
+        if (followClient) {
+          followClient = false;
+          try {
+            localStorage.setItem(FOLLOW_KEY, "0");
+          } catch {
+            /* ignore */
+          }
+          applyFollowLabel();
+        }
+        setVolume(Number(slider.value), true);
+      });
+    }
+    const align = $("btnAlignVolume");
+    if (align) {
+      align.addEventListener("click", () => {
+        followClient = !followClient;
+        try {
+          localStorage.setItem(FOLLOW_KEY, followClient ? "1" : "0");
+        } catch {
+          /* ignore */
+        }
+        applyFollowLabel();
+        if (followClient) {
+          void loadClientVoice();
+        } else {
+          log("已改为手动音量");
+        }
+      });
     }
     const mute = $("btnMuteToggle");
     if (mute) {
@@ -842,6 +910,8 @@
       if (data && data.ok) {
         log("选人语音监听已启动：" + data.message + (store.selected ? "" : "（未选语音包，用默认语种）"));
         renderStatusRow();
+        // 监听启动时后端会按闭环静音客户端原版台词, 这里同步一下界面状态与音量对齐
+        void loadClientVoice();
       } else if (data) {
         lobbyLiveLocale = "";
         log("选人语音监听未启动：" + (data.message || ""));
@@ -859,6 +929,8 @@
     try {
       await fetch("/api/lobby-live/stop", { method: "POST" });
       log("选人语音监听已停止");
+      // 关闭时后端会还原原版台词, 同步界面
+      void loadClientVoice();
     } catch {
       /* ignore */
     }

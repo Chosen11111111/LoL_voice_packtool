@@ -12,6 +12,7 @@ import path from "node:path";
 import { createLogger } from "../core/logger.ts";
 import { isDirectory, isFile } from "../core/fsx.ts";
 import { watchChampSelect, type ChampSelectPresence, type StopWatch } from "../core/win/lcuEvents.ts";
+import { restoreAfterChampSelect, suppressForChampSelect } from "./clientVoice.ts";
 import {
   ChampSelectTracker,
   VOICE_TRIGGER,
@@ -93,6 +94,8 @@ export class LobbyLiveEngine {
   private pollLog: string[] = [];
   /** 本轮选人是否已经建立基线(建立后才有事件)。 */
   private baselined = false;
+  /** 当前是否处于选人流程(用于判断"选人结束"从而还原原版台词)。 */
+  private inChampSelect = false;
   /** 窗口回报的播放结果。 */
   private lastPlayback: PlaybackReport | null = null;
   private playbackOk = 0;
@@ -153,16 +156,26 @@ export class LobbyLiveEngine {
     this.pollLog = [];
     this.lastSession = null;
     this.baselined = false;
+    this.inChampSelect = false;
     const watch = options.watcher ?? watchChampSelect;
     this.stopWatch = watch({
       fastIntervalMs: options.fastIntervalMs,
       idleIntervalMs: options.idleIntervalMs,
       onPresence: (presence) => {
         this.presence = presence;
-        if (presence !== "in") {
+        if (presence === "in") {
+          this.inChampSelect = true;
+          // 进入/保持在选人: 按闭环确保客户端原版台词是静音的(幂等)
+          void suppressForChampSelect();
+        } else {
           // 离开选人: 清空去重状态, 下一局重新建基线
           this.tracker.reset();
           this.baselined = false;
+          // 只有"真的从选人里出来"才还原原版台词(启动时第一次收到 out 不算)
+          if (this.inChampSelect) {
+            this.inChampSelect = false;
+            void restoreAfterChampSelect("选人结束");
+          }
         }
       },
       onPoll: (poll) => {
@@ -173,6 +186,8 @@ export class LobbyLiveEngine {
     });
     this.message = `正在监听选人流程，使用 ${options.locale} 的语音包（${this.available} 个音频，锁定才播）`;
     logger.info(this.message);
+    // 闭环第 1 步: 启动就静音客户端原版台词(禁用阶段来得很快, 不能等到进选人)
+    void suppressForChampSelect();
     return { ok: true, message: this.message, state: this.state() };
   }
 
@@ -250,6 +265,8 @@ export class LobbyLiveEngine {
     if (this.stopWatch) {
       this.stopWatch();
       this.stopWatch = null;
+      // 闭环第 3 步: 关闭功能时还原原版台词
+      void restoreAfterChampSelect("关闭选人语音");
     }
     this.options = null;
     this.presence = "offline";

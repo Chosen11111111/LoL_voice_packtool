@@ -9,7 +9,7 @@ import { isDirectory } from "../core/fsx.ts";
 import type { ModuleId } from "../core/types.ts";
 import { invalidateConfigCache } from "../core/config.ts";
 import { createLogger, setLogLevel, type LogLevel } from "../core/logger.ts";
-import { clientVoiceState, setClientOriginalVoice } from "../modules/clientVoice.ts";
+import { clientVoiceState, setAutoSuppress, setClientOriginalVoice } from "../modules/clientVoice.ts";
 
 const logger = createLogger("api");
 import { Router, startHttpServer, type RunningServer } from "./http.ts";
@@ -106,9 +106,16 @@ export function buildRouter(): Router {
   /** 客户端原版选人台词(音效/音乐不受影响)的开关状态。 */
   router.get("/api/client-voice", async () => ({ ok: true, ...(await clientVoiceState()) }));
 
-  /** 静音/恢复客户端原版选人台词。 */
+  /**
+   * 静音/恢复客户端原版选人台词。
+   * body.auto 存在时切换"选人期间自动静音"闭环; 否则按 body.suppressed 手动静音/还原。
+   */
   router.post("/api/client-voice", async (context) => {
     const body = asRecord(context.body);
+    if (body.auto !== undefined) {
+      const result = await setAutoSuppress(body.auto !== false);
+      return { ok: result.ok, ...result.state, message: result.message };
+    }
     const suppress = body.suppressed !== false;
     const result = await setClientOriginalVoice(suppress);
     return { ok: result.ok, ...result.state, message: result.message };
