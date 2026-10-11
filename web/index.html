@@ -20,26 +20,6 @@
   <section class="row-card glass">
     <div class="row-head">
       <span class="row-label">游戏路径</span>
-      <!-- 选人台词播报: 触发方式 + 音量(右上角) -->
-      <div class="hud" id="voiceHud">
-        <button type="button" class="hud-pill" id="btnClientVoice" title="客户端自己念的原版台词（选人/禁用）">原版台词：读取中…</button>
-        <button type="button" class="hud-icon" id="btnMuteToggle" title="本工具播报音量 静音 / 取消静音" aria-label="静音切换">
-          <svg viewBox="0 0 24 24" width="15" height="15" aria-hidden="true">
-            <path d="M4 9.5h3L11 6v12l-4-3.5H4z" fill="currentColor" />
-            <path id="muteArc1" d="M14.4 9.2a4.2 4.2 0 0 1 0 5.6" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" />
-            <path id="muteArc2" d="M17 6.8a7.4 7.4 0 0 1 0 10.4" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" />
-            <path id="muteCross" d="M15 9.5l5 5M20 9.5l-5 5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" />
-          </svg>
-        </button>
-        <input type="range" class="hud-volume" id="volumeSlider" min="0" max="100" step="1" value="60" aria-label="播报音量" />
-        <span class="hud-value" id="volumeValue">60%</span>
-        <button type="button" class="hud-mini" id="btnAlignVolume" title="播报音量跟随客户端总音量">对齐</button>
-        <label class="hud-delay" title="播报延迟：官方台词稍晚时用它对齐（0 = 立即播）">
-          延迟
-          <input type="number" id="delayInput" min="0" max="3000" step="50" value="1000" aria-label="播报延迟(毫秒)" />
-          ms
-        </label>
-      </div>
     </div>
     <div class="control-bar">
       <div class="field-shell" id="pathFieldShell">
@@ -140,8 +120,6 @@
         <strong class="status-badge" id="statusLobbyVoice">读取中…</strong>
       </div>
     </div>
-    <!-- 上次"开启语音包"的记录: 重启后仍能看出当前生效的是什么 -->
-    <div class="status-last-applied hidden" id="statusLastApplied"></div>
   </section>
 
   <!-- 第四排：恢复按钮和开启按钮 -->

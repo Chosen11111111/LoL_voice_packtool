@@ -345,29 +345,35 @@
     lobby_lang: "大厅语言"
   };
 
-  /** 显示"上次开启"的记录: 重启后仍能看出当前生效的是什么, 并与磁盘真实状态对照给出提醒。 */
-  function renderLastApplied(ingame) {
-    const box = $("statusLastApplied");
-    if (!box) return;
-    if (!lastApplied || !lastApplied.locale) {
-      box.classList.add("hidden");
-      box.textContent = "";
-      return;
-    }
+  let lastAppliedLogged = "";
+  let lastAppliedWarned = "";
+
+  /** "上次开启"的简短文案(用于悬停提示与日志)。 */
+  function lastAppliedText() {
+    if (!lastApplied || !lastApplied.locale) return "";
     const localeName = (store.locales.find((item) => item.code === lastApplied.locale) || {}).name || lastApplied.locale;
-    const modules = (lastApplied.modules || []).map((item) => MODULE_NAMES[item] || item).join(" + ") || "（未记录模块）";
+    const modules = (lastApplied.modules || []).map((item) => MODULE_NAMES[item] || item).join("+") || "未记录";
     const when = lastApplied.at ? new Date(lastApplied.at) : null;
     const stamp = when && !Number.isNaN(when.getTime())
       ? (when.getMonth() + 1) + "-" + when.getDate() + " " + String(when.getHours()).padStart(2, "0") + ":" + String(when.getMinutes()).padStart(2, "0")
       : "";
-    // 记录里含对局模块, 但磁盘上已是原版 -> 说明被还原过(或客户端更新覆盖了)
+    return "上次开启：" + localeName + "（" + modules + "）" + (stamp ? " · " + stamp : "");
+  }
+
+  /**
+   * 有异常时才提示(默认不占地方, 保持三格状态区风格统一):
+   * 记录里含对局模块但磁盘已是原版 -> 说明被还原过或被客户端更新覆盖。
+   */
+  function warnIfLastAppliedStale(ingame) {
+    if (!lastApplied || !lastApplied.locale) return;
     const ingameInRecord = (lastApplied.modules || []).some((item) => item === "ingame_voice" || item === "ingame_lang");
-    const stale = ingameInRecord && !ingame.is_voice_active && !ingame.is_lang_active;
-    box.classList.remove("hidden");
-    box.classList.toggle("warn", stale);
-    box.textContent = stale
-      ? "上次开启：" + localeName + "（" + modules + "）" + (stamp ? "· " + stamp : "") + " —— 对局文件现在是原版，可能已被还原或客户端更新覆盖，需要重新点『开启语音包』"
-      : "上次开启：" + localeName + "（" + modules + "）" + (stamp ? "· " + stamp : "") + (ingameInRecord ? "" : " —— 选人语音已自动接管");
+    if (!ingameInRecord) return;
+    if (ingame.is_voice_active || ingame.is_lang_active) return;
+    const text = lastAppliedText();
+    if (lastAppliedWarned === text) return;
+    lastAppliedWarned = text;
+    log(text + " —— 但游戏内文件现在是原版，可能已被还原或被客户端更新覆盖，需要重新点『开启语音包』");
+    setStatus("上次开启的对局补丁已失效，需要重新点『开启语音包』", "warn", 0);
   }
 
   function renderStatusRow() {
@@ -395,28 +401,29 @@
     const liveLocale = live.locale || lobby.locale || "";
     const lobbyLocaleObj = store.locales.find((item) => item.code === liveLocale);
     const lobbyLocaleName = lobbyLocaleObj ? lobbyLocaleObj.name : liveLocale;
-    renderLastApplied(ingame);
-
     $("cardStatusLobby").classList.toggle("active", lobbyActive);
     // 这一格的口径是"状态": 上次开启时勾了选人语音, 状态就是开启
     const lobbyStateOn = Boolean(lastApplied && (lastApplied.modules || []).includes("lobby_voice"));
     $("tagStatusLobby").textContent = lobbyActive ? "实时播报" : lobbyStateOn ? "开启(待命)" : "未开启";
-    const playbackNote = live.playback_failed
-      ? "｜播放失败 " + live.playback_failed + " 次：" + ((live.last_playback && live.last_playback.error) || "未知")
-      : live.playback_ok
-        ? "｜已播放 " + live.playback_ok + " 次"
-        : "";
-    const clientNote = clientVoice && clientVoice.supported
-      ? "｜原版台词：" + (clientVoice.suppressed ? "已静音" : "开着")
-      : clientRunning === false
-        ? "｜原版台词：客户端未启动"
-        : "";
-    $("statusLobbyVoice").textContent = lobbyActive
-      ? "【监听中：" + (lobbyLocaleName || "默认语种") + "】" +
-        (live.presence === "in" ? "选人进行中" : "等待进入选人") + "｜已播报 " + live.played + " 条" + playbackNote + clientNote
-      : $("modLobbyVoice").checked
-        ? "未开启（勾选了选人语音，点『开启语音包』后才开始）"
-        : "未开启（未勾选选人语音）";
+    // 一行短句, 与另外两格同款; 细节收进悬停提示, 不占版面
+    $("statusLobbyVoice").textContent = lobbyStateOn ? "【当前为：" + (lobbyLocaleName || liveLocale || "已开启") + "】" : "【当前为：未开启】";
+    const details = [
+      "状态：" + (lobbyStateOn ? "开启" : "未开启"),
+      lobbyActive ? (live.presence === "in" ? "正在选人, 实时播报中" : "监视中, 等待进入选人") : "监听未运行",
+      "已播报 " + (live.played || 0) + " 条",
+      clientVoice && clientVoice.supported ? "原版台词：" + (clientVoice.suppressed ? "已静音" : "开着") : clientRunning === false ? "原版台词：客户端未启动" : "",
+      live.playback_failed ? "播放失败 " + live.playback_failed + " 次（" + ((live.last_playback && live.last_playback.error) || "未知") + "）" : "",
+      lastAppliedText()
+    ].filter(Boolean);
+    $("cardStatusLobby").title = details.join("\n");
+
+    // 界面不再放这些字, 但信息不丢: 上次开启记录写进日志, 失效时给一条提醒
+    warnIfLastAppliedStale(ingame);
+    const record = lastAppliedText();
+    if (record && record !== lastAppliedLogged) {
+      lastAppliedLogged = record;
+      log(record);
+    }
   }
 
   async function refresh() {
@@ -818,7 +825,14 @@
   let lobbyLiveLocale = "";
   let lastVoice = { kind: "choose", championId: 0 };
 
-  /* --------------------------------- 播报音量 / 触发方式(右上角) */
+  /* --------------------------------- 播报音量 / 延迟(不再显示在界面上)
+
+     这几个值已经调好, 界面上不再放控件, 改配置即可(重启工具生效):
+       config.json -> ui.volume       播报音量(0-100)
+       config.json -> ui.voiceDelayMs 播报延迟, 默认 1000ms
+       config.json -> ui.followClient true = 音量跟随客户端总音量
+     客户端原版台词的自动静音闭环由后端默认开启, 可用 POST /api/client-voice {"auto":false} 关掉。
+  */
 
   const VOLUME_KEY = "leagueVoice.volume";
   const FOLLOW_KEY = "leagueVoice.followClient";

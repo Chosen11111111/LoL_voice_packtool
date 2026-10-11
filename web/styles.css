@@ -822,75 +822,15 @@ button, input, select {
 }
 
 /* ---------------- 右上角播报控件(触发方式 + 音量) ---------------- */
-.hud {
-  display: flex;
-  align-items: center;
-  gap: 7px;
-}
 
-.hud-pill,
-.hud-icon {
-  border: 1px solid var(--control-border);
-  background: var(--control-bg);
-  color: var(--text);
-  border-radius: var(--radius-pill);
-  box-shadow: var(--control-shadow);
-  cursor: pointer;
-  transition: background 0.16s ease, border-color 0.16s ease, color 0.16s ease;
-  -webkit-backdrop-filter: blur(12px);
-  backdrop-filter: blur(12px);
-}
 
-.hud-pill {
-  font-size: 11px;
-  padding: 4px 10px;
-  letter-spacing: 0.2px;
-  white-space: nowrap;
-}
 
-.hud-pill[data-mode="lock"] {
-  color: var(--blue);
-  border-color: var(--blue-border);
-  background: var(--blue-soft);
-}
 
-.hud-pill:hover,
-.hud-icon:hover {
-  background: var(--control-hover);
-  border-color: var(--control-border-hover);
-}
 
-.hud-icon {
-  width: 26px;
-  height: 26px;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  padding: 0;
-  color: var(--muted);
-}
 
-.hud-icon[data-muted="true"] {
-  color: var(--danger);
-  border-color: rgba(220, 38, 38, 0.3);
-  background: rgba(220, 38, 38, 0.06);
-}
 
-.hud-icon[data-muted="true"] #muteArc1,
-.hud-icon[data-muted="true"] #muteArc2 {
-  display: none;
-}
 
-.hud-icon:not([data-muted="true"]) #muteCross {
-  display: none;
-}
 
-.hud-volume {
-  width: 66px;
-  height: 16px;
-  accent-color: var(--blue);
-  cursor: pointer;
-}
 
 .hud-value {
   font-size: 10.5px;
@@ -900,70 +840,11 @@ button, input, select {
   font-variant-numeric: tabular-nums;
 }
 
-.hud-mini {
-  font-size: 10.5px;
-  padding: 3px 7px;
-  border-radius: var(--radius-pill);
-  border: 1px solid var(--control-border);
-  background: var(--control-bg);
-  color: var(--muted);
-  cursor: pointer;
-  box-shadow: var(--control-shadow);
-  transition: background 0.16s ease, border-color 0.16s ease, color 0.16s ease;
-}
 
-.hud-mini[data-on="true"] {
-  color: var(--blue);
-  border-color: var(--blue-border);
-  background: var(--blue-soft);
-}
 
-.hud-mini:hover {
-  background: var(--control-hover);
-}
 
-.hud-delay {
-  display: inline-flex;
-  align-items: center;
-  gap: 3px;
-  font-size: 10.5px;
-  color: var(--muted);
-  white-space: nowrap;
-}
 
-.hud-delay input {
-  width: 46px;
-  padding: 2px 4px;
-  font-size: 10.5px;
-  text-align: right;
-  color: var(--text);
-  border: 1px solid var(--control-border);
-  border-radius: var(--radius-sm);
-  background: var(--control-bg);
-  box-shadow: var(--control-shadow);
-  font-variant-numeric: tabular-nums;
-}
 
-.hud-delay input:focus {
-  outline: none;
-  border-color: var(--blue-border);
-  box-shadow: 0 0 0 2px var(--blue-ring);
-}
 
 /* 上次开启记录(状态区下方一行) */
-.status-last-applied {
-  margin-top: 8px;
-  padding: 6px 10px;
-  font-size: 11px;
-  color: var(--muted);
-  border: 1px solid var(--blue-border);
-  border-radius: var(--radius-sm);
-  background: var(--blue-soft);
-  line-height: 1.5;
-}
 
-.status-last-applied.warn {
-  color: #92400e;
-  border-color: rgba(217, 119, 6, 0.35);
-  background: rgba(217, 119, 6, 0.08);
-}
