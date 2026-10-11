@@ -2,21 +2,21 @@
   <title>LoLskins 稳定换肤</title>
 
   <!--
-    为什么这样定尺寸(显示宽度 208px, 缩放 0.263):
-      英文 78px: 大写字母高约 0.72em -> 显示约 14.8px
-      中文 66px: 汉字高约 0.86em   -> 显示约 14.9px
-    两者**视觉等高**, 所以大小协调; 换字体也不会跑版(用 textLength 锁宽)。
-    颜色取界面主色 #2563eb(浅蓝), 描边用深一点的蓝, 做出艺术字的层次。
+    尺寸规则(印刷业标准做法): **英文大写字母高 = 中文汉字高**。
+      英文字体 74px -> 大写高约 0.72em = 53px
+      中文字体 62px -> 汉字高约 0.86em = 53px      (0.86/0.72 ≈ 1.19, 所以中文号数要更小)
+    显示宽度 208px、缩放 0.263 => 两者都约 14px 高, 视觉等重。
+    (试过 78/66 会被看成"英文偏大", 62/68 会被看成"中文偏大", 这条几何规则最稳。)
+    颜色取界面主色 #2563eb; 描边 #1d4ed8 做出艺术字层次。
   -->
-  <g fill="#2563eb" stroke="#1d4ed8" stroke-width="2.4" stroke-linejoin="round" paint-order="stroke"
-     font-weight="900" text-anchor="start">
-    <text x="60" y="84"
-          font-family="'Segoe UI Black','Arial Black','Segoe UI',system-ui,-apple-system,sans-serif"
-          font-size="78" letter-spacing="1"
-          textLength="345" lengthAdjust="spacingAndGlyphs">LoLskins</text>
-    <text x="445" y="84"
+  <g fill="#2563eb" stroke="#1d4ed8" stroke-width="2.2" stroke-linejoin="round" paint-order="stroke">
+    <text x="76" y="84"
+          font-family="'Segoe UI Semibold','Segoe UI',system-ui,-apple-system,'Helvetica Neue',Arial,sans-serif"
+          font-size="74" font-weight="800" letter-spacing="0.5"
+          textLength="330" lengthAdjust="spacingAndGlyphs">LoLskins</text>
+    <text x="436" y="84"
           font-family="'Microsoft YaHei','PingFang SC','Hiragino Sans GB','Noto Sans CJK SC',sans-serif"
-          font-size="66" letter-spacing="5"
-          textLength="270" lengthAdjust="spacingAndGlyphs">稳定换肤</text>
+          font-size="62" font-weight="700" letter-spacing="6"
+          textLength="260" lengthAdjust="spacingAndGlyphs">稳定换肤</text>
   </g>
 </svg>
