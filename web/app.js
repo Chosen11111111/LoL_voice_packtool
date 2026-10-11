@@ -247,7 +247,7 @@
   function selectLocaleValue(code, notify) {
     store.selected = code || "";
     if (notify) void savePreferences();
-    void syncLobbyLive();
+    // 注意: 选择语种不改变"选人语音"的开关状态 —— 那要点了"开启语音包"才算
     const select = $("localeSelect");
     select.value = store.selected;
 
@@ -286,7 +286,6 @@
     emptyOpt.onclick = () => {
       closeCustomDropdown();
       selectLocaleValue("", true);
-      void stopLobbyLive();
     };
     menu.appendChild(emptyOpt);
 
@@ -399,7 +398,9 @@
     renderLastApplied(ingame);
 
     $("cardStatusLobby").classList.toggle("active", lobbyActive);
-    $("tagStatusLobby").textContent = lobbyActive ? "实时播报" : "未开启";
+    // 这一格的口径是"状态": 上次开启时勾了选人语音, 状态就是开启
+    const lobbyStateOn = Boolean(lastApplied && (lastApplied.modules || []).includes("lobby_voice"));
+    $("tagStatusLobby").textContent = lobbyActive ? "实时播报" : lobbyStateOn ? "开启(待命)" : "未开启";
     const playbackNote = live.playback_failed
       ? "｜播放失败 " + live.playback_failed + " 次：" + ((live.last_playback && live.last_playback.error) || "未知")
       : live.playback_ok
@@ -413,7 +414,9 @@
     $("statusLobbyVoice").textContent = lobbyActive
       ? "【监听中：" + (lobbyLocaleName || "默认语种") + "】" +
         (live.presence === "in" ? "选人进行中" : "等待进入选人") + "｜已播报 " + live.played + " 条" + playbackNote + clientNote
-      : $("modLobbyVoice").checked ? "未开启（选择语音包后开始监听）" : "未开启（未勾选选人语音）";
+      : $("modLobbyVoice").checked
+        ? "未开启（勾选了选人语音，点『开启语音包』后才开始）"
+        : "未开启（未勾选选人语音）";
   }
 
   async function refresh() {
@@ -431,8 +434,10 @@
     renderLocaleRow();
     renderStatusRow();
     setBusy(Boolean(Object.keys(store.state.busy || {}).length));
-    lastApplied = stateRes.last_applied || null;
+    lastApplied = (store.state && store.state.last_applied) || null;
     await loadClientVoice();
+    // 状态刷新后同步监听器: 开启语音包(含选人语音)就启动, 还原就停止, 重启后自动恢复
+    void syncLobbyLive();
   }
 
   /* ------------------------------------------------ 任务执行 */
@@ -634,9 +639,8 @@
   for (const id of Object.values(moduleControls)) {
     $(id).addEventListener("change", () => {
       void savePreferences();
-      void syncLobbyLive();
       renderStatusRow();
-      // 勾/取消"选人语音"会改变"客户端必须在运行"的判定
+      // 勾/取消"选人语音"会改变"客户端必须在运行"的判定; 但不会改变开关状态(那要点"开启语音包")
       applyDisabledStates();
     });
   }
@@ -1113,29 +1117,36 @@
   document.addEventListener("click", unlockAudio, { once: true });
 
   /**
-   * 让后端的监听跟随界面里选中的语种。
-   * 启动时恢复已保存的语种和勾选项；明确取消选择或取消勾选时停止监听。
+   * 选人语音的开关**只看状态**, 不看勾选框。
+   *
+   * 状态 = 上次"开启语音包"是否包含选人语音(config.json 的 ui.lastApplied.modules)。
+   *   - 勾选"选人语音" + 点"开启语音包" -> 状态变开启 -> 这里启动监听
+   *   - 点"恢复原版" -> 状态清空 -> 这里停止监听
+   *   - 软件重启 -> 后端回报上次状态 -> 没还原过就自动恢复监听
+   * 勾选框/下拉栏只是"下次开启时要用的参数", 点了按钮才真正改变状态。
    */
   async function syncLobbyLive() {
     if (!preferencesReady) return;
-    if (!$("modLobbyVoice").checked || !store.selected) {
+    const modules = (lastApplied && lastApplied.modules) || [];
+    const wanted = lastApplied && lastApplied.locale && modules.includes("lobby_voice") ? lastApplied.locale : "";
+    if (!wanted) {
       await stopLobbyLive();
       return;
     }
-    const locale = store.selected;
-    if (!locale || locale === lobbyLiveLocale) return;
-    lobbyLiveLocale = locale;
+    if (wanted === lobbyLiveLocale) return;
+    if (lobbyLiveLocale) await stopLobbyLive();
+    lobbyLiveLocale = wanted;
     try {
       const response = await fetch("/api/lobby-live/start", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ locale })
+        body: JSON.stringify({ locale: wanted })
       });
       const data = await response.json();
       if (data && data.ok) {
-        log("选人语音监听已启动：" + data.message + (store.selected ? "" : "（未选语音包，用默认语种）"));
+        log("选人语音监听已启动（状态：开启）：" + data.message);
         renderStatusRow();
-        // 监听启动时后端会按闭环静音客户端原版台词, 这里同步一下界面状态与音量对齐
+        // 监听启动时后端会按闭环静音客户端原版台词, 这里同步界面状态与音量对齐
         void loadClientVoice();
       } else if (data) {
         lobbyLiveLocale = "";

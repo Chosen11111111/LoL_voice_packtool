@@ -67,7 +67,18 @@ export function buildRouter(): Router {
     sse_clients: router.sseCount
   }));
 
-  router.get("/api/state", async () => ({ ok: true, state: { ...(await getDashboard()), lobby_live: lobbyLive.state() } }));
+  router.get("/api/state", async () => {
+    const config = await loadConfig();
+    return {
+      ok: true,
+      state: {
+        ...(await getDashboard()),
+        lobby_live: lobbyLive.state(),
+        // 上次"开启语音包"的记录: 选人语音的开关只看这个状态(勾选框不算)
+        last_applied: config.ui?.lastApplied ?? null
+      }
+    };
+  });
 
   /* ------------------------------------------------ 选人语音实时播报 */
 

@@ -15,7 +15,7 @@ class Element {
   addEventListener(name: string, fn: Function) { this.handlers[name] = fn; }
   setAttribute() {} contains() { return false; }
 }
-async function openWindow(config: any, legacy: Record<string, string> = {}, failSave = false) {
+async function openWindow(config: any, legacy: Record<string, string> = {}, failSave = false, stateExtra: Record<string, unknown> = {}) {
   const elements = new Map<string, Element>();
   const el = (id: string) => { if (!elements.has(id)) elements.set(id, new Element()); return elements.get(id)!; };
   const requests: { url: string; options: any }[] = [];
@@ -38,7 +38,7 @@ async function openWindow(config: any, legacy: Record<string, string> = {}, fail
           Object.assign(config, { ...patch, ui: { ...config.ui, ...patch.ui } });
         }
         payload = { ok: true, config: structuredClone(config), path: "test/config.json" };
-      } else if (url === "/api/state") payload.state = { app: { version: "test" }, paths: {}, busy: {}, ingame: {}, lobby: {} };
+      } else if (url === "/api/state") payload.state = { app: { version: "test" }, paths: {}, busy: {}, ingame: {}, lobby: {}, ...stateExtra };
       else if (url.startsWith("/api/locales")) payload.locales = [{ code: "ja_JP", name: "日语" }, { code: "ko_KR", name: "韩语" }];
       else if (url === "/api/client-voice") payload = { ok: true, supported: true, auto: true, aligned_volume: 90 };
       return { ok: true, status: 200, json: async () => payload };
@@ -147,4 +147,31 @@ test("播报延迟默认 1000ms(把实测最好用的值固定下来)", async ()
   const config: any = { defaultLocale: "ja_JP", ui: { selectedLocale: "", modules: [], volume: 60, followClient: false, region: "auto" } };
   const page = await openWindow(config);
   assert.equal(page.el("delayInput").value, "1000");
+});
+
+test("选人语音不自动开启: 没有开启记录时绝不启动监听", async () => {
+  const ui = { selectedLocale: "ja_JP", modules: ["lobby_voice"], volume: 60, followClient: false, voiceDelayMs: 1000, lastApplied: null, region: "auto" };
+  const page = await openWindow({ defaultLocale: "ja_JP", ui }, {}, false, { last_applied: null });
+  await page.settle();
+  assert.equal(page.requests.filter((r) => r.url === "/api/lobby-live/start").length, 0, "勾了选人语音但没点开启语音包, 不该启动监听");
+});
+
+test("重启后按上次状态恢复: 上次开启且未还原 -> 自动启动监听(用上次的语种)", async () => {
+  const ui = { selectedLocale: "ja_JP", modules: ["lobby_voice"], volume: 60, followClient: false, voiceDelayMs: 1000, lastApplied: null, region: "auto" };
+  const page = await openWindow({ defaultLocale: "ja_JP", ui }, {}, false, {
+    last_applied: { locale: "ko_KR", modules: ["lobby_voice"], at: new Date("2026-10-11T12:30:00").toISOString() }
+  });
+  await page.settle();
+  const starts = page.requests.filter((r) => r.url === "/api/lobby-live/start");
+  assert.equal(starts.length, 1, "应恢复上次的监听");
+  assert.equal(JSON.parse(starts[0]!.options.body).locale, "ko_KR", "要用上次开启时的语种");
+});
+
+test("上次开启没勾选人语音 -> 重启后不启动监听", async () => {
+  const ui = { selectedLocale: "ja_JP", modules: ["lobby_voice"], volume: 60, followClient: false, voiceDelayMs: 1000, lastApplied: null, region: "auto" };
+  const page = await openWindow({ defaultLocale: "ja_JP", ui }, {}, false, {
+    last_applied: { locale: "ja_JP", modules: ["ingame_voice"], at: new Date("2026-10-11T12:30:00").toISOString() }
+  });
+  await page.settle();
+  assert.equal(page.requests.filter((r) => r.url === "/api/lobby-live/start").length, 0);
 });
