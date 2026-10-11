@@ -109,6 +109,25 @@ serve [--host] [--port]      启动后端服务(默认 http://127.0.0.1:43110)
 长任务（切换/还原/同步/导入）一律异步执行并返回 `task.id`，进度通过 SSE 或轮询 `/api/tasks/:id` 获取；
 同一时刻只会有一个"切换类"任务在跑。
 
+### 语音包放在哪(跟着软件目录走)
+
+默认就是**软件自己的目录**下的 `language\`, 解压/识别/播报全都认这一处 ——
+换电脑、换安装位置、给别的用户打包, 都不需要改任何路径(代码里没有写死的绝对路径)。
+
+```text
+<软件目录>\language\<语种>\
+    assets\champion-choose-vo\  选人语音(播报读这里)
+    assets\champion-ban-vo\     禁用语音
+    DATA\FINAL\Champions\       对局语音
+    DATA\FINAL\Localized\       文本
+    DATA\FINAL\Maps\            播报员
+```
+
+- 导入压缩包: 先解压到 `<软件目录>\language\.importing_<随机>\`(同盘, 装完改名, 不额外拷几个 GB), 成功后删除临时目录;
+- 覆盖同名语种: 旧目录改名保留为 `<语种>.chosen_old_<随机>`, **不删除**;
+- 老版本把包放在软件目录外面时, 启动会**自动搬进来**(同盘是改名, 秒级完成), 用户不用重下;
+- 想放别处: 环境变量 `LEAGUE_VOICE_ROOT` 或 `config.json` 的 `voiceRoot`(显式指定优先)。
+
 ## 7. 目录结构
 
 ```text

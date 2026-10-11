@@ -9,7 +9,8 @@
  */
 import os from "node:os";
 import path from "node:path";
-import { isDirectory, isFile, readTextFile, listNames } from "./fsx.ts";
+import fs from "node:fs/promises";
+import { ensureDir, isDirectory, isFile, readTextFile, listNames } from "./fsx.ts";
 import { createLogger } from "./logger.ts";
 import { regQueryValue } from "./win/registry.ts";
 import { findClientExeDir } from "./win/processes.ts";
@@ -404,7 +405,7 @@ export async function settingsYamlPath(resolution: GamePathResolution): Promise<
 
 /* ------------------------------------------------------------------ 资源根目录 */
 
-export type VoiceRootSource = "env" | "config" | "appdir" | "sibling" | "parent" | "legacy";
+export type VoiceRootSource = "env" | "config" | "appdir" | "sibling" | "parent";
 
 export interface VoiceRootResolution {
   root: string;
@@ -423,22 +424,88 @@ async function looksLikePackRoot(dir: string): Promise<boolean> {
   return false;
 }
 
-/** 语音包资源根目录: 配置 > 环境变量 > 项目内 voice/ > 项目同级(本仓库布局) > 旧路径。 */
-export async function resolveVoiceRoot(config: Pick<AppConfig, "voiceRoot">, appDir = appRoot()): Promise<VoiceRootResolution> {
-  const candidates: Array<{ dir: string; source: VoiceRootSource }> = [];
-  const env = (process.env.LEAGUE_VOICE_ROOT ?? "").trim();
-  if (env) candidates.push({ dir: path.resolve(env), source: "env" });
-  if (config.voiceRoot && config.voiceRoot.trim()) candidates.push({ dir: path.resolve(config.voiceRoot.trim()), source: "config" });
-  candidates.push({ dir: path.join(appDir, "voice"), source: "appdir" });
-  candidates.push({ dir: path.resolve(appDir, ".."), source: "sibling" });
-  candidates.push({ dir: path.resolve(appDir, "..", "voice"), source: "parent" });
-  candidates.push({ dir: "E:\\ChosenSkin2.0\\voice", source: "legacy" });
+/**
+ * 语音包资源根目录。
+ *
+ * 默认就是**软件自己的目录**下的 `language\`: 换台电脑、换个安装位置都不用改任何东西,
+ * 解压/识别/播报全都认这一处(不会再去猜别的路径, 也不再写死任何绝对路径)。
+ *
+ * 只有显式指定才另算: 环境变量 LEAGUE_VOICE_ROOT > config.json 的 voiceRoot。
+ */
+export async function resolveVoiceRoot(
+  config: Pick<AppConfig, "voiceRoot">,
+  appDir = appRoot()
+): Promise<VoiceRootResolution> {
+  const defaultRoot = path.join(appDir, "language");
+  const candidates: Array<{ dir: string; source: VoiceRootSource }> = [
+    { dir: defaultRoot, source: "appdir" },
+    { dir: path.join(appDir, "voice"), source: "appdir" },
+    { dir: path.resolve(appDir, ".."), source: "sibling" },
+    { dir: path.resolve(appDir, "..", "voice"), source: "parent" }
+  ];
 
-  for (const candidate of candidates) {
-    if (await looksLikePackRoot(candidate.dir)) {
-      return { root: candidate.dir, source: candidate.source, candidates: candidates.map((item) => item.dir), hasPacks: true };
+  const env = (process.env.LEAGUE_VOICE_ROOT ?? "").trim();
+  const explicit = env || (config.voiceRoot ?? "").trim();
+  if (explicit) {
+    const dir = path.resolve(explicit);
+    await ensureDir(dir);
+    return {
+      root: dir,
+      source: env ? "env" : "config",
+      candidates: [dir, ...candidates.map((item) => item.dir)],
+      hasPacks: await looksLikePackRoot(dir)
+    };
+  }
+
+  // 老版本把包放在软件目录外面(甚至写死过路径): 同盘直接改名搬进来, 用户不用重下几个 GB
+  await migrateLegacyPacks(defaultRoot, candidates.slice(1).map((item) => item.dir));
+  await ensureDir(defaultRoot);
+  return {
+    root: defaultRoot,
+    source: "appdir",
+    candidates: candidates.map((item) => item.dir),
+    hasPacks: await looksLikePackRoot(defaultRoot)
+  };
+}
+
+/**
+ * 把散落在旧位置的语音包**搬**进默认目录(只在默认目录还没有包时做)。
+ *
+ * 同盘是改名(瞬间完成、不占额外空间); 跨盘才会退化成复制+删除。任何一步失败都只是放弃那一个,
+ * 绝不删除源目录里的东西。
+ */
+async function migrateLegacyPacks(target: string, sources: string[]): Promise<void> {
+  if (await looksLikePackRoot(target)) return;
+  for (const source of sources) {
+    if (path.resolve(source) === path.resolve(target)) continue;
+    if (!(await isDirectory(source))) continue;
+    for (const name of await listNames(source)) {
+      if (!LOCALE_DIR_PATTERN.test(name)) continue;
+      const from = path.join(source, name);
+      if (!(await isDirectory(from))) continue;
+      const to = path.join(target, name);
+      if (await isDirectory(to)) continue;
+      try {
+        await ensureDir(target);
+        await fs.rename(from, to);
+        logger.info(`语音包已搬进软件目录: ${from} -> ${to}`);
+      } catch (error) {
+        // 跨盘时 rename 会失败: 退回复制
+        try {
+          await fs.cp(from, to, { recursive: true });
+          await fs.rm(from, { recursive: true, force: true });
+          logger.info(`语音包已复制进软件目录: ${from} -> ${to}`);
+        } catch (copyError) {
+          logger.warn(`搬移语音包失败(源目录保持原样): ${from} —— ${String((copyError as Error).message ?? copyError)}`);
+          await fs.rm(to, { recursive: true, force: true }).catch(() => undefined);
+        }
+      }
+    }
+    // 版本记录也一起带走, 免得增量同步重新下一个版本号
+    const versionFrom = path.join(source, "version.json");
+    const versionTo = path.join(target, "version.json");
+    if ((await isFile(versionFrom)) && !(await isFile(versionTo))) {
+      await fs.rename(versionFrom, versionTo).catch(() => undefined);
     }
   }
-  const fallback = candidates[0]!;
-  return { root: fallback.dir, source: fallback.source, candidates: candidates.map((item) => item.dir), hasPacks: false };
 }

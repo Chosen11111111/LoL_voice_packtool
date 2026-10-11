@@ -6,3 +6,7 @@ logs/
 .tmp/
 .local/
 *.log
+
+# 语音包资源目录(跟着软件目录走, 体积很大, 不入库)
+language/
+voice/
