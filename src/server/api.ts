@@ -113,6 +113,15 @@ export function buildRouter(): Router {
     return { ok: result.ok, message: result.message, state: result.state, audio_base: `/api/lobby-audio` };
   });
 
+  /** 手动试听: 不开游戏也能验证"SSE -> 窗口播放 -> 音频接口"整条链路。 */
+  router.post("/api/lobby-live/test", (context) => {
+    const body = asRecord(context.body);
+    const kind = body.kind === "ban" ? "ban" : "choose";
+    const championId = Number(body.championId ?? 0) || 0;
+    const result = lobbyLive.emitTest({ kind, championId });
+    return { ok: result.ok, message: result.message };
+  });
+
   /** 客户端原版选人台词(音效/音乐不受影响)的开关状态。 */
   router.get("/api/client-voice", async () => ({ ok: true, ...(await clientVoiceState()) }));
 
@@ -364,7 +373,11 @@ export async function startApiServer(
     uploadDir: path.join(appRoot(), ".tmp", "uploads")
   });
   const unsubscribeTasks = taskManager.subscribe((event: TaskEvent) => router.broadcast(event.type, event));
-  const unsubscribeLobby = lobbyLive.subscribe((event) => router.broadcast("lobby", event));
+  const unsubscribeLobby = lobbyLive.subscribe((event) => {
+    // 记一条: 推给了几个窗口 —— 排查"后端发了但窗口没播"时最关键的一行
+    logger.info(`推送选人事件给 ${router.sseCount} 个窗口: ${event.kind} ${event.championId}`);
+    router.broadcast("lobby", event);
+  });
   running.server.once("close", () => { unsubscribeTasks(); unsubscribeLobby(); });
   return { running, router, staticDir: hasWeb ? staticDir : null };
 }

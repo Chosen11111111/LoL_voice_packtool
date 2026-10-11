@@ -26,6 +26,8 @@ async function openWindow(config: any, legacy: Record<string, string> = {}, fail
     window, localStorage: { getItem: (k: string) => legacy[k] ?? null, setItem() {} },
     Audio: class { volume = 1; pause() {} addEventListener() {} }, EventSource: class { addEventListener() {} },
     Date, Math, Number, String, Object, JSON, Promise, setTimeout, clearTimeout, console,
+    // 浏览器里有 setInterval(界面用它做"兜底轮询"), 测试沙箱里给个不真的调度时间的替身
+    setInterval: () => 0, clearInterval: () => {},
     fetch: async (url: string, options: any = {}) => {
       requests.push({ url, options });
       let payload: any = { ok: true };

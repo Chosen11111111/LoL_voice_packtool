@@ -757,8 +757,9 @@
     events.addEventListener("lobby", (event) => {
       try {
         playLobbyVoice(JSON.parse(event.data));
-      } catch {
-        /* ignore */
+      } catch (error) {
+        // 以前这里静默吞掉, 出错时完全查不到 —— 现在写进日志框
+        log("选人事件处理失败：" + (error && error.message ? error.message : error), "warn");
       }
     });
     events.onerror = () => {
@@ -976,8 +977,12 @@
   let lastPlayKey = "";
   let lastPlayAt = 0;
 
+  // 兜底轮询用: 最近处理过的事件时间戳(SSE 万一不通, 也能靠它播放)
+  let lastEventAt = 0;
+
   function playLobbyVoice(data) {
     if (!data || !data.url) return;
+    if (Number(data.at) > lastEventAt) lastEventAt = Number(data.at);
     // 双保险: 同一句台词短时间重复推送时忽略(否则第二遍会把第一遍打断, 声音反而迟迟不出来)
     const key = data.kind + ":" + data.championId;
     const now = Date.now();
@@ -1093,6 +1098,23 @@
   };
 
   initHud();
+  // 兜底: 每 2 秒问一次后端"最近有没有选人事件"。SSE 正常时这里什么也不会做(时间戳已被 SSE 更新),
+  // SSE 断了就由它把台词播出来 —— 保证"听得见"不依赖单一通道
+  setInterval(() => {
+    if (!lobbyLiveLocale) return;
+    void (async () => {
+      try {
+        const data = await request("/api/lobby-live/state");
+        const event = data && data.last_event;
+        if (event && Number(event.at) > lastEventAt) {
+          log("通过兜底轮询拿到选人事件（SSE 可能没送到）");
+          playLobbyVoice(event);
+        }
+      } catch {
+        /* ignore */
+      }
+    })();
+  }, 2000);
   setBusy(false);
   refresh()
     .then(() => {

@@ -283,6 +283,37 @@ export class LobbyLiveEngine {
     }
   }
 
+  /**
+   * 手动试听: 走与真实选人事件**完全相同**的推送与播放链路。
+   * 便于不开游戏就验证"SSE -> 窗口播放 -> 音频接口"整条路是否通。
+   */
+  emitTest(input: { kind: "choose" | "ban"; championId: number }): { ok: boolean; message: string } {
+    const options = this.options;
+    if (!options) return { ok: false, message: "监听未启动：先开启选人语音" };
+    if (!input.championId) return { ok: false, message: "需要指定英雄 ID" };
+    const payload: LobbyLiveEvent = {
+      kind: input.kind,
+      championId: input.championId,
+      phase: "lock",
+      actorCellId: 0,
+      at: Date.now(),
+      source: "action",
+      locale: options.locale,
+      url: `/api/lobby-audio/${input.kind}/${input.championId}.ogg?locale=${encodeURIComponent(options.locale)}`
+    };
+    this.played += 1;
+    this.history = [payload, ...this.history].slice(0, HISTORY_LIMIT);
+    logger.info(`试听推送: ${payload.url}`);
+    for (const listener of this.listeners) {
+      try {
+        listener(payload);
+      } catch (error) {
+        logger.warn(`试听推送失败: ${String((error as Error).message ?? error)}`);
+      }
+    }
+    return { ok: true, message: `已推送试听(${this.listeners.size} 个窗口)` };
+  }
+
   /** 校验某个事件对应的音频是否真的存在(前端播放前可先问一次)。 */
   async resolveAudio(kind: "choose" | "ban", championId: number, locale: string): Promise<string | null> {
     const options = this.options;
