@@ -890,11 +890,12 @@ button, input, select {
   background-color: rgba(100, 116, 139, 0.12);
 }
 
-/* ---------------- 品牌图按钮(两个按钮下方, 靠右) ---------------- */
+/* ---------------- 品牌图按钮(和按钮同一行, 占空位) ---------------- */
 .brand-banner {
-  display: block;
-  width: 220px;          /* ← 想改大小就改这一处 */
-  margin: 8px 0 0 auto;  /* ← 靠右(与上面两个按钮对齐); 想居中改成  8px auto 0; */
+  flex: 0 1 auto;        /* 一行内参与布局, 窗口变窄时可以收缩, 不把别的挤下去 */
+  width: 200px;
+  min-width: 96px;
+  margin: 0;             /* 跟同一行的其他控件对齐, 不加外边距 */
   padding: 0;
   background: none;      /* 不要底板 */
   border: none;          /* 不要边框线 */
@@ -905,18 +906,20 @@ button, input, select {
 .brand-banner img {
   display: block;
   width: 100%;
-  height: auto;
+  height: 100%;
+  max-height: 34px;
   object-fit: contain;
+  object-position: center;
   -webkit-user-select: none;
   user-select: none;
   pointer-events: none;
 }
 .brand-banner:hover {
-  transform: translateY(-1px) scale(1.04);
-  filter: brightness(1.08) saturate(1.06) drop-shadow(0 4px 10px rgba(37, 99, 235, 0.22));
+  transform: scale(1.05);
+  filter: brightness(1.08) saturate(1.06) drop-shadow(0 3px 8px rgba(37, 99, 235, 0.22));
 }
 .brand-banner:active {
-  transform: translateY(1px) scale(0.97);
+  transform: scale(0.96);
   filter: brightness(0.94);
 }
 .brand-banner:focus-visible {
