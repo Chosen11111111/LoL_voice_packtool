@@ -64,3 +64,11 @@ test("保存失败后仍能继续保存且缓存保持原值", async () => withC
   await saveConfig({ defaultLocale: "en_US" });
   assert.equal(JSON.parse(await fs.readFile(configPath(), "utf8")).defaultLocale, "en_US");
 }));
+
+test("界面配置分次保存不会覆盖其他选项，重新读取保留空选择与零音量", async () => withConfig(async () => {
+  await saveConfig({ ui: { selectedLocale: "ko_KR", modules: ["ingame_voice"], volume: 35, followClient: false, region: "global" } });
+  await saveConfig({ ui: { selectedLocale: "", volume: 0 } });
+  invalidateConfigCache();
+  const config = await loadConfig();
+  assert.deepEqual(config.ui, { selectedLocale: "", modules: ["ingame_voice"], volume: 0, followClient: false, region: "global" });
+}));

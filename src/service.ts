@@ -3,7 +3,7 @@
  */
 import path from "node:path";
 import { APP_NAME_CN, APP_VERSION } from "./version.ts";
-import { appRoot, loadConfig, saveConfig, type AppConfig } from "./core/config.ts";
+import { appRoot, configPath, loadConfig, saveConfig, type AppConfig, type ConfigPatch } from "./core/config.ts";
 import { removeQuietly } from "./core/fsx.ts";
 import { createLogger } from "./core/logger.ts";
 import type { ModuleId } from "./core/types.ts";
@@ -89,7 +89,7 @@ export async function getDashboard(): Promise<DashboardState> {
     isClientRunning()
   ]);
   return {
-    app: { name: APP_NAME_CN, version: APP_VERSION, appRoot: env.appDir, configPath: path.join(env.appDir, "config.json") },
+    app: { name: APP_NAME_CN, version: APP_VERSION, appRoot: env.appDir, configPath: configPath() },
     paths: pathsPayload(env),
     voiceRoot: env.voiceRoot,
     voiceRootSource: env.voiceRootSource,
@@ -402,7 +402,7 @@ export async function doctor(): Promise<Record<string, unknown>> {
   };
 }
 
-export async function updateConfig(patch: Partial<AppConfig>): Promise<AppConfig> {
+export async function updateConfig(patch: ConfigPatch): Promise<AppConfig> {
   const next = await saveConfig(patch);
   logger.info(`配置已更新: ${Object.keys(patch).join(", ")}`);
   return next;

@@ -33,6 +33,15 @@ export interface FeatureFlags {
   lobbyLang: boolean;
 }
 
+/** 窗口偏好随安装目录保存，不依赖浏览器缓存。null 表示旧配置尚未迁移。 */
+export interface UiConfig {
+  selectedLocale: string | null;
+  modules: string[];
+  volume: number | null;
+  followClient: boolean | null;
+  region: "auto" | "cn" | "global";
+}
+
 export interface AppConfig {
   /** 语音包资源根目录(留空=自动探测)。 */
   voiceRoot: string;
@@ -60,8 +69,11 @@ export interface AppConfig {
   features: FeatureFlags;
   server: ServerConfig;
   download: DownloadConfig;
+  ui: UiConfig;
   logLevel: string;
 }
+
+export type ConfigPatch = Omit<Partial<AppConfig>, "ui"> & { ui?: Partial<UiConfig> };
 
 const DEFAULT_CONFIG: AppConfig = {
   voiceRoot: "",
@@ -78,6 +90,7 @@ const DEFAULT_CONFIG: AppConfig = {
   features: { lobbyVoice: false, lobbyLang: true },
   server: { host: "127.0.0.1", port: 43110, token: "", webDir: "web", maxUploadBytes: 0 },
   download: { threads: 16, concurrency: 16, timeoutMs: 30000, retries: 3 },
+  ui: { selectedLocale: null, modules: ["ingame_voice", "ingame_lang", "lobby_voice"], volume: null, followClient: null, region: "auto" },
   logLevel: "info"
 };
 
@@ -102,7 +115,7 @@ export function defaultConfig(): AppConfig {
   return structuredClone(DEFAULT_CONFIG);
 }
 
-function mergeConfig(base: AppConfig, patch: Partial<AppConfig> | null | undefined): AppConfig {
+function mergeConfig(base: AppConfig, patch: ConfigPatch | null | undefined): AppConfig {
   if (!patch || typeof patch !== "object") return base;
   const merged: AppConfig = { ...base };
   for (const [key, value] of Object.entries(patch)) {
@@ -117,6 +130,10 @@ function mergeConfig(base: AppConfig, patch: Partial<AppConfig> | null | undefin
     }
     if (key === "features" && typeof value === "object") {
       merged.features = { ...base.features, ...(value as Partial<FeatureFlags>) };
+      continue;
+    }
+    if (key === "ui" && typeof value === "object") {
+      merged.ui = { ...base.ui, ...(value as Partial<UiConfig>) };
       continue;
     }
     (merged as unknown as Record<string, unknown>)[key] = value;
@@ -135,7 +152,7 @@ export async function loadConfig(force = false): Promise<AppConfig> {
 }
 
 /** 合并并落盘(原子写)。 */
-export function saveConfig(patch: Partial<AppConfig>): Promise<AppConfig> {
+export function saveConfig(patch: ConfigPatch): Promise<AppConfig> {
   const file = configPath();
   const ownedPatch = structuredClone(patch);
   const saving = saveQueue.then(async () => {

@@ -31,5 +31,12 @@
     "timeoutMs": 30000,
     "retries": 3
   },
+  "ui": {
+    "selectedLocale": null,
+    "modules": ["ingame_voice", "ingame_lang", "lobby_voice"],
+    "volume": null,
+    "followClient": null,
+    "region": "auto"
+  },
   "logLevel": "info"
 }

@@ -85,6 +85,67 @@
     return modules;
   }
 
+  let preferencesReady = false;
+  let preferencesDirty = false;
+  let preferenceRevision = 0;
+  let preferenceQueue = Promise.resolve();
+  let preferenceRegion = "auto";
+  let pageClosing = false;
+  const moduleControls = { ingame_voice: "modIngameVoice", ingame_lang: "modIngameLang", lobby_voice: "modLobbyVoice" };
+
+  function preferenceSnapshot() {
+    return { selectedLocale: store.selected, modules: selectedModules(), volume, followClient, region: preferenceRegion };
+  }
+
+  function savePreferences() {
+    if (!preferencesReady) return Promise.resolve();
+    const ui = preferenceSnapshot();
+    const revision = ++preferenceRevision;
+    preferencesDirty = true;
+    $("configSaveStatus").textContent = "配置保存中…";
+    preferenceQueue = preferenceQueue.then(async () => {
+      // 连续拖动时只写最新快照，避免把每一个中间音量排队写盘。
+      if (pageClosing || revision !== preferenceRevision) return;
+      try {
+        await api("/api/config", { method: "PUT", body: JSON.stringify({ ui }), keepalive: true });
+        if (revision === preferenceRevision) {
+          preferencesDirty = false;
+          $("configSaveStatus").textContent = "配置已保存";
+        }
+      } catch (error) {
+        if (revision === preferenceRevision) $("configSaveStatus").textContent = "配置保存失败";
+        log("配置保存失败：" + error.message);
+      }
+    });
+    return preferenceQueue;
+  }
+
+  function restorePreferences(config, file) {
+    const ui = config.ui || {};
+    store.selected = typeof ui.selectedLocale === "string" ? ui.selectedLocale : config.defaultLocale || "";
+    const modules = Array.isArray(ui.modules) ? ui.modules : Object.keys(moduleControls);
+    for (const [module, id] of Object.entries(moduleControls)) $(id).checked = modules.includes(module);
+    if (typeof ui.volume === "number" && Number.isFinite(ui.volume)) setVolume(ui.volume, false);
+    followClient = typeof ui.followClient === "boolean" ? ui.followClient : followClient;
+    if (ui.region === "cn" || ui.region === "global") {
+      preferenceRegion = ui.region;
+      setServerRegion(ui.region, true);
+    }
+    applyFollowLabel();
+    preferencesReady = true;
+    $("configSaveStatus").title = "配置文件：" + file;
+    $("configSaveStatus").textContent = "配置已读取";
+    if (ui.volume == null || ui.followClient == null || ui.selectedLocale == null) void savePreferences();
+  }
+
+  // 关闭时将尚未落盘的最新选择提交，keepalive 允许请求在窗口关闭后完成。
+  window.addEventListener("pagehide", () => {
+    pageClosing = true;
+    if (!preferencesReady || !preferencesDirty) return;
+    void fetch("/api/config", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ui: preferenceSnapshot() }), keepalive: true }).catch(() => undefined);
+  });
+  window.addEventListener("pageshow", () => { pageClosing = false; });
+
   function cleanStatusDetail(raw, isActive, fallbackLocale) {
     if (!isActive) return "国服原版文件";
     const cleaned = String(raw || "")
@@ -158,6 +219,7 @@
 
   function selectLocaleValue(code, notify) {
     store.selected = code || "";
+    if (notify) void savePreferences();
     void syncLobbyLive();
     const select = $("localeSelect");
     select.value = store.selected;
@@ -245,7 +307,7 @@
       input.value = currentPath;
     }
     const detectedRegion = detectRegionFromPath(input.value || currentPath, sourceDetail);
-    if (detectedRegion) {
+    if (detectedRegion && preferenceRegion === "auto") {
       setServerRegion(detectedRegion, false);
     }
   }
@@ -283,9 +345,9 @@
         ? "｜已播放 " + live.playback_ok + " 次"
         : "";
     $("statusLobbyVoice").textContent = lobbyActive
-      ? "【监听中：" + (lobbyLocaleName || "默认语种") +  + "】" +
+      ? "【监听中：" + (lobbyLocaleName || "默认语种") + "】" +
         (live.presence === "in" ? "选人进行中" : "等待进入选人") + "｜已播报 " + live.played + " 条" + playbackNote
-      : "未开启（选语音包即自动开始监听）";
+      : $("modLobbyVoice").checked ? "未开启（选择语音包后开始监听）" : "未开启（未勾选选人语音）";
   }
 
   async function refresh() {
@@ -299,9 +361,11 @@
     store.config = configRes.config;
 
     renderPathRow();
+    if (!preferencesReady) restorePreferences(store.config, configRes.path);
     renderLocaleRow();
     renderStatusRow();
     setBusy(Boolean(Object.keys(store.state.busy || {}).length));
+    await loadClientVoice();
   }
 
   /* ------------------------------------------------ 任务执行 */
@@ -363,6 +427,7 @@
     const immediateRegion = detectRegionFromPath(rawPath, customSource);
     if (immediateRegion) {
       setServerRegion(immediateRegion, false);
+      preferenceRegion = immediateRegion;
     }
 
     try {
@@ -371,12 +436,17 @@
         method: "PUT",
         body: JSON.stringify({ leaguePath: rawPath })
       });
+      await savePreferences();
       await refresh();
       const resolved = store.state && store.state.paths && store.state.paths.leagueDir;
       const sourceDetail = store.state && store.state.paths && store.state.paths.sourceDetail;
       const finalRegion = detectRegionFromPath(resolved || rawPath, sourceDetail || customSource);
       if (finalRegion) {
         setServerRegion(finalRegion, false);
+        if (preferenceRegion !== finalRegion) {
+          preferenceRegion = finalRegion;
+          await savePreferences();
+        }
       }
       if (resolved) {
         const regionLabel = store.region === "cn" ? "国服" : "外服";
@@ -487,10 +557,20 @@
   $("btnServerRegion").onclick = () => {
     const next = store.region === "cn" ? "global" : "cn";
     setServerRegion(next, true);
+    preferenceRegion = next;
+    void savePreferences();
     const label = store.region === "cn" ? "国服" : "外服";
     log("已手动切换区服模式为：" + label);
     setStatus("已切换为：" + label, "ok");
   };
+
+  for (const id of Object.values(moduleControls)) {
+    $(id).addEventListener("change", () => {
+      void savePreferences();
+      void syncLobbyLive();
+      renderStatusRow();
+    });
+  }
 
   // 第二排：自定义下拉栏开关 & 压缩包文件选择
   $("selectTrigger").onclick = (event) => {
@@ -669,11 +749,16 @@
   const VOLUME_KEY = "leagueVoice.volume";
   const FOLLOW_KEY = "leagueVoice.followClient";
 
-  let volume = Number(localStorage.getItem(VOLUME_KEY));
+  function legacyPreference(key) {
+    try { return localStorage.getItem(key); } catch { return null; }
+  }
+  const legacyVolume = legacyPreference(VOLUME_KEY);
+  let volume = legacyVolume === null ? 60 : Number(legacyVolume);
   if (!Number.isFinite(volume)) volume = 60;
+  volume = Math.max(0, Math.min(100, Math.round(volume)));
   let volumeBeforeMute = volume > 0 ? volume : 60;
   // 是否跟随客户端音量(总音量 × 音效), 默认开启; 手动拖过滑杆就自动关掉
-  let followClient = localStorage.getItem(FOLLOW_KEY) !== "0";
+  let followClient = legacyPreference(FOLLOW_KEY) !== "0";
 
   function applyFollowLabel() {
     const button = $("btnAlignVolume");
@@ -697,13 +782,7 @@
   function setVolume(next, persist) {
     volume = Math.max(0, Math.min(100, Math.round(next)));
     if (volume > 0) volumeBeforeMute = volume;
-    if (persist) {
-      try {
-        localStorage.setItem(VOLUME_KEY, String(volume));
-      } catch {
-        /* ignore */
-      }
-    }
+    if (persist) void savePreferences();
     applyVolume();
   }
 
@@ -737,7 +816,7 @@
 
   async function loadClientVoice() {
     try {
-      const data = await request("/api/client-voice");
+      const data = await api("/api/client-voice");
       clientVoice = {
         supported: Boolean(data.supported),
         suppressed: Boolean(data.suppressed),
@@ -762,7 +841,6 @@
   function initHud() {
     applyVolume();
     applyClientVoiceLabel();
-    void loadClientVoice();
     const clientVoiceButton = $("btnClientVoice");
     if (clientVoiceButton) {
       clientVoiceButton.addEventListener("click", async () => {
@@ -770,7 +848,7 @@
         const next = !clientVoice.auto;
         clientVoiceButton.disabled = true;
         try {
-          const data = await request("/api/client-voice", { method: "POST", body: { auto: next } });
+          const data = await api("/api/client-voice", { method: "POST", body: JSON.stringify({ auto: next }) });
           clientVoice = {
             supported: Boolean(data.supported),
             suppressed: Boolean(data.suppressed),
@@ -794,11 +872,6 @@
         // 手动拖过滑杆就不再让客户端音量覆盖
         if (followClient) {
           followClient = false;
-          try {
-            localStorage.setItem(FOLLOW_KEY, "0");
-          } catch {
-            /* ignore */
-          }
           applyFollowLabel();
         }
         setVolume(Number(slider.value), true);
@@ -808,11 +881,7 @@
     if (align) {
       align.addEventListener("click", () => {
         followClient = !followClient;
-        try {
-          localStorage.setItem(FOLLOW_KEY, followClient ? "1" : "0");
-        } catch {
-          /* ignore */
-        }
+        void savePreferences();
         applyFollowLabel();
         if (followClient) {
           void loadClientVoice();
@@ -895,12 +964,15 @@
 
   /**
    * 让后端的监听跟随界面里选中的语种。
-   * 没选语音包时回退到配置里的默认语种 —— 打开工具就自动开始监听, 不用手动点。
+   * 启动时恢复已保存的语种和勾选项；明确取消选择或取消勾选时停止监听。
    */
   async function syncLobbyLive() {
-    const configured = store.config && store.config.defaultLocale;
-    const fallback = configured || (store.locales[0] && store.locales[0].code) || "";
-    const locale = store.selected || fallback;
+    if (!preferencesReady) return;
+    if (!$("modLobbyVoice").checked || !store.selected) {
+      await stopLobbyLive();
+      return;
+    }
+    const locale = store.selected;
     if (!locale || locale === lobbyLiveLocale) return;
     lobbyLiveLocale = locale;
     try {

@@ -166,6 +166,7 @@ docs/API.md           接口契约
 ## 9. 配置
 
 配置放在项目根目录的 `config.json`（不提交到仓库；可用 `config.example.json` 起步）。
+界面修改语音包选择、三个勾选项、播报音量、音量跟随和区服后，会自动保存到这个文件的 `ui` 字段，重启后恢复。底部显示“配置已保存”；悬停可查看实际文件路径。首次启动会迁移旧浏览器缓存里的音量设置，之后以文件为准。明确取消选择、取消勾选和音量 `0` 也会保留。恢复界面选择不会自动替换游戏文件。
 所有字段都有默认值，留空即"自动探测"：
 
 | 字段 | 说明 |
@@ -181,6 +182,7 @@ docs/API.md           接口契约
 | `features.lobbyVoice` | 对局前选人语音（默认 `false`；LCU 监听 + 本地播报，界面勾选即开启） |
 | `features.lobbyLang` | 大厅界面语言（改 `LeagueClientSettings.yaml`，与语音包无关） |
 | `server` | API 监听地址、端口、访问令牌、前端目录、上传上限 |
+| `ui` | 窗口偏好：`selectedLocale`、`modules`、`volume`（0–100）、`followClient`、`region`（`auto` / `cn` / `global`） |
 
 也支持环境变量：`LEAGUE_VOICE_ROOT`、`LEAGUE_PATH`、`LEAGUE_VOICE_CONFIG`、`LEAGUE_VOICE_HOME`。
 

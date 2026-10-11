@@ -133,7 +133,8 @@
 ```
 
 ### GET /api/config ・ PUT /api/config
-`PUT` 请求体是**部分配置**（深合并 `server`/`download` 两个子对象），返回写盘后的完整配置。
+`PUT` 请求体是**部分配置**（合并 `server`、`download`、`features` 和 `ui` 子对象），返回写盘后的完整配置。`GET` 的 `path` 是实际配置文件路径，包含 `LEAGUE_VOICE_CONFIG` 覆盖值。
+`ui` 保存窗口偏好，例如 `{ "ui": { "selectedLocale": "ko_KR", "modules": ["ingame_voice"], "volume": 35, "followClient": false, "region": "auto" } }`。空语种、空模块数组和零音量是有效选择。保存窗口偏好不会替换游戏文件。
 字段含义见 `config.example.json`。
 
 ### POST /api/plan —— 干跑预检（只读，不改任何文件）

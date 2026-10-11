@@ -3,7 +3,7 @@ import path from "node:path";
 import { copyFile, mkdir, readFile, rename, rm } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
 import { APP_NAME, APP_NAME_CN, APP_VERSION, API_VERSION } from "../version.ts";
-import { loadConfig, appRoot, type AppConfig } from "../core/config.ts";
+import { loadConfig, appRoot, configPath, type ConfigPatch } from "../core/config.ts";
 import { resolveVoiceRoot } from "../core/paths.ts";
 import { lobbyLive } from "../modules/lobbyLive.ts";
 import { isDirectory } from "../core/fsx.ts";
@@ -155,10 +155,10 @@ export function buildRouter(): Router {
 
   router.get("/api/paths", async () => ({ ok: true, ...(await inspectPaths()) }));
 
-  router.get("/api/config", async () => ({ ok: true, config: await loadConfig(), path: path.join(appRoot(), "config.json") }));
+  router.get("/api/config", async () => ({ ok: true, config: await loadConfig(), path: configPath() }));
 
   router.put("/api/config", async (context) => {
-    const patch = asRecord(context.body) as Partial<AppConfig>;
+    const patch = asRecord(context.body) as ConfigPatch;
     const config = await updateConfig(patch);
     invalidateConfigCache();
     if (typeof patch.logLevel === "string") setLogLevel(patch.logLevel as LogLevel);
