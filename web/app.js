@@ -817,6 +817,20 @@
         log("选人事件处理失败：" + (error && error.message ? error.message : error), "warn");
       }
     });
+    // 客户端音量变了: 立刻把播报音量对齐过去(后端每 5 秒检查一次客户端设置并推送)
+    events.addEventListener("voice-volume", (event) => {
+      try {
+        const data = JSON.parse(event.data);
+        const next = Number(data.volume);
+        if (next > 0) {
+          setVolume(next, false);
+          log("客户端音量变化，播报音量已对齐：" + next + "%");
+          reportPlayback(true, "", "volume:" + next);
+        }
+      } catch {
+        /* ignore */
+      }
+    });
     events.onerror = () => {
       setStatus("后端服务连接已断开", "err");
     };
@@ -1039,7 +1053,14 @@
       fetch("/api/lobby-live/report", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ ok, error: error || "", detail: detail || "", kind: lastVoice.kind, championId: lastVoice.championId })
+        body: JSON.stringify({
+          ok,
+          error: error || "",
+          detail: detail || "",
+          kind: lastVoice.kind,
+          championId: lastVoice.championId,
+          volume
+        })
       }).catch(() => undefined);
     } catch {
       /* ignore */

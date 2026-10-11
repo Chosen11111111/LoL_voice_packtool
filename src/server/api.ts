@@ -11,7 +11,14 @@ import { isClientRunning } from "../core/win/processes.ts";
 import type { ModuleId } from "../core/types.ts";
 import { invalidateConfigCache } from "../core/config.ts";
 import { createLogger, setLogLevel, type LogLevel } from "../core/logger.ts";
-import { clientVoiceState, recoverOnStartup, setAutoSuppress, setClientOriginalVoice } from "../modules/clientVoice.ts";
+import {
+  clientVoiceState,
+  readAudioSettings,
+  readVolumes,
+  recoverOnStartup,
+  setAutoSuppress,
+  setClientOriginalVoice
+} from "../modules/clientVoice.ts";
 
 const logger = createLogger("api");
 import { Router, startHttpServer, type RunningServer } from "./http.ts";
@@ -166,7 +173,8 @@ export function buildRouter(): Router {
       error: body.error ? String(body.error) : "",
       detail: body.detail ? String(body.detail) : "",
       championId: Number(body.championId ?? 0) || 0,
-      kind: body.kind === "ban" ? "ban" : "choose"
+      kind: body.kind === "ban" ? "ban" : "choose",
+      volume: Number(body.volume) || 0
     });
     return { ok: true };
   });
@@ -396,7 +404,29 @@ export async function startApiServer(
     logger.info(`推送选人事件给 ${router.sseCount} 个窗口: ${event.kind} ${event.championId}`);
     router.broadcast("lobby", event);
   });
-  running.server.once("close", () => { unsubscribeTasks(); unsubscribeLobby(); });
+  // 客户端音量变化 -> 立刻推给窗口, 让播报音量实时对齐
+  // (否则用户在客户端改完音量, 要等前端下一次复查才生效, 体感就是"调了没变化")
+  let lastKnownMaster = -1;
+  const volumeTimer = setInterval(() => {
+    void (async () => {
+      if (!lobbyLive.isRunning()) return;
+      const volumes = readVolumes((await readAudioSettings())?.data);
+      if (!volumes) return;
+      if (volumes.master === lastKnownMaster) return;
+      const isFirst = lastKnownMaster < 0;
+      lastKnownMaster = volumes.master;
+      if (isFirst) return;
+      logger.info(`客户端音量变化: ${volumes.master}% —— 推给窗口对齐播报音量`);
+      router.broadcast("voice-volume", { volume: volumes.master, volumes });
+    })();
+  }, 5000);
+  volumeTimer.unref?.();
+
+  running.server.once("close", () => {
+    unsubscribeTasks();
+    unsubscribeLobby();
+    clearInterval(volumeTimer);
+  });
   return { running, router, staticDir: hasWeb ? staticDir : null };
 }
 

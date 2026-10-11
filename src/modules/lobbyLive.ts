@@ -51,6 +51,8 @@ export interface PlaybackReport {
   detail: string;
   kind: "choose" | "ban";
   championId: number;
+  /** 窗口当前的播报音量(排障: 确认是否跟着客户端对齐)。 */
+  volume: number;
 }
 
 export interface LobbyLiveState {
@@ -107,8 +109,8 @@ export class LobbyLiveEngine {
   private playbackFailed = 0;
 
   /** 接收窗口的播放结果上报。 */
-  reportPlayback(report: Omit<PlaybackReport, "at">): void {
-    this.lastPlayback = { ...report, at: Date.now() };
+  reportPlayback(report: Omit<PlaybackReport, "at" | "volume"> & { volume?: number }): void {
+    this.lastPlayback = { volume: 0, ...report, at: Date.now() };
     if (report.ok) this.playbackOk += 1;
     else {
       this.playbackFailed += 1;
