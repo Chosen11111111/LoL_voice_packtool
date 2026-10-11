@@ -6,6 +6,8 @@ import { test } from "node:test";
 import { cleanupSuite, makeTempDir, useSuite } from "./helpers.ts";
 import { LobbyLiveEngine, type LobbyLiveEvent } from "../src/modules/lobbyLive.ts";
 import type { ChampSelectSession } from "../src/modules/champSelect.ts";
+import { watchChampSelect } from "../src/core/win/lcuEvents.ts";
+type WatchLikeOptions = Parameters<typeof watchChampSelect>[0];
 
 useSuite("lobbyLive");
 
@@ -192,4 +194,71 @@ test("并发 start 只创建一个轮询器(否则同一场锁定会被播两遍
 
 test.after(async () => {
   await cleanupSuite();
+});
+
+test("客户端原版台词: 工具运行期间只静音不还原, 关掉功能才还原", async () => {
+  const voiceRoot = await makeVoiceRoot();
+  const engine = new LobbyLiveEngine();
+  const actions: string[] = [];
+  await engine.start({
+    voiceRoot,
+    locale: "ja_JP",
+    clientVoiceHook: (action) => actions.push(action),
+    watcher: (options) => {
+      options.onPresence?.("in");
+      options.onSession({ localPlayerCellId: 0, gameId: 1, actions: [[pick(0, 103, true)]] }, "in");
+      options.onPresence?.("out"); // 离开选人
+      options.onPresence?.("in"); // 又进一局
+      options.onPresence?.("out");
+      return () => undefined;
+    }
+  });
+  assert.ok(actions.includes("suppress"), "启动时就要静音(禁用阶段来得很快)");
+  assert.ok(!actions.includes("restore"), "运行期间离开选人**不该**还原 —— 否则客户端设置里那两栏又会变回勾上");
+  await engine.stop();
+  assert.ok(actions.includes("restore"), "关掉功能/退出工具时才还原");
+});
+
+test("换语种: 原地切换 —— 不重建监听器, 也不还原客户端设置", async () => {
+  const voiceRoot = await makeVoiceRoot();
+  // 再补一个 ko_KR 的语音包
+  await fs.mkdir(path.join(voiceRoot, "ko_KR", "assets", "champion-choose-vo"), { recursive: true });
+  await fs.writeFile(path.join(voiceRoot, "ko_KR", "assets", "champion-choose-vo", "103.ogg"), "OggS-choose-103-ko");
+
+  const engine = new LobbyLiveEngine();
+  const actions: string[] = [];
+  const received: LobbyLiveEvent[] = [];
+  engine.subscribe((event) => received.push(event));
+
+  let savedWatcher: WatchLikeOptions | null = null;
+  await engine.start({
+    voiceRoot,
+    locale: "ja_JP",
+    clientVoiceHook: (action) => actions.push(action),
+    watcher: (options) => {
+      savedWatcher = options;
+      options.onPresence?.("in");
+      return () => undefined;
+    }
+  });
+
+  // 换语种: 不该重建监听器(再建就会调用下面的 watcher 而抛错), 也不该还原客户端设置
+  await engine.start({
+    voiceRoot,
+    locale: "ko_KR",
+    clientVoiceHook: (action) => actions.push(action),
+    watcher: () => {
+      throw new Error("换语种不该重建监听器");
+    }
+  });
+  assert.ok(!actions.includes("restore"), "换语种期间不该还原客户端原版台词(用户看到的就是设置里被重新勾上)");
+  assert.equal(engine.state().locale, "ko_KR");
+
+  // 用同一个监听回调继续喂动作: 出来的必须是新语种的音频
+  // 换语种后第一帧是重建基线(已锁定的不补播), 所以先喂一帧悬停再喂锁定
+  savedWatcher!.onSession({ localPlayerCellId: 0, gameId: 2, actions: [[pick(0, 103, false)]] }, "in");
+  savedWatcher!.onSession({ localPlayerCellId: 0, gameId: 2, actions: [[pick(0, 103, true)]] }, "in");
+  assert.equal(received.length, 1);
+  assert.equal(received[0]!.locale, "ko_KR");
+  assert.ok(received[0]!.url.includes("locale=ko_KR"), "换语种后必须用新语种的音频");
 });

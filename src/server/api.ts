@@ -419,7 +419,8 @@ export async function startApiServer(
       logger.info(`客户端音量变化: ${volumes.master}% —— 推给窗口对齐播报音量`);
       router.broadcast("voice-volume", { volume: volumes.master, volumes });
     })();
-  }, 5000);
+    // 1 秒一次: 读一次本地 LCU 设置很便宜, 换来的是"调完音量马上锁定英雄"也不会用错音量
+  }, 1000);
   volumeTimer.unref?.();
 
   running.server.once("close", () => {

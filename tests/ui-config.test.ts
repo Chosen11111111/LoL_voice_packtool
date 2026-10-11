@@ -41,6 +41,15 @@ async function openWindow(config: any, legacy: Record<string, string> = {}, fail
       } else if (url === "/api/state") payload.state = { app: { version: "test" }, paths: {}, busy: {}, ingame: {}, lobby: {}, ...stateExtra };
       else if (url.startsWith("/api/locales")) payload.locales = [{ code: "ja_JP", name: "日语" }, { code: "ko_KR", name: "韩语" }];
       else if (url === "/api/client-voice") payload = { ok: true, supported: true, auto: true, aligned_volume: 90 };
+      else if (url === "/api/apply") {
+        const body = JSON.parse(options.body);
+        stateExtra.last_applied = { locale: body.locale, modules: body.modules, at: new Date().toISOString() };
+        payload = { ok: true, task: { id: "t1" } };
+      } else if (url === "/api/restore") {
+        stateExtra.last_applied = null;
+        payload = { ok: true, task: { id: "t1" } };
+      }
+      else if (url.startsWith("/api/tasks/")) payload = { ok: true, task: { id: "t1", status: "succeeded" }, result: { message: "测试任务完成" } };
       return { ok: true, status: 200, json: async () => payload };
     }
   });
@@ -194,4 +203,30 @@ test("选人语音未开启时, 播报音量不跟随客户端", async () => {
   const page = await openWindow({ defaultLocale: "ja_JP", ui }, {}, false, { last_applied: null });
   await page.settle();
   assert.equal(page.el("volumeSlider").value, "20", "状态未开启时用配置里的音量");
+});
+
+test("换语种: 直接原地切换, 不能先停(否则会还原客户端设置再静音, 看着像没关上)", async () => {
+  const ui = { selectedLocale: "ja_JP", modules: ["lobby_voice"], volume: 60, followClient: false, voiceDelayMs: 1000, lastApplied: null, region: "auto" };
+  const page = await openWindow({ defaultLocale: "ja_JP", ui }, {}, false, { last_applied: null });
+  await page.settle();
+  page.el("modLobbyVoice").checked = true; // 勾选"选人语音"(沙箱里默认未勾)
+
+  const applyFor = async (menuIndex: number) => {
+    page.el("selectMenu").children[menuIndex].onclick!(); // 切语种
+    page.el("btnApply").onclick!();
+    await new Promise((resolve) => setTimeout(resolve, 500)); // 等 waitTask 轮询一轮(350ms)
+    await page.settle();
+  };
+
+  await applyFor(2); // ko_KR
+  await applyFor(1); // ja_JP
+
+  assert.equal(
+    page.requests.filter((r) => r.url === "/api/lobby-live/stop").length,
+    0,
+    "换语种不该发 stop —— 停了会先还原客户端设置再重新静音, 用户看到的就是『设置里没关上』"
+  );
+  const starts = page.requests.filter((r) => r.url === "/api/lobby-live/start");
+  assert.ok(starts.length >= 2, "每次开启都应走 start(后端原地换语种)");
+  assert.equal(JSON.parse(starts[starts.length - 1]!.options.body).locale, "ja_JP", "最后用的是新语种");
 });

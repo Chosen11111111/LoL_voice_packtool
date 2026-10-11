@@ -42,6 +42,8 @@ export interface LobbyLiveOptions {
   watcher?: (options: Parameters<typeof watchChampSelect>[0]) => StopWatch;
   /** 客户端是否在运行(可注入, 便于测试)。 */
   clientRunning?: () => Promise<boolean>;
+  /** 原版台词静音/还原的钩子(可注入, 便于测试语义: 运行期间只静音, 不还原)。 */
+  clientVoiceHook?: (action: "suppress" | "restore") => void;
 }
 
 export interface PlaybackReport {
@@ -162,14 +164,37 @@ export class LobbyLiveEngine {
     if (this.stopWatch && this.options?.locale === options.locale && Boolean(this.options?.includeOthers) === Boolean(options.includeOthers)) {
       return { ok: true, message: this.message, state: this.state() };
     }
-    await this.stop();
+    const previousLocale = this.options?.locale ?? "";
+    const switching = Boolean(this.stopWatch);
     const chooseDir = path.join(options.voiceRoot, options.locale, "assets", "champion-choose-vo");
     if (!(await isDirectory(chooseDir))) {
-      this.message = `语音包里没有 ${options.locale} 的选人语音：${chooseDir}`;
-      return { ok: false, message: this.message, state: this.state() };
+      const message = `语音包里没有 ${options.locale} 的选人语音：${chooseDir}`;
+      // 换语种失败时不要把正在跑的监听器弄没: 保持原样, 只报错
+      if (switching) return { ok: false, message, state: this.state() };
+      this.message = message;
+      return { ok: false, message, state: this.state() };
     }
+    if (!switching) await this.stop();
     this.available = await this.countAvailable(options.voiceRoot, options.locale);
     this.options = options;
+    if (switching) {
+      // 原地换语种: 监听器不重启 —— 重启会先还原客户端设置再重新静音(用户看到的就是"设置里没关上"),
+      // 还会重建基线、清掉播放记录。这里只换语音包, 其余保持连续。
+      this.tracker = new ChampSelectTracker();
+      this.baselined = false;
+      this.played = 0;
+      this.history = [];
+      this.lastPlayback = null;
+      this.playbackOk = 0;
+      this.playbackFailed = 0;
+      this.sessionLog = [];
+      this.lastSession = null;
+      this.message = `正在监听选人流程，使用 ${options.locale} 的语音包（${this.available} 个音频，锁定才播）`;
+      logger.info(
+        `已原地切换语音包: ${previousLocale || "无"} -> ${options.locale}（监听器未重启, 客户端原版台词保持静音）`
+      );
+      return { ok: true, message: this.message, state: this.state() };
+    }
     this.tracker = new ChampSelectTracker();
     this.presence = "offline";
     this.played = 0;
@@ -191,15 +216,17 @@ export class LobbyLiveEngine {
         if (presence === "in") {
           this.inChampSelect = true;
           // 进入/保持在选人: 按闭环确保客户端原版台词是静音的(幂等)
+          this.options?.clientVoiceHook?.("suppress");
           void suppressForChampSelect();
         } else {
           // 离开选人: 清空去重状态, 下一局重新建基线
           this.tracker.reset();
           this.baselined = false;
-          // 只有"真的从选人里出来"才还原原版台词(启动时第一次收到 out 不算)
+          // 这里**故意不还原**客户端原版台词: 工具运行期间这两栏一直保持关闭
+          // (用户要求: 用着我们的语音包时, 客户端设置里那两栏就该是关的;
+          //  关掉功能/退出工具时才还原 —— stop() 里做)
           if (this.inChampSelect) {
             this.inChampSelect = false;
-            void restoreAfterChampSelect("选人结束");
           }
         }
       },
@@ -217,6 +244,7 @@ export class LobbyLiveEngine {
     logger.info(this.message);
     // 闭环第 1 步: 只有客户端在运行才去静音原版台词(禁用阶段来得很快, 不能等到进选人)
     if (clientRunning) {
+      this.options?.clientVoiceHook?.("suppress");
       void suppressForChampSelect();
     } else {
       // 客户端没开时顺便兜底: 上次工具静音过的话, 等客户端起来再还原
@@ -265,12 +293,15 @@ export class LobbyLiveEngine {
       );
       return;
     }
-    const events = this.tracker.derive(null, session, { includeOthers: options.includeOthers });
+    // 读 this.options 而不是闭包里的 options: 换语种时是"原地更新", 闭包可能是旧的
+    const current = this.options;
+    if (!current) return;
+    const events = this.tracker.derive(null, session, { includeOthers: current.includeOthers });
     for (const event of events) {
       const payload: LobbyLiveEvent = {
         ...event,
-        locale: options.locale,
-        url: `/api/lobby-audio/${event.kind}/${event.championId}.ogg?locale=${encodeURIComponent(options.locale)}`
+        locale: current.locale,
+        url: `/api/lobby-audio/${event.kind}/${event.championId}.ogg?locale=${encodeURIComponent(current.locale)}`
       };
       this.played += 1;
       this.history = [payload, ...this.history].slice(0, HISTORY_LIMIT);
@@ -331,6 +362,7 @@ export class LobbyLiveEngine {
       this.stopWatch();
       this.stopWatch = null;
       // 闭环第 3 步: 关闭功能时还原原版台词
+      this.options?.clientVoiceHook?.("restore");
       void restoreAfterChampSelect("关闭选人语音");
     }
     this.options = null;

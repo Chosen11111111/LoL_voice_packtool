@@ -1122,6 +1122,8 @@
     lastPlayKey = key;
     lastPlayAt = now;
     lastVoice = { kind: data.kind, championId: data.championId };
+    // 播报前现取一次客户端音量: 否则刚调完音量就锁定英雄, 这一句会用上一个音量(实测体感就是"偏大")
+    void loadClientVoice();
     // 固定延迟: 等官方那句先起头, 避免两路叠在一起或我们抢在前面
     if (pendingPlayTimer) {
       clearTimeout(pendingPlayTimer);
@@ -1195,6 +1197,8 @@
 
   async function doSyncLobbyLive() {
     if (!preferencesReady) return;
+    // 任务执行中(比如"一键开启"后端正在启动监听)先不动它, 否则会出现 停->启 的无谓抖动
+    if (store.busy) return;
     const modules = (lastApplied && lastApplied.modules) || [];
     const wanted =
       lobbyVoiceSessionOn && lastApplied && lastApplied.locale && modules.includes("lobby_voice")
@@ -1205,7 +1209,8 @@
       return;
     }
     if (wanted === lobbyLiveLocale) return;
-    if (lobbyLiveLocale) await stopLobbyLive();
+    // 换语种**不先停**: 后端会原地换语音包(停了会先还原客户端设置再重新静音, 用户看到"设置里没关上")
+    const switchedLocale = lobbyLiveLocale;
     lobbyLiveLocale = wanted;
     try {
       const response = await fetch("/api/lobby-live/start", {
@@ -1215,7 +1220,11 @@
       });
       const data = await response.json();
       if (data && data.ok) {
-        log("选人语音监听已启动（状态：开启）：" + data.message);
+        log(
+          switchedLocale
+            ? switchedLocale + " -> " + wanted + "：语音包已切换（" + data.message + "）"
+            : "选人语音监听已启动（状态：开启）：" + data.message
+        );
         renderStatusRow();
         // 启动瞬间: 后端按闭环静音客户端原版台词, 同时抓客户端音量对齐播报音量
         void loadClientVoice();
