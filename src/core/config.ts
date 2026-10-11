@@ -41,6 +41,7 @@ export interface UiConfig {
   followClient: boolean | null;
   /** 播报固定延迟(毫秒): 官方台词略晚一点时, 用它对齐。缺省 1000。 */
   voiceDelayMs: number | null;
+
   /** 上次"开启语音包"的记录: 重启后界面能如实显示当前生效的是什么。 */
   lastApplied: { locale: string; modules: string[]; at: string } | null;
   region: "auto" | "cn" | "global";

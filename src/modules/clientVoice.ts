@@ -38,8 +38,10 @@ export interface AudioSettings {
 /** 客户端音量(百分比, 取自 lol-audio 设置)。 */
 export interface ClientVolumes {
   master: number;
-  sfx: number;
-  voice: number;
+  /** 音效音量(旧键)。null = 客户端没设过。 */
+  sfx: number | null;
+  /** 语音/音效音量(新键, 与 sfx 互为别名)。null = 客户端没设过。 */
+  voice: number | null;
 }
 
 export interface ClientVoiceState {
@@ -111,25 +113,32 @@ function numberOr(value: unknown, fallback: number): number {
   return Number.isFinite(parsed) ? parsed : fallback;
 }
 
-/** 从设置里取客户端音量(缺省按客户端默认值处理)。 */
+/** 从设置里取客户端音量(没设过的键返回 null, 由调用方决定默认)。 */
 export function readVolumes(data: Record<string, unknown> | null | undefined): ClientVolumes | null {
   if (!data) return null;
+  const optional = (value: unknown): number | null => {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : null;
+  };
   return {
     master: numberOr(data["masterVolume"], 100),
-    sfx: numberOr(data["sfxVolume"], 100),
-    voice: numberOr(data["voiceVolume"], 100)
+    sfx: optional(data["sfxVolume"]),
+    voice: optional(data["voiceVolume"])
   };
 }
 
 /**
- * 播报音量对齐: 直接用客户端的**总音量**。
+ * 播报音量对齐。
  *
- * 之前用"总音量 × 音效"的乘积, 用户看到的是 85 而工具显示 28(x 音效 33), 对不上号 ——
- * 播报来自另一个进程, 本来就不经过客户端的混音链路, 用总音量最直观也最好解释。
+ * 客户端那路台词要经过它的**音效/语音通道**(实测: 只按总音量对齐会明显比原版偏大),
+ * 所以播报音量 = 总音量 × 通道增益。客户端里"总音量 + 音效音量"两个滑块就是这两个因子。
  */
 export function computeAlignedVolume(volumes: ClientVolumes | null): number | null {
   if (!volumes) return null;
-  return Math.max(5, Math.min(100, Math.round(volumes.master)));
+  // 通道: 优先 voiceVolume(新键, 与 sfxVolume 互为别名), 其次 sfxVolume
+  const channel = volumes.voice ?? volumes.sfx ?? 100;
+  const scaled = (volumes.master / 100) * (channel / 100) * 100;
+  return Math.max(5, Math.min(100, Math.round(scaled)));
 }
 
 async function readJson<T>(file: string): Promise<T | null> {

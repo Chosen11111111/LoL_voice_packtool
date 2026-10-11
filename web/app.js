@@ -120,7 +120,14 @@
   const moduleControls = { ingame_voice: "modIngameVoice", ingame_lang: "modIngameLang", lobby_voice: "modLobbyVoice" };
 
   function preferenceSnapshot() {
-    return { selectedLocale: store.selected, modules: selectedModules(), volume, followClient, voiceDelayMs, region: preferenceRegion };
+    return {
+      selectedLocale: store.selected,
+      modules: selectedModules(),
+      volume,
+      followClient,
+      voiceDelayMs,
+      region: preferenceRegion
+    };
   }
 
   function savePreferences() {
@@ -967,11 +974,14 @@
       clearTimeout(clientVoiceRetry);
       clientVoiceRetry = null;
     }
-    // 播报音量 = 客户端音量: 选人语音开启时自动抓客户端的音量来对齐, 不需要用户设置
+    // 播报音量 = 客户端 总音量 × 音效音量(后端 computeAlignedVolume 算好)
     if (lobbyVoiceStateOn() && clientVoice.aligned > 0 && clientVoice.aligned !== volume) {
       setVolume(clientVoice.aligned, false);
-      const volumes = clientVoice.volumes || { master: "?" };
-      log("播报音量已对齐客户端音量：" + clientVoice.aligned + "%（客户端总音量 " + volumes.master + "%）");
+      const volumes = clientVoice.volumes || {};
+      log(
+        "播报音量已对齐客户端：" + clientVoice.aligned + "%" +
+          "（客户端 总音量 " + (volumes.master ?? "?") + "% × 音效 " + (volumes.voice ?? volumes.sfx ?? "?") + "%）"
+      );
     }
     applyFollowLabel();
   }
