@@ -17,7 +17,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 /** 版本号: 发布就改这里(文件夹名跟着变)。 */
-const VERSION = "0.01";
+const VERSION = "1.00";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(here, "..");
@@ -58,7 +58,12 @@ for (const name of ["src", "web", "assets"]) {
 }
 
 // 3) 窗口外壳 + 启动器(都带图标; 启动器改名成用户看到的名字)
-const built = path.join(root, "desktop", "target", "release");
+// exe 可能在 cargo 的产物目录, 也可能被复制到了 desktop (cargo clean 之后仍在)
+const candidates = [
+  path.join(root, "desktop", "target", "release"),
+  path.join(root, "desktop")
+];
+const built = (await exists(path.join(candidates[0], "voice-shell.exe"))) ? candidates[0] : candidates[1];
 await fs.mkdir(path.join(out, "desktop"), { recursive: true });
 const shell = path.join(built, "voice-shell.exe");
 if (await exists(shell)) {

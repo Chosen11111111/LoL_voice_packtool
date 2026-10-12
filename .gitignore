@@ -17,3 +17,7 @@ desktop/target/
 
 # 发布包产物(体积大, 用 scripts/release.ts 生成)
 release/
+
+# 从 cargo 产物复制过来的可执行文件(开发模式用, 不进仓库)
+desktop/voice-shell.exe
+desktop/voice-launcher.exe
