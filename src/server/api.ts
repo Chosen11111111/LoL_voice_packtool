@@ -487,9 +487,15 @@ export async function startApiServer(
     uploadDir: path.join(appRoot(), ".tmp", "uploads")
   });
   const unsubscribeTasks = taskManager.subscribe((event: TaskEvent) => router.broadcast(event.type, event));
+  // 省资源: 读客户端音量是一次 LCU 的 HTTP 请求, 没必要一直每秒一次。
+  // 选人阶段(最近 60 秒有事件)保持 1 秒精度, 让它"调完音量马上生效";
+  // 平时 5 秒问一次就够, 空转开销降到原来的 1/5。
+  let lastLobbyEventAt = 0;
+  let lastVolumeProbeAt = 0;
   const unsubscribeLobby = lobbyLive.subscribe((event) => {
     // 记一条: 推给了几个窗口 —— 排查"后端发了但窗口没播"时最关键的一行
     logger.info(`推送选人事件给 ${router.sseCount} 个窗口: ${event.kind} ${event.championId}`);
+    lastLobbyEventAt = Date.now();
     router.broadcast("lobby", event);
   });
   // 客户端音量变化 -> 立刻推给窗口, 让播报音量实时对齐

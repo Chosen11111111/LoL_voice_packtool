@@ -1395,6 +1395,9 @@
   }, 30000);
   setInterval(() => {
     if (!lobbyLiveLocale) return;
+    // SSE 连着的时候这条兜底没有任何用(时间戳已被 SSE 更新), 直接跳过,
+    // 省掉每 2 秒一次的多余请求; 只有 SSE 断了才真的去问后端。
+    if (events && events.readyState === 1) return;
     void (async () => {
       try {
         const data = await request("/api/lobby-live/state");
