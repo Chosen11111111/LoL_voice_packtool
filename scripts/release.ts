@@ -48,27 +48,13 @@ async function measure(dir: string): Promise<{ bytes: number; files: number }> {
 
 const mb = (n: number) => (n / 1024 / 1024).toFixed(1) + " MB";
 
-// 1) 清空 release/ 再建版本文件夹
-//    正在运行中的旧版本删不掉(里面的 node.exe 被占用会报 EBUSY), 这种情况跳过它而不是中断打包
-const releaseRoot = path.join(root, "release");
-try {
-  await fs.rm(releaseRoot, { recursive: true, force: true });
-} catch {
-  for (const entry of await fs.readdir(releaseRoot, { withFileTypes: true }).catch(() => [])) {
-    if (!entry.isDirectory() || entry.name === path.basename(out)) continue;
-    try {
-      await fs.rm(path.join(releaseRoot, entry.name), { recursive: true, force: true });
-    } catch {
-      console.log("[!] 跳过旧版本(正在使用中): " + entry.name + " —— 关掉它就能自动清掉");
-    }
-  }
-}
-try {
-  await fs.rm(out, { recursive: true, force: true });
-} catch {
-  console.log("[!] 目标目录被占用, 里面的旧文件可能残留: " + path.basename(out));
-}
+// 1) 建版本文件夹 —— 只写不删: 不动 release/ 下任何已有内容
+//    (曾经这里会清空 release/, 把用户正在测试的旧版本一起删掉; 现在一概不碰)
+const existed = await exists(out);
 await fs.mkdir(resource, { recursive: true });
+if (existed) {
+  console.log("目标目录已存在, 只覆盖同名文件, 旧版本与其它文件都不会动");
+}
 console.log("输出目录: " + out);
 
 // 2) 程序本体、界面、素材 → resource/
