@@ -179,7 +179,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         // 其中 --disable-gpu 省得最多(单独一个 GPU 进程约 37MB), 代价是界面改由 CPU 渲染。
         // 如果以后觉得界面变卡或显示不对, 把 --disable-gpu 去掉即可。
         .with_additional_browser_args(
-            "--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection \
+            "--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection,CalculateNativeWinOcclusion \
              --disable-gpu \
              --disable-gpu-compositing \
              --renderer-process-limit=1 \
@@ -193,7 +193,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
              --no-default-browser-check \
              --disable-gpu-shader-disk-cache \
              --disk-cache-size=1 \
-             --media-cache-size=1",
+             --media-cache-size=1 \
+             --js-flags=--max-old-space-size=96",
         )
         .with_ipc_handler(move |req| {
             let body = req.body().to_string();

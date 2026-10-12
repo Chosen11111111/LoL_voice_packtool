@@ -9,6 +9,12 @@ import { test } from "node:test";
 import { cleanupSuite, makeTempDir, useSuite } from "./helpers.ts";
 import {
   APPEND_ALIGN,
+  ENTRY_SIZE,
+  FIELD_CHECKSUM,
+  FIELD_OFFSET,
+  FIELD_SIZE,
+  FIELD_SIZE2,
+  TOC_OFFSET,
   backupPathFor,
   buildFingerprintIndex,
   entryFingerprint,
@@ -195,6 +201,75 @@ test("异常输入: 非 RW 文件与空替换列表都安全返回", async () =>
   assert.equal(result.patched, 0);
   assert.deepEqual(await fs.readFile(file), original);
   assert.equal(await isWadPatched(file), false);
+});
+
+/** 重构前的老实现: 整读 + Buffer.concat 再造一份。只用它来对照结果。 */
+async function patchOldWay(
+  file: string,
+  items: { index: number; data: Buffer; checksum?: bigint }[]
+): Promise<Buffer> {
+  const wad = await readWad(file);
+  const chunks: Buffer[] = [];
+  let cursor = wad.buffer.length;
+  const padding = (APPEND_ALIGN - (cursor % APPEND_ALIGN)) % APPEND_ALIGN;
+  if (padding) {
+    chunks.push(Buffer.alloc(padding));
+    cursor += padding;
+  }
+  for (const item of items) {
+    chunks.push(item.data);
+    const base = TOC_OFFSET + item.index * ENTRY_SIZE;
+    wad.buffer.writeUInt32LE(cursor, base + FIELD_OFFSET);
+    wad.buffer.writeUInt32LE(item.data.length, base + FIELD_SIZE);
+    wad.buffer.writeUInt32LE(item.data.length, base + FIELD_SIZE2);
+    if (item.checksum !== undefined) wad.buffer.writeBigUInt64LE(item.checksum, base + FIELD_CHECKSUM);
+    cursor += item.data.length;
+    const pad = (APPEND_ALIGN - (cursor % APPEND_ALIGN)) % APPEND_ALIGN;
+    if (pad) {
+      chunks.push(Buffer.alloc(pad));
+      cursor += pad;
+    }
+  }
+  return Buffer.concat([wad.buffer, ...chunks]);
+}
+
+test("补丁: 改成流式落地后, 产物与老实现逐字节一致", async () => {
+  const root = await makeTempDir("wad-stream-equal");
+  const { file } = await writeWad(root, [OGG_A, OGG_B, PNG_C]);
+  const items = [
+    { index: 0, data: Buffer.from("new-voice-a".repeat(7)) },
+    { index: 2, data: Buffer.from("new-icon".repeat(5)), checksum: BigInt("0xabcdef") }
+  ];
+
+  // 先算老实现的结果(只读不写)
+  const expected = await patchOldWay(file, items);
+  // 再跑新实现
+  const result = await patchWadEntries(file, items);
+  assert.equal(result.ok, true);
+  assert.equal(result.patched, 2);
+  assert.deepEqual(await fs.readFile(file), expected, "流式落地的字节必须与老实现完全相同");
+
+  // 补完之后仍然能被正常解析, 且新数据确实指向追加区
+  const after = await readWad(file);
+  assert.equal(after.entries[0]!.size, items[0]!.data.length);
+  assert.equal(after.entries[2]!.size, items[1]!.data.length);
+  assert.deepEqual(
+    after.buffer.subarray(after.entries[0]!.offset, after.entries[0]!.offset + after.entries[0]!.size),
+    items[0]!.data
+  );
+});
+
+test("补丁: 数据大小不是 16 的倍数时也逐字节一致(对齐分支)", async () => {
+  const root = await makeTempDir("wad-stream-align");
+  const { file } = await writeWad(root, [OGG_A, OGG_B]);
+  const items = [
+    { index: 0, data: Buffer.alloc(7, 1) },
+    { index: 1, data: Buffer.alloc(31, 2) }
+  ];
+  const expected = await patchOldWay(file, items);
+  const result = await patchWadEntries(file, items);
+  assert.equal(result.patched, 2);
+  assert.deepEqual(await fs.readFile(file), expected);
 });
 
 test.after(async () => {

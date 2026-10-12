@@ -104,7 +104,10 @@ fn main() {
         return;
     }
 
+    // 限制 V8 堆上限: 默认上限是按机器内存算的(可以很大), 这个程序根本用不到,
+    // 限住之后 GC 更早回收, 常驻内存更可控。
     let started = std::process::Command::new(&node)
+        .arg("--max-old-space-size=256")
         .arg(&app)
         .current_dir(&root)
         .env("LEAGUE_VOICE_RELEASE", "1")

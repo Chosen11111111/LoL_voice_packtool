@@ -15,7 +15,9 @@
  * 条目与具体资源的对应关系: 路径哈希算法未公开, 因此用**内容指纹**建立映射
  * (拿已知路径的原文件与之比对), 不依赖哈希算法。
  */
+import { createReadStream, createWriteStream } from "node:fs";
 import fs from "node:fs/promises";
+import { pipeline } from "node:stream/promises";
 import path from "node:path";
 import { isDirectory, isFile, listNames, removeQuietly } from "../core/fsx.ts";
 import { createLogger } from "../core/logger.ts";
@@ -245,7 +247,9 @@ export async function patchWadEntries(wadFile: string, items: PatchItem[]): Prom
   };
   if (!items.length) return { ...result, ok: true, message: "没有需要替换的条目" };
 
-  const wad = await readWad(wadFile);
+  // 只读目录(几万个条目也就几百 KB), 整个资源包不读进内存
+  const toc = await readWadEntries(wadFile);
+  const originalSize = (await fs.stat(wadFile)).size;
   const tempFile = `${wadFile}.chosen_new`;
   const backup = backupPathFor(wadFile);
 
@@ -263,14 +267,16 @@ export async function patchWadEntries(wadFile: string, items: PatchItem[]): Prom
 
   // 2) 追加数据 + 更新 TOC
   const chunks: Buffer[] = [];
-  let cursor = wad.buffer.length;
+  // 只记录"哪一小段目录要被改写成什么", 落地时按偏移写回去
+  const tocEdits: { at: number; buf: Buffer }[] = [];
+  let cursor = originalSize;
   const padding = (APPEND_ALIGN - (cursor % APPEND_ALIGN)) % APPEND_ALIGN;
   if (padding) {
     chunks.push(Buffer.alloc(padding));
     cursor += padding;
   }
   for (const item of items) {
-    const entry = wad.entries[item.index];
+    const entry = toc.entries[item.index];
     if (!entry || item.data.length === 0) {
       result.skipped += 1;
       if (item.label) result.skippedLabels.push(item.label);
@@ -282,11 +288,18 @@ export async function patchWadEntries(wadFile: string, items: PatchItem[]): Prom
       continue;
     }
     chunks.push(item.data);
-    const base = TOC_OFFSET + item.index * ENTRY_SIZE;
-    wad.buffer.writeUInt32LE(cursor, base + FIELD_OFFSET);
-    wad.buffer.writeUInt32LE(item.data.length, base + FIELD_SIZE);
-    wad.buffer.writeUInt32LE(item.data.length, base + FIELD_SIZE2);
-    if (item.checksum !== undefined) wad.buffer.writeBigUInt64LE(item.checksum, base + FIELD_CHECKSUM);
+    // 24 字节 = [+8]偏移 +[12]大小 +[16]大小(重复) +[24]校验值;
+    // 先按原值填好(+20 那 4 字节不动), 再覆盖需要改的字段 —— 与老实现逐字节等价
+    const record = Buffer.alloc(24);
+    record.writeUInt32LE(entry.offset, 0);
+    record.writeUInt32LE(entry.size, 4);
+    record.writeUInt32LE(entry.size2, 8);
+    record.writeBigUInt64LE(entry.hash, 16);
+    record.writeUInt32LE(cursor, 0);
+    record.writeUInt32LE(item.data.length, 4);
+    record.writeUInt32LE(item.data.length, 8);
+    if (item.checksum !== undefined) record.writeBigUInt64LE(item.checksum, 16);
+    tocEdits.push({ at: TOC_OFFSET + item.index * ENTRY_SIZE + FIELD_OFFSET, buf: record });
     cursor += item.data.length;
     const pad = (APPEND_ALIGN - (cursor % APPEND_ALIGN)) % APPEND_ALIGN;
     if (pad) {
@@ -302,12 +315,27 @@ export async function patchWadEntries(wadFile: string, items: PatchItem[]): Prom
     return { ...result, backup: createdBackup ? null : backup, message: "没有任何条目被替换" };
   }
 
-  result.bytesAppended = cursor - wad.buffer.length;
-  const output = Buffer.concat([wad.buffer, ...chunks]);
+  result.bytesAppended = cursor - originalSize;
 
-  // 3) 原子落地
+  // 3) 流式落地: 原文件由内核整份拷贝(不占 JS 堆) -> 追加新数据 -> 只改目录那一小段 -> 原子改名
+  //    对比老实现(readFile 整读 + Buffer.concat 再造一份 + writeFile):
+  //    100 MB 的资源包峰值从"约 200 MB"降到"目录 + 新增数据", 通常几 MB 以内。
   try {
-    await fs.writeFile(tempFile, output);
+    await pipeline(createReadStream(wadFile), createWriteStream(tempFile));
+    if (chunks.length) {
+      const appendHandle = await fs.open(tempFile, "a");
+      try {
+        for (const chunk of chunks) await appendHandle.write(chunk);
+      } finally {
+        await appendHandle.close();
+      }
+    }
+    const handle = await fs.open(tempFile, "r+");
+    try {
+      for (const edit of tocEdits) await handle.write(edit.buf, 0, edit.buf.length, edit.at);
+    } finally {
+      await handle.close();
+    }
     await fs.rename(tempFile, wadFile);
   } catch (error) {
     await removeQuietly(tempFile);
