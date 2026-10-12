@@ -142,8 +142,12 @@ function findShell(): string | null {
  * 第二个参数是图标路径: 图标在 assets/ico/ 下由使用者提供, 外壳自己解不出来。
  */
 function openShellWindow(shell: string, url: string): ChildProcess {
-  const icon = path.join(appRoot(), "assets", "ico", "voicepack-icon-512.png");
-  const args = fs.existsSync(icon) ? [url, icon] : [url];
+  // 托盘/任务栏图标: 优先用使用者设计的 .ico(系统原生加载最稳), 没有就退回 PNG
+  const ico = path.join(appRoot(), "assets", "ico", "voicepack.ico");
+  const png = path.join(appRoot(), "assets", "ico", "voicepack-icon-512.png");
+  const icon = fs.existsSync(ico) ? ico : png;
+  // 第三个参数是窗口/任务栏图标用的 PNG(ico 只有托盘能直接用)
+  const args = fs.existsSync(icon) ? [url, icon, ...(fs.existsSync(png) ? [png] : [])] : [url];
   return spawn(shell, args, { stdio: "ignore", windowsHide: false });
 }
 

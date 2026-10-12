@@ -7,7 +7,7 @@
 //! 用法: voice-shell.exe [url]   默认 http://127.0.0.1:43110/
 //! 窗口默认 800x600(与原来浏览器窗口一致), 可拖边缘缩放。
 
-use tao::dpi::LogicalSize;
+use tao::dpi::{LogicalPosition, LogicalSize, PhysicalPosition, PhysicalSize};
 use tao::event::{Event, WindowEvent};
 use tao::event_loop::{ControlFlow, EventLoopBuilder, EventLoopProxy};
 use tao::platform::windows::WindowExtWindows;
@@ -51,6 +51,10 @@ enum Action {
     ToTray,
     ShowWindow,
     ToggleMaximize,
+    /// 收成右下角一个小条(不依赖系统托盘)
+    Mini,
+    /// 从小条恢复成正常窗口
+    Restore,
     Close,
     Drag,
 }
@@ -121,29 +125,8 @@ fn load_window_icon(path: &str) -> Option<Icon> {
 }
 
 /// 建托盘图标(收进右下角时才有; 显示窗口后会被丢弃, 图标随之消失)。
-fn create_tray(icon_path: Option<&str>) -> Option<TrayIcon> {
-    // 失败时把原因写到 stderr: 之前托盘建不出来只会静默退回"最小化", 很难查
-    let Some(path) = icon_path else {
-        eprintln!("[voice-shell] 没有图标路径, 托盘图标建不了");
-        return None;
-    };
-    // 不用 tray-icon 的 from_path: 实测它对这张 512x512 会报错("操作成功完成" 但失败),
-    // 所以自己解码 PNG 再缩到 32x32, 走 from_rgba 这条路。
-    let (rgba, width, height) = match load_png_rgba(path) {
-        Ok(value) => value,
-        Err(error) => {
-            eprintln!("[voice-shell] 读图标失败 {path}: {error}");
-            return None;
-        }
-    };
-    let small = resize_rgba_to(&rgba, width, height, 32);
-    let icon = match tray_icon::Icon::from_rgba(small, 32, 32) {
-        Ok(icon) => icon,
-        Err(error) => {
-            eprintln!("[voice-shell] 造托盘图标失败: {error}");
-            return None;
-        }
-    };
+/// 菜单 + 提示 + 左键行为都在这里; 图标由调用方给(ico 原生加载或自解码都行)。
+fn build_tray_with(icon: tray_icon::Icon) -> Option<TrayIcon> {
     let menu = Menu::new();
     let show = MenuItem::with_id("show", "恢复窗口", true, None);
     let quit = MenuItem::with_id("quit", "关闭软件", true, None);
@@ -153,7 +136,7 @@ fn create_tray(icon_path: Option<&str>) -> Option<TrayIcon> {
     }
     match TrayIconBuilder::new()
         .with_icon(icon)
-        .with_tooltip("英雄联盟 语音包切换器")
+        .with_tooltip("LoL Voice - 英雄联盟语音包切换器")
         .with_menu(Box::new(menu))
         .with_menu_on_left_click(false)
         .build()
@@ -170,11 +153,47 @@ fn create_tray(icon_path: Option<&str>) -> Option<TrayIcon> {
     }
 }
 
+fn create_tray(icon_path: Option<&str>) -> Option<TrayIcon> {
+    let Some(path) = icon_path else {
+        eprintln!("[voice-shell] 没有图标路径, 托盘图标建不了");
+        return None;
+    };
+
+    // 优先让系统自己加载 .ico —— 托盘图标本来就是 LoadImageW(IMAGE_ICON) 装的,
+    // 它认 ico/bmp, **不认 PNG**(之前拿 PNG 走这条路一直失败, 报错还很误导)。
+    if path.to_ascii_lowercase().ends_with(".ico") {
+        match tray_icon::Icon::from_path(path, Some((32, 32))) {
+            Ok(icon) => return build_tray_with(icon),
+            Err(error) => eprintln!("[voice-shell] 读 ico 失败 {path}: {error}; 退回自解码"),
+        }
+    }
+
+    // 退回: 自己解码 PNG 再按 alpha 加权缩到 32x32, 走 from_rgba
+    let (rgba, width, height) = match load_png_rgba(path) {
+        Ok(value) => value,
+        Err(error) => {
+            eprintln!("[voice-shell] 读图标失败 {path}: {error}");
+            return None;
+        }
+    };
+    let small = resize_rgba_to(&rgba, width, height, 32);
+    match tray_icon::Icon::from_rgba(small, 32, 32) {
+        Ok(icon) => build_tray_with(icon),
+        Err(error) => {
+            eprintln!("[voice-shell] 造托盘图标失败: {error}");
+            None
+        }
+    }
+}
+
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut args = std::env::args().skip(1);
     let url = args.next().unwrap_or_else(|| "http://127.0.0.1:43110/".to_string());
-    // 第二个参数(可选): 图标 PNG 的路径, 由 app.ts 传进来
+    // 第二个参数(可选): 托盘图标的路径, 由 app.ts 传进来。优先是 .ico ——
+    // 托盘图标本来就是用 LoadImageW(IMAGE_ICON) 装的, 它认 ico 不认 PNG。
     let icon_path: Option<String> = args.next();
+    // 第三个参数(可选): 窗口/任务栏图标的 PNG。tao 的 Icon 只能从 rgba 构造, 用不了 ico。
+    let window_icon_path: Option<String> = args.next();
 
     let event_loop = EventLoopBuilder::<Action>::with_user_event().build();
     let proxy: EventLoopProxy<Action> = event_loop.create_proxy();
@@ -195,7 +214,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     MenuEvent::set_event_handler(Some(move |event: MenuEvent| {
         match event.id().0.as_str() {
             "show" => {
-                let _ = menu_proxy.send_event(Action::ShowWindow);
+                let _ = menu_proxy.send_event(Action::Restore);
             }
             "quit" => {
                 let _ = menu_proxy.send_event(Action::Close);
@@ -211,7 +230,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .with_inner_size(LogicalSize::new(800.0, 600.0))
         .with_min_inner_size(LogicalSize::new(680.0, 520.0))
         .build(&event_loop)?;
-    if let Some(icon) = icon_path.as_deref().and_then(load_window_icon) {
+    if let Some(icon) = window_icon_path
+        .as_deref()
+        .or(icon_path.as_deref())
+        .and_then(load_window_icon)
+    {
         window.set_window_icon(Some(icon)); // 任务栏 / Alt-Tab 的图标
     }
 
@@ -223,6 +246,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             let action = match body.as_str() {
                 "minimize" => Some(Action::Minimize),
                 "tray" => Some(Action::ToTray),
+                // 收成右下角小条 / 从小条恢复(小条上有"恢复"和"关闭", 不依赖系统托盘)
+                "mini" => Some(Action::Mini),
+                "restore" => Some(Action::Restore),
                 // 页面可以在后端要求时把窗口叫回来(收进托盘后双击图标那条路)
                 "show" => Some(Action::ShowWindow),
                 "toggle-maximize" => Some(Action::ToggleMaximize),
@@ -238,6 +264,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // 托盘常驻(启动就建): 这样"收进托盘"永远不会出现"窗口藏了但没有图标"的死局
     let tray: Option<TrayIcon> = create_tray(icon_path.as_deref());
+    // 收成小条前的位置和大小, 恢复时用
+    let mut saved_bounds: Option<(PhysicalPosition<i32>, PhysicalSize<u32>)> = None;
     event_loop.run(move |event, _, control_flow| {
         *control_flow = ControlFlow::Wait;
         match event {
@@ -259,6 +287,47 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             Event::UserEvent(Action::ShowWindow) => {
                 set_taskbar_visible(window.hwnd(), true); // 回到任务栏
                 let _ = window.set_skip_taskbar(false);
+                window.set_visible(true);
+                window.set_focus();
+            }
+            // 收成右下角的小条: 桌面右下角留一小条, 上面有"恢复/关闭"。
+            // 之所以不用"藏起来 + 托盘图标", 是因为托盘图标能否显示完全取决于系统状态,
+            // 试过 NIM_ADD 成功但图标就是不出现的情况(用户机器上就是这样)。
+            Event::UserEvent(Action::Mini) => {
+                saved_bounds = window
+                    .outer_position()
+                    .ok()
+                    .map(|position| (position, window.inner_size()));
+                let _ = window.set_skip_taskbar(true);
+                set_taskbar_visible(window.hwnd(), false);
+                let _ = window.set_always_on_top(true);
+                // 关键: 主界面的最小尺寸是 680x520, 不放开的话缩成小条会被系统挡住
+                window.set_min_inner_size(Some(LogicalSize::new(206.0, 46.0)));
+                let _ = window.set_resizable(false);
+                let height = 46.0;
+                let width = 206.0;
+                let _ = window.set_inner_size(LogicalSize::new(width, height));
+                if let Some(monitor) = window.current_monitor() {
+                    let size = monitor.size();
+                    let origin = monitor.position();
+                    let margin = 18i32;
+                    let taskbar = 56i32;
+                    let x = origin.x + size.width as i32 - width as i32 - margin;
+                    let y = origin.y + size.height as i32 - height as i32 - taskbar;
+                    let _ = window.set_outer_position(LogicalPosition::new(x, y));
+                }
+                window.set_visible(true);
+            }
+            Event::UserEvent(Action::Restore) => {
+                let _ = window.set_always_on_top(false);
+                window.set_min_inner_size(Some(LogicalSize::new(680.0, 520.0)));
+                let _ = window.set_resizable(true);
+                set_taskbar_visible(window.hwnd(), true);
+                let _ = window.set_skip_taskbar(false);
+                if let Some((position, size)) = saved_bounds.take() {
+                    let _ = window.set_inner_size(LogicalSize::new(size.width as f64, size.height as f64));
+                    let _ = window.set_outer_position(LogicalPosition::new(position.x, position.y));
+                }
                 window.set_visible(true);
                 window.set_focus();
             }

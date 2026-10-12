@@ -13,7 +13,7 @@
   <span class="app-titlebar__name">英雄联盟 语音包切换器</span>
   <div class="app-titlebar__actions">
     <button type="button" class="win-btn" id="winMin" title="最小化" aria-label="最小化">&#8722;</button>
-    <button type="button" class="win-btn" id="winTray" title="收进右下角托盘" aria-label="收进右下角托盘">
+    <button type="button" class="win-btn" id="winTray" title="收起来（右下角小条，可恢复/关闭）" aria-label="收起来">
           <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true" focusable="false">
             <path d="M8 2.6v5.6" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>
             <path d="M5.3 6.4 8 9.1l2.7-2.7" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
@@ -21,6 +21,14 @@
           </svg>
         </button>
     <button type="button" class="win-btn win-btn--close" id="winClose" title="关闭" aria-label="关闭">&#10005;</button>
+  </div>
+
+  <!-- 收起来后的小条: 恢复 / 关闭。不依赖系统托盘, 一定看得见 -->
+  <div class="mini-bar" id="miniBar">
+    <img class="mini-bar__logo" src="/brand/ico/voicepack-icon-trim.png" alt="">
+    <span class="mini-bar__title">LoL Voice</span>
+    <button type="button" class="mini-btn" id="miniRestore" title="恢复窗口">恢复</button>
+    <button type="button" class="mini-btn mini-btn--close" id="miniClose" title="关闭软件">关闭</button>
   </div>
 </div>
 

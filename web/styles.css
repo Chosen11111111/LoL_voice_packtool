@@ -969,3 +969,35 @@ button, input, select {
 .win-btn--close:hover { background-color: #e5453a; color: #fff; }
 .win-btn--close:active { background-color: #c9362c; }
 .win-btn:focus-visible { outline: 2px solid var(--blue); outline-offset: -1px; }
+
+/* 收起来后的小条(不依赖系统托盘): 只在 body.mini 时显示, 其余界面藏起来 */
+.mini-bar { display: none; }
+body.mini { margin: 0; overflow: hidden; }
+body.mini .app-titlebar,
+body.mini .layout { display: none !important; }
+body.mini .mini-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 46px;
+  padding: 0 10px;
+  box-sizing: border-box;
+  background: linear-gradient(180deg, #ffffff 0%, #eef3fc 100%);
+  border: 1px solid rgba(120, 150, 200, 0.35);
+  border-radius: 10px;
+  user-select: none;
+}
+.mini-bar__logo { width: 20px; height: 20px; object-fit: contain; }
+.mini-bar__title { flex: 1 1 auto; font-size: 12px; color: #4a5b74; white-space: nowrap; overflow: hidden; }
+.mini-btn {
+  border: 1px solid rgba(90, 130, 200, 0.45);
+  background: #ffffff;
+  color: #2563eb;
+  border-radius: 6px;
+  padding: 3px 9px;
+  font-size: 12px;
+  cursor: pointer;
+}
+.mini-btn:hover { background: #eaf1ff; }
+.mini-btn--close { color: #c0392b; border-color: rgba(200, 90, 80, 0.45); }
+.mini-btn--close:hover { background: #fdecea; }
