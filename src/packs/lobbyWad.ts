@@ -17,14 +17,15 @@ import { createLogger } from "../core/logger.ts";
 import { cdnLocale, localeDisplayName } from "./locales.ts";
 import {
   backupPathFor,
-  buildFingerprintIndex,
+  buildFingerprintIndexFromFile,
   isWadPatched,
   patchWadEntries,
-  readWad,
+  readEntryBytes,
+  readWadEntries,
   restoreWad,
   type PatchItem,
   type PatchResult,
-  type WadFile
+  type WadToc
 } from "./wadfile.ts";
 
 const logger = createLogger("lobby-wad");
@@ -41,88 +42,12 @@ export interface EntryMapping {
   ban: Record<string, number>;
 }
 
-/** 官方 wad 里的一个"块": 数据 + 校验值(两者必须成对搬运)。 */
-export interface SourceChunk {
-  data: Buffer;
-  checksum: bigint;
-  size: number;
-}
-
-/**
- * 建立 "chunkId(+0) -> 数据+校验值" 表。
- * 客户端会校验每条数据的内容校验值, 而算法未公开 —— 因此只能从官方 wad 里
- * 把"数据 + 校验值"整对搬过来, 这样校验天然成立。
- */
-export async function buildChunkTable(sourceWadFile: string): Promise<Map<string, SourceChunk>> {
-  const source = await readWad(sourceWadFile);
-  const table = new Map<string, SourceChunk>();
-  for (const entry of source.entries) {
-    const base = 272 + entry.index * 32;
-    const chunkId = source.buffer.readBigUInt64LE(base).toString(16);
-    table.set(chunkId, {
-      data: Buffer.from(source.buffer.subarray(entry.offset, entry.offset + entry.size)),
-      checksum: source.buffer.readBigUInt64LE(base + 24),
-      size: entry.size
-    });
-  }
-  return table;
-}
-
-export interface TransplantOptions {
-  targetWadFile: string;
-  sourceWadFile: string;
-  onLog?: (line: string) => void;
-  onProgress?: (done: number, total: number, current: string) => void;
-  /** 只搬运这些 chunkId(留空=全部能对上的)。 */
-  onlyChunkIds?: Set<string>;
-}
-
-/** 把官方 wad 的块搬进目标 wad(按 chunkId 对齐), 数据与校验值成对替换。 */
-export async function transplantChunks(options: TransplantOptions): Promise<PatchResult & { matched: number; total: number }> {
-  const log = options.onLog ?? (() => undefined);
-  const progress = options.onProgress ?? (() => undefined);
-  const target = await readWad(options.targetWadFile);
-  const table = await buildChunkTable(options.sourceWadFile);
-  log(`源 wad 提供 ${table.size} 个块`);
-
-  const items: PatchItem[] = [];
-  let matched = 0;
-  let done = 0;
-  for (const entry of target.entries) {
-    const base = 272 + entry.index * 32;
-    const chunkId = target.buffer.readBigUInt64LE(base).toString(16);
-    if (options.onlyChunkIds && !options.onlyChunkIds.has(chunkId)) continue;
-    const chunk = table.get(chunkId);
-    if (!chunk) continue;
-    matched += 1;
-    items.push({ index: entry.index, data: chunk.data, checksum: chunk.checksum, label: `chunk ${chunkId.slice(0, 12)}` });
-    done += 1;
-    progress(done, target.count, chunkId.slice(0, 12));
-  }
-  if (!items.length) {
-    return {
-      ok: false,
-      patched: 0,
-      skipped: 0,
-      backup: null,
-      bytesAppended: 0,
-      labels: [],
-      skippedLabels: [],
-      matched: 0,
-      total: target.count,
-      message: "源 wad 与目标 wad 没有任何可对齐的块(chunkId 不匹配)"
-    };
-  }
-  const result = await patchWadEntries(options.targetWadFile, items);
-  return { ...result, matched, total: target.count };
-}
-
 /**
  * wad 身份标识。
  * 不能用文件大小 —— 补丁之后文件会变长, 那样缓存会失效并触发无谓的重新识别。
  * 条目哈希在补丁前后保持不变, 因此用 "条目数 + 全部条目哈希的折叠值" 作为身份。
  */
-export function wadKeyOf(wad: WadFile): string {
+export function wadKeyOf(wad: WadToc): string {
   let fold = 0n;
   for (const entry of wad.entries) {
     fold = (fold ^ entry.hash) * 0x100000001b3n & 0xffffffffffffffffn;
@@ -196,7 +121,7 @@ async function fetchBytesOnce(url: string, timeoutMs = 30000): Promise<Buffer | 
 }
 
 export interface IdentifyOptions {
-  wad: WadFile;
+  wad: WadToc;
   appDir: string;
   cdnBase: string;
   clientLocale: string;
@@ -229,7 +154,8 @@ export async function identifyEntries(options: IdentifyOptions): Promise<EntryMa
     }
   }
 
-  const index = buildFingerprintIndex(options.wad, 64);
+  // 按需读取: 每个条目只读前 64 字节, 不再把整个资源包读进内存
+  const index = await buildFingerprintIndexFromFile(options.wad.path, options.wad.entries, 64);
   const base = `${options.cdnBase}/plugins/rcp-be-lol-game-data/global/${cdn}/v1`;
   const tasks: Array<{ type: string; id: number }> = [];
   for (const id of options.ids) {
@@ -270,13 +196,16 @@ export async function identifyEntries(options: IdentifyOptions): Promise<EntryMa
           const full = await fetchBytes(url);
           let exact: number | undefined;
           if (full) {
-            exact = hits.find((candidate) => {
+            for (const candidate of hits) {
               const entry = options.wad.entries[candidate]!;
-              return (
-                entry.size === full.length &&
-                options.wad.buffer.subarray(entry.offset, entry.offset + entry.size).equals(full)
-              );
-            });
+              if (entry.size !== full.length) continue;
+              // 极少数指纹撞车才走到这里: 只读这一条, 不整读资源包
+              const bytes = await readEntryBytes(options.wad.path, entry, entry.size);
+              if (bytes.equals(full)) {
+                exact = candidate;
+                break;
+              }
+            }
           }
           if (exact !== undefined) table[String(task.id)] = exact;
         }
@@ -337,8 +266,10 @@ export async function applyLobbyVoiceWad(options: ApplyLobbyOptions): Promise<Ap
     detail: []
   };
 
-  const wad = await readWad(options.wadFile);
-  log(`资源包: ${options.wadFile}（${wad.count} 个条目，${(wad.buffer.length / 1048576).toFixed(1)} MB）`);
+  // 只读目录: 整个资源包可能几百 MB, 没必要读进内存
+  const wad = await readWadEntries(options.wadFile);
+  const wadSize = (await fs.stat(options.wadFile)).size;
+  log(`资源包: ${options.wadFile}（${wad.count} 个条目，${(wadSize / 1048576).toFixed(1)} MB）`);
 
   const mapping = await identifyEntries({
     wad,

@@ -128,7 +128,15 @@ export async function readWad(file: string): Promise<WadFile> {
 }
 
 /** 只读 TOC(不加载整个文件, 用于超大 wad 的快速探查)。 */
-export async function readWadEntries(file: string): Promise<{ version: string; count: number; dataStart: number; entries: WadEntry[] }> {
+export interface WadToc {
+  path: string;
+  version: string;
+  count: number;
+  dataStart: number;
+  entries: WadEntry[];
+}
+
+export async function readWadEntries(file: string): Promise<WadToc> {
   const handle = await fs.open(file, "r");
   try {
     // 先读固定头部拿到条目数, 再按真实大小读 TOC(大 wad 的 TOC 可能远大于固定窗口)
@@ -156,10 +164,58 @@ export async function readWadEntries(file: string): Promise<{ version: string; c
         hash: buffer.readBigUInt64LE(base + FIELD_HASH)
       });
     }
-    return { version: `${buffer[2]}.${buffer[3]}`, count, dataStart: TOC_OFFSET + count * ENTRY_SIZE, entries };
+    return { path: file, version: `${buffer[2]}.${buffer[3]}`, count, dataStart: TOC_OFFSET + count * ENTRY_SIZE, entries };
   } finally {
     await handle.close();
   }
+}
+
+/**
+ * 按需读取某个条目的字节(不把整个资源包读进内存)。
+ * 传 handle 可以复用同一个文件句柄连续读多条(建指纹索引时用得上)。
+ */
+export async function readEntryBytes(
+  file: string,
+  entry: WadEntry,
+  bytes: number,
+  handle?: import("node:fs/promises").FileHandle
+): Promise<Buffer> {
+  const want = Math.max(0, Math.min(bytes, entry.size));
+  const own = handle ?? (await fs.open(file, "r"));
+  try {
+    const out = Buffer.alloc(want);
+    const { bytesRead } = await own.read(out, 0, want, entry.offset);
+    return out.subarray(0, bytesRead);
+  } finally {
+    if (!handle) await own.close();
+  }
+}
+
+/**
+ * 流式建立 "内容指纹 -> 条目序号" 索引: 每个条目只读前 N 字节。
+ * 与 buildFingerprintIndex 结果等价, 但内存占用与资源包大小无关
+ * (大资源包几百 MB 时, 整读版本会让进程常驻几百 MB)。
+ */
+export async function buildFingerprintIndexFromFile(
+  file: string,
+  entries: WadEntry[],
+  bytes = 64
+): Promise<Map<string, number[]>> {
+  const index = new Map<string, number[]>();
+  const handle = await fs.open(file, "r");
+  try {
+    for (const entry of entries) {
+      const head = await readEntryBytes(file, entry, bytes, handle);
+      if (!head.length) continue;
+      const key = head.toString("hex");
+      const list = index.get(key);
+      if (list) list.push(entry.index);
+      else index.set(key, [entry.index]);
+    }
+  } finally {
+    await handle.close();
+  }
+  return index;
 }
 
 /** 条目数据的前 N 字节(用于内容指纹)。 */

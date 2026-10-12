@@ -17,9 +17,11 @@ import {
   TOC_OFFSET,
   backupPathFor,
   buildFingerprintIndex,
+  buildFingerprintIndexFromFile,
   entryFingerprint,
   isWadPatched,
   patchWadEntries,
+  readEntryBytes,
   readWad,
   readWadEntries,
   restoreWad,
@@ -270,6 +272,27 @@ test("补丁: 数据大小不是 16 的倍数时也逐字节一致(对齐分支)
   const result = await patchWadEntries(file, items);
   assert.equal(result.patched, 2);
   assert.deepEqual(await fs.readFile(file), expected);
+});
+
+test("指纹: 按需读取建的索引与整读版本完全一致(含重复内容的多命中)", async () => {
+  const root = await makeTempDir("wad-fingerprint-stream");
+  const { file } = await writeWad(root, [OGG_A, OGG_B, PNG_C, OGG_A]);
+  const wad = await readWad(file);
+  const toc = await readWadEntries(file);
+
+  const inMemory = buildFingerprintIndex(wad, 64);
+  const streaming = await buildFingerprintIndexFromFile(toc.path, toc.entries, 64);
+  const normalize = (m: Map<string, number[]>) =>
+    [...m.entries()].map(([k, v]) => [k, [...v].sort()] as const).sort((a, b) => (a[0] < b[0] ? -1 : 1));
+  assert.deepEqual(normalize(streaming), normalize(inMemory));
+
+  // 内容相同的条目要落在同一个指纹下(多命中)
+  const same = normalize(streaming).find(([, v]) => v.length === 2);
+  assert.ok(same, "重复内容应产生多命中");
+
+  // 按需读取的字节要与整读切片一致
+  assert.deepEqual(await readEntryBytes(file, toc.entries[1]!, 64), OGG_B.subarray(0, 64));
+  assert.deepEqual(await readEntryBytes(file, toc.entries[2]!, 9999), PNG_C);
 });
 
 test.after(async () => {
