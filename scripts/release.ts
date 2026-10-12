@@ -5,8 +5,8 @@
  * 双击 start.cmd 就能用。发布模式下日志只留 warning 以上, 也不写日志文件。
  *
  * 用法:
- *   node scripts/release.ts            生成 release/ 和 release.zip
- *   node scripts/release.ts --no-zip   只要文件夹
+ *   node scripts/release.ts          生成 release/(默认不压缩)
+ *   node scripts/release.ts --zip    额外压一个 release.zip
  *
  * 刻意不打包的东西(用户用不到, 只会占地方):
  *   tests/  docs/  scripts/  .tmp/  .git/  desktop/src  desktop/target
@@ -20,7 +20,7 @@ import { fileURLToPath } from "node:url";
 const here = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(here, "..");
 const out = path.join(root, "release");
-const wantZip = !process.argv.includes("--no-zip");
+const wantZip = process.argv.includes("--zip"); // 默认不压缩
 
 /** 复制目录(不存在就跳过)。 */
 async function copyDir(from: string, to: string, filter?: (name: string) => boolean) {

@@ -390,8 +390,8 @@ cargo build --release      # 产物 desktop/target/release/voice-shell.exe（约
 ## 打包给用户（免安装）
 
 ```
-node scripts/release.ts          # 生成 release/ 与 release.zip
-node scripts/release.ts --no-zip # 只要文件夹
+node scripts/release.ts          # 生成 release/（默认不压缩）
+node scripts/release.ts --zip    # 需要的话额外压一个 zip
 ```
 
 发布包**自带 Node 运行时**，用户电脑上不需要装任何环境，双击 `release\start.cmd` 即可。
