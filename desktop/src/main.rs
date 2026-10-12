@@ -190,7 +190,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
              --disable-sync \
              --metrics-recording-only \
              --no-first-run \
-             --no-default-browser-check",
+             --no-default-browser-check \
+             --disable-gpu-shader-disk-cache \
+             --disk-cache-size=1 \
+             --media-cache-size=1",
         )
         .with_ipc_handler(move |req| {
             let body = req.body().to_string();
