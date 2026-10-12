@@ -112,7 +112,19 @@ const readme = [
 ].join("\r\n") + "\r\n";
 await fs.writeFile(path.join(out, "README.txt"), readme, "utf8");
 
-// 6) 统计
+// 6) 清掉输出目录的"低完整性"标记
+//    如果所在目录被打过 Low 标记, 里面的 exe 运行时会被降成低权限,
+//    而 Windows 禁止低权限进程注册托盘图标(NIM_ADD 返回 5 拒绝访问)。
+//    复制到用户机器上一般不会继承该标记, 但这里显式清理, 免得埋雷。
+try {
+  const { spawnSync } = await import("node:child_process");
+  spawnSync("icacls", [out, "/setintegritylevel", "(OI)(CI)M", "/T", "/C", "/Q"], { stdio: "ignore" });
+  console.log("完整性标记: 已清理(改为中完整性)");
+} catch {
+  console.log("完整性标记: 清理失败(一般不影响, 复制到别的机器即可)");
+}
+
+// 7) 统计
 const size = await measure(out);
 console.log("\n发布包: " + size.files + " 个文件, " + mb(size.bytes));
 console.log("直接把这个文件夹发出去就行: " + path.basename(out));

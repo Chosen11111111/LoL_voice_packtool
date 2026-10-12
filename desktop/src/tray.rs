@@ -223,6 +223,11 @@ unsafe fn add_icon(hwnd: isize) -> bool {
             let code = GetLastError();
             // 5 = 拒绝访问: 常见原因是进程的完整性级别低于资源管理器(比如被别的程序以低权限拉起)
             eprintln!("[voice-shell] 托盘注册失败(NIM_ADD), 错误码 {code}{}", if code == 5 { " (拒绝访问: 进程权限级别不够)" } else { "" });
+            if code == 5 {
+                // 实测原因: 所在目录被打过"低完整性"标记, 里面的 exe 一律低权限运行,
+                // 而 Windows 禁止低权限进程注册托盘图标。给一条可操作的指引。
+                eprintln!("[voice-shell] 提示: 如果程序所在目录带低完整性标记, 运行 scripts\\fix-integrity.cmd 可修复");
+            }
         } else {
             // 让系统用 v4 的回调语义
             let mut version = build_data(hwnd);
