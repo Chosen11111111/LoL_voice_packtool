@@ -31,6 +31,58 @@ fn alert(text: &str) {
 /// 默认端口(与 src/core/config.ts 里的默认值一致)。
 const DEFAULT_PORT: u16 = 43110;
 
+/// 找到主窗口并把它显示出来。
+///
+/// 窗口标题来自 web/index.html 的 <title>, 是固定的 —— 这样即使托盘图标没显示出来,
+/// 再双击一次程序也能把窗口叫回来(同时把"从任务栏移除"的扩展样式一起还原)。
+fn show_our_window() -> bool {
+    #[link(name = "user32")]
+    unsafe extern "system" {
+        fn FindWindowW(class_name: *const u16, window_name: *const u16) -> isize;
+        fn ShowWindow(hwnd: isize, cmd: i32) -> i32;
+        fn SetForegroundWindow(hwnd: isize) -> i32;
+        fn GetWindowLongPtrW(hwnd: isize, index: i32) -> isize;
+        fn SetWindowLongPtrW(hwnd: isize, index: i32, value: isize) -> isize;
+        fn SetWindowPos(hwnd: isize, after: isize, x: i32, y: i32, cx: i32, cy: i32, flags: u32) -> i32;
+    }
+    const GWL_EXSTYLE: i32 = -20;
+    const WS_EX_APPWINDOW: isize = 0x0004_0000;
+    const WS_EX_TOOLWINDOW: isize = 0x0000_0080;
+    const SW_SHOW: i32 = 5;
+    const SWP_NOMOVE: u32 = 0x0002;
+    const SWP_NOSIZE: u32 = 0x0001;
+    const SWP_NOZORDER: u32 = 0x0004;
+    const SWP_FRAMECHANGED: u32 = 0x0020;
+
+    // 注意: 必须带上类名 —— 只给标题的话 FindWindowW 返回 0(实测),
+    // 因为 tao 的窗口类是每进程注册的, 传 null 类名时找不到它。
+    let class_name = wide("Window Class");
+    let title = wide("LoL Voice"); // 与外壳的 with_title 一致
+    let hwnd = unsafe { FindWindowW(class_name.as_ptr(), title.as_ptr()) };
+    if hwnd == 0 {
+        return false;
+    }
+    unsafe {
+        let ex = GetWindowLongPtrW(hwnd, GWL_EXSTYLE);
+        let restored = (ex | WS_EX_APPWINDOW) & !WS_EX_TOOLWINDOW;
+        if restored != ex {
+            SetWindowLongPtrW(hwnd, GWL_EXSTYLE, restored);
+            SetWindowPos(
+                hwnd,
+                0,
+                0,
+                0,
+                0,
+                0,
+                SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_FRAMECHANGED,
+            );
+        }
+        ShowWindow(hwnd, SW_SHOW);
+        SetForegroundWindow(hwnd);
+    }
+    true
+}
+
 fn main() {
     let exe = std::env::current_exe().ok();
     let dir: PathBuf = exe
@@ -48,7 +100,11 @@ fn main() {
     // 已经在运行时, 后端会因端口被占用直接退出; 而发布包没有控制台窗口,
     // 用户只会看到"点了没反应" —— 所以先探一下端口, 直接告诉他。
     if std::net::TcpStream::connect(("127.0.0.1", DEFAULT_PORT)).is_ok() {
-        alert("软件已经在运行了。\n\n看不到窗口的话, 看看右下角托盘里的小图标(可能在\"隐藏的图标\"里)。");
+        // 已经在运行: 把它的窗口叫回来。
+        // 这样即使托盘图标没显示出来(有些机器上会被系统压掉), 再双击一次也能恢复, 不会"卡在后台回不来"。
+        if !show_our_window() {
+            alert("软件已经在运行了, 但没能把窗口叫回来。\n\n可以到任务管理器结束 node.exe 与 voice-shell.exe 再重新打开。");
+        }
         return;
     }
 

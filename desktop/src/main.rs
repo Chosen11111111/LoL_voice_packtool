@@ -158,7 +158,11 @@ fn create_tray(icon_path: Option<&str>) -> Option<TrayIcon> {
         .with_menu_on_left_click(false)
         .build()
     {
-        Ok(tray) => Some(tray),
+        Ok(tray) => {
+            // 显式再置一次可见: 有些环境下初始 NIM_ADD 的状态会被系统记成隐藏
+            let _ = tray.set_visible(true);
+            Some(tray)
+        }
         Err(error) => {
             eprintln!("[voice-shell] 建托盘图标失败: {error}");
             None
@@ -201,7 +205,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }));
 
     let window = WindowBuilder::new()
-        .with_title("英雄联盟 语音包切换器")
+        .with_title("LoL Voice")
         .with_decorations(false) // 关键: 不要系统标题栏
         .with_resizable(true)
         .with_inner_size(LogicalSize::new(800.0, 600.0))
@@ -219,6 +223,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             let action = match body.as_str() {
                 "minimize" => Some(Action::Minimize),
                 "tray" => Some(Action::ToTray),
+                // 页面可以在后端要求时把窗口叫回来(收进托盘后双击图标那条路)
+                "show" => Some(Action::ShowWindow),
                 "toggle-maximize" => Some(Action::ToggleMaximize),
                 "close" => Some(Action::Close),
                 "drag" => Some(Action::Drag),

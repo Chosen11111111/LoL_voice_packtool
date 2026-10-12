@@ -21,6 +21,16 @@ import {
   setClientOriginalVoice
 } from "../modules/clientVoice.ts";
 
+/** 是否有人要求把主窗口叫回来(双击图标时由启动器触发)。 */
+let windowShowRequested = false;
+
+/** 取一次就清掉: 页面拿到后才会执行, 不需要重复执行。 */
+function takeWindowShowRequest(): boolean {
+  const value = windowShowRequested;
+  windowShowRequested = false;
+  return value;
+}
+
 const logger = createLogger("api");
 import { Router, startHttpServer, type RunningServer } from "./http.ts";
 import { taskManager, type TaskEvent } from "../tasks/manager.ts";
@@ -84,7 +94,8 @@ export function buildRouter(): Router {
         last_applied: config.ui?.lastApplied ?? null,
         release: process.env.LEAGUE_VOICE_RELEASE === "1",
         hide_enable_tip: config.ui?.hideEnableTip === true,
-        hide_tray_tip: config.ui?.hideTrayTip === true
+        hide_tray_tip: config.ui?.hideTrayTip === true,
+        window_show: takeWindowShowRequest()
       }
     };
   });
@@ -272,6 +283,12 @@ export function buildRouter(): Router {
       lobbyLang: body.lobbyLang === "en_US" || body.lobbyLang === "zh_CN" ? body.lobbyLang : "keep"
     });
     return { ok: true, task };
+  });
+
+  /** 页面看到 window_show=true 就让外壳把窗口亮出来(读一次就清掉, 一次性)。 */
+  router.post("/api/window/show", () => {
+    windowShowRequested = true;
+    return { ok: true };
   });
 
   /** 记住"托盘的说明已经看过"。 */
@@ -513,6 +530,7 @@ export async function stateOnce(): Promise<unknown> {
     last_applied: config.ui?.lastApplied ?? null,
         release: process.env.LEAGUE_VOICE_RELEASE === "1",
         hide_enable_tip: config.ui?.hideEnableTip === true,
-        hide_tray_tip: config.ui?.hideTrayTip === true
+        hide_tray_tip: config.ui?.hideTrayTip === true,
+        window_show: takeWindowShowRequest()
   };
 }

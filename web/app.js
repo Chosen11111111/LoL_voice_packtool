@@ -496,6 +496,10 @@
     lastApplied = (store.state && store.state.last_applied) || null;
     hideEnableTip = (store.state && store.state.hide_enable_tip) === true;
     releaseMode = (store.state && store.state.release) === true;
+    // 后端要求(双击图标时): 让外壳把窗口亮出来, 免得用户以为软件没了
+    if (store.state && store.state.window_show && window.ipc && typeof window.ipc.postMessage === "function") {
+      try { window.ipc.postMessage("show"); } catch (error) { console.warn("恢复窗口失败", error); }
+    }
     const logButton = $("btnOpenLog");
     if (logButton) logButton.classList.toggle("hidden", releaseMode);
     await loadClientVoice();
@@ -1431,27 +1435,7 @@ function setupAppTitlebar() {
     try { ipc.postMessage(message); } catch (error) { console.warn("窗口操作失败", error); }
   };
   document.getElementById("winMin").addEventListener("click", () => send("minimize"));
-  // 第一次点"收进托盘": 先把图标在哪讲清楚(不然用户会以为软件没了), 之后就直接收
-  let trayTipDone = false;
-  const trayTip = document.getElementById("trayTipModal");
-  fetch("/api/state")
-    .then((response) => response.json())
-    .then((payload) => { trayTipDone = payload?.state?.hide_tray_tip === true; })
-    .catch(() => {});
-  const trayTipButton = document.getElementById("btnTrayTipOk");
-  if (trayTipButton) {
-    trayTipButton.addEventListener("click", () => {
-      trayTip?.classList.add("hidden");
-      trayTipDone = true;
-      void fetch("/api/ui/hide-tray-tip", { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" }).catch(() => {});
-      send("tray");
-    });
-  }
-  document.getElementById("btnCloseTrayTip")?.addEventListener("click", () => trayTip?.classList.add("hidden"));
-  document.getElementById("winTray").addEventListener("click", () => {
-    if (trayTipDone || !trayTip) { send("tray"); return; }
-    trayTip.classList.remove("hidden");
-  });
+  document.getElementById("winTray").addEventListener("click", () => send("tray"));
   document.getElementById("winClose").addEventListener("click", () => send("close"));
   bar.addEventListener("mousedown", (event) => {
     if (event.button !== 0 || event.target.closest(".win-btn")) return;
