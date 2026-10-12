@@ -1435,25 +1435,7 @@ function setupAppTitlebar() {
     try { ipc.postMessage(message); } catch (error) { console.warn("窗口操作失败", error); }
   };
   document.getElementById("winMin").addEventListener("click", () => send("minimize"));
-  // 收起来 = 变成右下角一个小条(小条上有恢复/关闭)。
-  // 不用"藏起来 + 托盘图标"是因为托盘图标能否显示完全看系统状态, 试过 NIM_ADD 成功但图标不出现。
-  function enterMiniMode() {
-    document.body.classList.add("mini");
-    send("mini");
-  }
-  function leaveMiniMode() {
-    document.body.classList.remove("mini");
-    send("restore");
-  }
-  document.getElementById("miniRestore").addEventListener("click", leaveMiniMode);
-  document.getElementById("miniClose").addEventListener("click", () => send("close"));
-  document.getElementById("miniBar").addEventListener("mousedown", (event) => {
-    if (event.button !== 0 || event.target.closest("button")) return;
-    send("drag");
-  });
-  document.getElementById("winTray").addEventListener("click", enterMiniMode);
-  // 带 ?mini=1 打开就直接是小条(方便布置/截图核对)
-  if (location.search.indexOf("mini=1") >= 0) enterMiniMode();
+  document.getElementById("winTray").addEventListener("click", () => send("tray"));
   document.getElementById("winClose").addEventListener("click", () => send("close"));
   bar.addEventListener("mousedown", (event) => {
     if (event.button !== 0 || event.target.closest(".win-btn")) return;

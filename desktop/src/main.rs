@@ -51,8 +51,6 @@ enum Action {
     ToTray,
     ShowWindow,
     ToggleMaximize,
-    /// 收成右下角一个小条(不依赖系统托盘)
-    Mini,
     /// 从小条恢复成正常窗口
     Restore,
     Close,
@@ -246,8 +244,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             let action = match body.as_str() {
                 "minimize" => Some(Action::Minimize),
                 "tray" => Some(Action::ToTray),
-                // 收成右下角小条 / 从小条恢复(小条上有"恢复"和"关闭", 不依赖系统托盘)
-                "mini" => Some(Action::Mini),
                 "restore" => Some(Action::Restore),
                 // 页面可以在后端要求时把窗口叫回来(收进托盘后双击图标那条路)
                 "show" => Some(Action::ShowWindow),
@@ -289,34 +285,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 let _ = window.set_skip_taskbar(false);
                 window.set_visible(true);
                 window.set_focus();
-            }
-            // 收成右下角的小条: 桌面右下角留一小条, 上面有"恢复/关闭"。
-            // 之所以不用"藏起来 + 托盘图标", 是因为托盘图标能否显示完全取决于系统状态,
-            // 试过 NIM_ADD 成功但图标就是不出现的情况(用户机器上就是这样)。
-            Event::UserEvent(Action::Mini) => {
-                saved_bounds = window
-                    .outer_position()
-                    .ok()
-                    .map(|position| (position, window.inner_size()));
-                let _ = window.set_skip_taskbar(true);
-                set_taskbar_visible(window.hwnd(), false);
-                let _ = window.set_always_on_top(true);
-                // 关键: 主界面的最小尺寸是 680x520, 不放开的话缩成小条会被系统挡住
-                window.set_min_inner_size(Some(LogicalSize::new(206.0, 46.0)));
-                let _ = window.set_resizable(false);
-                let height = 46.0;
-                let width = 206.0;
-                let _ = window.set_inner_size(LogicalSize::new(width, height));
-                if let Some(monitor) = window.current_monitor() {
-                    let size = monitor.size();
-                    let origin = monitor.position();
-                    let margin = 18i32;
-                    let taskbar = 56i32;
-                    let x = origin.x + size.width as i32 - width as i32 - margin;
-                    let y = origin.y + size.height as i32 - height as i32 - taskbar;
-                    let _ = window.set_outer_position(LogicalPosition::new(x, y));
-                }
-                window.set_visible(true);
             }
             Event::UserEvent(Action::Restore) => {
                 let _ = window.set_always_on_top(false);
