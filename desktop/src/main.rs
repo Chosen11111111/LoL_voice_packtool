@@ -14,7 +14,7 @@ use tao::platform::windows::WindowExtWindows;
 use tao::window::{Icon, WindowBuilder};
 
 mod tray;
-use wry::{WebContext, WebViewBuilder, WebViewBuilderExtWindows};
+use wry::{MemoryUsageLevel, WebContext, WebViewBuilder, WebViewBuilderExtWindows, WebViewExtWindows};
 
 // tao 的 set_skip_taskbar 走 ITaskbarList::DeleteTab —— 只是临时删掉按钮,
 // 窗口一显示又回来。要真正不进任务栏, 必须改窗口的扩展样式:
@@ -227,6 +227,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             Event::UserEvent(Action::ToTray) => {
                 // 收进右下角托盘: 窗口隐藏(任务栏上也不留), 同时亮出托盘图标
                 if has_tray {
+                    // 收进托盘 = 应用进入"不活跃", 这时让界面内核把内存降到 Low
+                    // (WebView2 官方给的口径就是"应用转后台时设 Low 能显著降低内存占用";
+                    //  老版本运行时上这个调用什么也不做, 不影响功能)
+                    let _ = webview.set_memory_usage_level(MemoryUsageLevel::Low);
                     // 两个机制一起用, 确保任务栏那一格立刻消失、并且不会再自己回来:
                     //   1) ITaskbarList::DeleteTab —— 立刻抹掉任务栏按钮(tao 的实现)
                     //   2) 改扩展样式(去 APPWINDOW 加 TOOLWINDOW) —— 防止窗口一显示又回来
@@ -239,12 +243,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 }
             }
             Event::UserEvent(Action::ShowWindow) => {
+                let _ = webview.set_memory_usage_level(MemoryUsageLevel::Normal); // 回到前台, 恢复常规内存
                 set_taskbar_visible(window.hwnd(), true); // 回到任务栏
                 let _ = window.set_skip_taskbar(false);
                 window.set_visible(true);
                 window.set_focus();
             }
             Event::UserEvent(Action::Restore) => {
+                let _ = webview.set_memory_usage_level(MemoryUsageLevel::Normal);
                 let _ = window.set_always_on_top(false);
                 window.set_min_inner_size(Some(LogicalSize::new(680.0, 520.0)));
                 let _ = window.set_resizable(true);
