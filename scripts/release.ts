@@ -129,7 +129,58 @@ try {
   console.log("完整性标记: 清理失败(一般不影响, 复制到别的机器即可)");
 }
 
-// 7) 统计
+// 7) 单文件版: 把整包"追加"在启动器 exe 后面(不压缩, 原样拼接)
+//    格式: [启动器 exe] [文件...] [索引] [索引偏移 u64] [魔数 u32]
+//    首次运行会展开到 exe 旁边的 LoL_Voice_data\(写不进去就退到 %LOCALAPPDATA%)
+const MAGIC = 0x3150564c; // "LVP1"
+const singleDir = path.join(root, "release", `LoL_Voice_${VERSION}_single`);
+await fs.rm(singleDir, { recursive: true, force: true });
+await fs.mkdir(singleDir, { recursive: true });
+
+/** 递归列出包内所有文件(相对路径用 / 分隔)。 */
+async function listFiles(dir: string, prefix = ""): Promise<{ name: string; absolute: string; size: number }[]> {
+  const out: { name: string; absolute: string; size: number }[] = [];
+  for (const entry of await fs.readdir(dir, { withFileTypes: true })) {
+    const absolute = path.join(dir, entry.name);
+    const name = prefix ? prefix + "/" + entry.name : entry.name;
+    if (entry.isDirectory()) out.push(...(await listFiles(absolute, name)));
+    else out.push({ name, absolute, size: (await fs.stat(absolute)).size });
+  }
+  return out;
+}
+
+const launcherExe = path.join(out, "LoL_Voice.exe");
+const payload = (await listFiles(out)).filter((file) => file.absolute !== launcherExe);
+const pieces: Buffer[] = [await fs.readFile(launcherExe)];
+let cursor = pieces[0]!.length;
+const index: Buffer[] = [];
+const countBuffer = Buffer.alloc(4);
+countBuffer.writeUInt32LE(payload.length);
+index.push(countBuffer);
+for (const file of payload) {
+  const data = await fs.readFile(file.absolute);
+  pieces.push(data);
+  const nameBuffer = Buffer.from(file.name, "utf8");
+  const nameLength = Buffer.alloc(2);
+  nameLength.writeUInt16LE(nameBuffer.length);
+  const numbers = Buffer.alloc(16);
+  numbers.writeBigUInt64LE(BigInt(cursor), 0);
+  numbers.writeBigUInt64LE(BigInt(data.length), 8);
+  index.push(nameLength, nameBuffer, numbers);
+  cursor += data.length;
+}
+const indexOffset = cursor;
+pieces.push(...index);
+const trailer = Buffer.alloc(12);
+trailer.writeBigUInt64LE(BigInt(indexOffset), 0);
+trailer.writeUInt32LE(MAGIC, 8);
+pieces.push(trailer);
+const singleExe = path.join(singleDir, "LoL_Voice.exe");
+await fs.writeFile(singleExe, Buffer.concat(pieces));
+console.log("\n单文件版: " + singleExe);
+console.log("           " + mb((await fs.stat(singleExe)).size) + " (" + payload.length + " 个文件已追加在后面, 未压缩)");
+
+// 8) 统计
 const size = await measure(out);
 console.log("\n发布包: " + size.files + " 个文件, " + mb(size.bytes));
 console.log("直接把这个文件夹发出去就行: " + path.basename(out));
