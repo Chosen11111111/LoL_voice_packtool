@@ -14,7 +14,7 @@ use tao::platform::windows::WindowExtWindows;
 use tao::window::{Icon, WindowBuilder};
 
 mod tray;
-use wry::{WebViewBuilder, WebViewBuilderExtWindows};
+use wry::{WebContext, WebViewBuilder, WebViewBuilderExtWindows};
 
 // tao 的 set_skip_taskbar 走 ITaskbarList::DeleteTab —— 只是临时删掉按钮,
 // 窗口一显示又回来。要真正不进任务栏, 必须改窗口的扩展样式:
@@ -124,6 +124,24 @@ fn load_window_icon(path: &str) -> Option<Icon> {
 }
 
 /// 建托盘图标(收进右下角时才有; 显示窗口后会被丢弃, 图标随之消失)。
+/// 界面内核(Chromium)的运行目录。
+///
+/// **必须放在程序目录外面**: 默认它会在 exe 旁边建一个
+/// \"voice-shell.exe.WebView2\" 目录(实测 880 个文件, 几百 MB),
+/// 用户每运行一次, 发布包就长大一截 —— 那是不能接受的。
+/// 所以固定放到 %LOCALAPPDATA%\LoL_Voice\WebView2, 与程序目录完全分开。
+fn webview_data_dir() -> Option<std::path::PathBuf> {
+    let base = std::env::var("LOCALAPPDATA")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|_| std::env::temp_dir());
+    let dir = base.join("LoL_Voice").join("WebView2");
+    match std::fs::create_dir_all(&dir) {
+        Ok(()) => Some(dir),
+        // 建不出来就让 wry 用默认位置(至少程序还能跑)
+        Err(_) => None,
+    }
+}
+
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut args = std::env::args().skip(1);
     let url = args.next().unwrap_or_else(|| "http://127.0.0.1:43110/".to_string());
@@ -152,7 +170,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     let ipc_proxy = proxy.clone();
-    let webview = WebViewBuilder::new()
+    // 注意顺序: web_context 必须先声明(生命周期要比 webview 长)
+    let mut web_context = WebContext::new(webview_data_dir());
+    let webview = WebViewBuilder::new_with_web_context(&mut web_context)
         .with_url(&url)
         // 省内存: 界面内核是 Chromium, 这几个参数能砍掉它一半的常驻占用。
         // 注意: 传了这里就会【覆盖】wry 的默认参数, 所以第一段必须保留 wry 原来的默认值。
