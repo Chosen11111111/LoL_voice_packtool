@@ -1,23 +1,21 @@
-//! 发布包入口。有两种形态:
+//! 发布包入口。
 //!
-//! 1. 文件夹版: 同目录下就有 runtime\node.exe 与 src\app.ts, 直接启动。
-//! 2. 单文件版: 本 exe 的**尾部追加**了一份文件包(不压缩, 就是原样拼接),
-//!    首次运行时展开到旁边(或 %LOCALAPPDATA%), 之后就直接启动。
+//! 发布包结构(用户看到的只有两样东西):
+//!   LoL_Voice.exe        启动入口(本程序, 带图标)
+//!   resource\            所有东西都在这里面
+//!       runtime\node.exe     自带的 Node 运行时(用户不用装任何环境)
+//!       src\  web\  assets\  程序本体与界面
+//!       desktop\voice-shell.exe  无边框窗口外壳
 //!
-//! 打包格式(exe 尾部):
-//!   [原来的 exe] [文件1] [文件2] ... [索引] [索引偏移 u64] [魔数 u32]
-//!   索引: [条目数 u32] 然后每条 [名字长度 u16] [名字] [偏移 u64] [大小 u64]
+//! 另外兼容两种老位置(开发目录里直接跑, 或早期没有 resource\ 的包):
+//!   exe 旁边直接就有 src\ 与 runtime\。
 #![windows_subsystem = "windows"]
 
-use std::fs::{self, File};
-use std::io::{Read, Seek, SeekFrom, Write};
 use std::os::windows::process::CommandExt;
 use std::path::{Path, PathBuf};
 
 /// CREATE_NO_WINDOW: 不留控制台窗口
 const CREATE_NO_WINDOW: u32 = 0x0800_0000;
-/// 尾部魔数, 用来认出自解压包("LVP1")
-const MAGIC: u32 = 0x3150_564C;
 /// 默认端口(与 src/core/config.ts 里的默认值一致)
 const DEFAULT_PORT: u16 = 43110;
 
@@ -68,121 +66,19 @@ fn show_our_window() -> bool {
     true
 }
 
-/// 自解压包里的一个文件。
-struct Entry {
-    name: String,
-    offset: u64,
-    size: u64,
-}
-
-/// 读自己尾巴上的索引。不是自解压包就返回 None。
-fn read_index(exe: &Path) -> Option<Vec<Entry>> {
-    let mut file = File::open(exe).ok()?;
-    let length = file.metadata().ok()?.len();
-    if length < 12 {
-        return None;
+/// 程序本体在哪: 优先 exe 旁边的 resource\, 否则就用 exe 自己的目录。
+fn resolve_root(exe_dir: &Path) -> PathBuf {
+    let nested = exe_dir.join("resource");
+    if nested.join("src").join("app.ts").exists() {
+        return nested;
     }
-    file.seek(SeekFrom::End(-12)).ok()?;
-    let mut tail = [0u8; 12];
-    file.read_exact(&mut tail).ok()?;
-    let magic = u32::from_le_bytes([tail[8], tail[9], tail[10], tail[11]]);
-    if magic != MAGIC {
-        return None;
-    }
-    let index_offset = u64::from_le_bytes(tail[0..8].try_into().ok()?);
-    if index_offset >= length {
-        return None;
-    }
-    file.seek(SeekFrom::Start(index_offset)).ok()?;
-    let mut count_buf = [0u8; 4];
-    file.read_exact(&mut count_buf).ok()?;
-    let count = u32::from_le_bytes(count_buf);
-    let mut entries = Vec::new();
-    for _ in 0..count {
-        let mut name_len_buf = [0u8; 2];
-        file.read_exact(&mut name_len_buf).ok()?;
-        let name_len = u16::from_le_bytes(name_len_buf) as usize;
-        let mut name_buf = vec![0u8; name_len];
-        file.read_exact(&mut name_buf).ok()?;
-        let mut numbers = [0u8; 16];
-        file.read_exact(&mut numbers).ok()?;
-        entries.push(Entry {
-            name: String::from_utf8(name_buf).ok()?,
-            offset: u64::from_le_bytes(numbers[0..8].try_into().ok()?),
-            size: u64::from_le_bytes(numbers[8..16].try_into().ok()?),
-        });
-    }
-    Some(entries)
-}
-
-/// 展开文件包到 target。
-fn extract(exe: &Path, entries: &[Entry], target: &Path) -> Result<(), String> {
-    let mut source = File::open(exe).map_err(|e| e.to_string())?;
-    for entry in entries {
-        let out_path = target.join(entry.name.replace('/', "\\"));
-        if let Some(parent) = out_path.parent() {
-            fs::create_dir_all(parent).map_err(|e| format!("建目录失败 {}: {e}", parent.display()))?;
-        }
-        // 已经展开过且大小一致就跳过(重复运行不必重写 88MB)
-        if let Ok(meta) = fs::metadata(&out_path) {
-            if meta.len() == entry.size {
-                continue;
-            }
-        }
-        source.seek(SeekFrom::Start(entry.offset)).map_err(|e| e.to_string())?;
-        let mut remaining = entry.size;
-        let mut buffer = vec![0u8; 512 * 1024];
-        let mut out = File::create(&out_path).map_err(|e| format!("写入失败 {}: {e}", out_path.display()))?;
-        while remaining > 0 {
-            let want = remaining.min(buffer.len() as u64) as usize;
-            source.read_exact(&mut buffer[..want]).map_err(|e| e.to_string())?;
-            out.write_all(&buffer[..want]).map_err(|e| e.to_string())?;
-            remaining -= want as u64;
-        }
-    }
-    Ok(())
-}
-
-/// 决定展开到哪里: 先试 exe 旁边(便携), 不行就退到 %LOCALAPPDATA%。
-fn pick_target(exe_dir: &Path) -> PathBuf {
-    let portable = exe_dir.join("LoL_Voice_data");
-    if fs::create_dir_all(&portable).is_ok() {
-        let probe = portable.join(".write-test");
-        if fs::write(&probe, b"1").is_ok() {
-            let _ = fs::remove_file(&probe);
-            return portable;
-        }
-    }
-    let fallback = std::env::var("LOCALAPPDATA")
-        .map(PathBuf::from)
-        .unwrap_or_else(|_| std::env::temp_dir())
-        .join("LoL_Voice");
-    let _ = fs::create_dir_all(&fallback);
-    fallback
-}
-
-/// 启动后端(找不到 node 或 app.ts 就报错)。
-fn launch(dir: &Path) -> Result<(), String> {
-    let node = dir.join("runtime").join("node.exe");
-    let app = dir.join("src").join("app.ts");
-    if !node.exists() || !app.exists() {
-        return Err(format!("缺少文件: {}", if !node.exists() { node.display().to_string() } else { app.display().to_string() }));
-    }
-    std::process::Command::new(&node)
-        .arg(&app)
-        .current_dir(dir)
-        .env("LEAGUE_VOICE_RELEASE", "1")
-        .creation_flags(CREATE_NO_WINDOW)
-        .spawn()
-        .map(|_| ())
-        .map_err(|e| e.to_string())
+    exe_dir.to_path_buf()
 }
 
 fn main() {
-    let exe = std::env::current_exe().ok();
-    let exe = match exe {
-        Some(path) => path,
-        None => {
+    let exe = match std::env::current_exe() {
+        Ok(path) => path,
+        Err(_) => {
             alert("无法确定程序位置");
             return;
         }
@@ -197,21 +93,25 @@ fn main() {
         return;
     }
 
-    // 单文件版: 先展开
-    let entries = read_index(&exe);
-    let run_dir = match entries {
-        Some(entries) => {
-            let target = pick_target(&exe_dir);
-            if let Err(error) = extract(&exe, &entries, &target) {
-                alert(&format!("展开文件失败：{error}"));
-                return;
-            }
-            target
-        }
-        None => exe_dir,
-    };
+    let root = resolve_root(&exe_dir);
+    let node = root.join("runtime").join("node.exe");
+    let app = root.join("src").join("app.ts");
+    if !node.exists() || !app.exists() {
+        let missing = if !node.exists() { node.display().to_string() } else { app.display().to_string() };
+        alert(&format!(
+            "文件不完整，缺少：\n{missing}\n\n请把 LoL_Voice.exe 与 resource 文件夹放在一起，不要只拿一个文件。"
+        ));
+        return;
+    }
 
-    if let Err(error) = launch(&run_dir) {
-        alert(&format!("启动失败：{error}\n\n请把整个文件夹一起复制, 不要只拿这一个 exe。", ));
+    let started = std::process::Command::new(&node)
+        .arg(&app)
+        .current_dir(&root)
+        .env("LEAGUE_VOICE_RELEASE", "1")
+        .creation_flags(CREATE_NO_WINDOW)
+        .spawn();
+
+    if let Err(error) = started {
+        alert(&format!("启动失败：{error}"));
     }
 }
