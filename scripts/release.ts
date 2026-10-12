@@ -95,6 +95,13 @@ if (await exists(launcher)) {
 spawnSync("icacls", [out, "/setintegritylevel", "(OI)(CI)M", "/T", "/C", "/Q"], { stdio: "ignore" });
 console.log("完整性标记: 已清理(改为中完整性)");
 
+// 6.5) 提醒: 语音包属于用户数据, 不该随包发出去
+if (await exists(path.join(resource, "language"))) {
+  const packs = await fs.readdir(path.join(resource, "language")).catch(() => []);
+  console.log("[!] 注意: resource\\language\\ 里有 " + packs.length + " 个语音包(" + packs.join(", ") + ")");
+  console.log("    发给用户前记得清掉 —— 用户自己在界面里下载即可");
+}
+
 // 7) 统计
 const size = await measure(out);
 console.log("\n发布包: " + size.files + " 个文件, " + mb(size.bytes));
