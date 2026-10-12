@@ -82,7 +82,9 @@ export async function getDashboard(): Promise<DashboardState> {
     getIngameStatus({
       finalDir: env.finalDir,
       voiceRoot: env.voiceRoot,
-      locale: config.defaultLocale,
+      // 状态栏要显示的是"实际生效的语种": 以 ui.lastApplied 为准(开启成功时写入),
+      // 没有记录就不猜(defaultLocale 只是下拉栏的默认选择, 不代表已经生效)
+      locale: config.ui?.lastApplied?.locale ?? "",
       message: env.resolution.message,
       source: env.resolution.source
     }),
@@ -123,7 +125,7 @@ export async function getLocales(options: { withCounts?: boolean } = {}): Promis
   const config = await loadConfig();
   const env = await buildEnvFromConfig(config);
   const rows = await scanLocales(env.voiceRoot, { withCounts: options.withCounts ?? true });
-  const ingame = await getIngameStatus({ finalDir: env.finalDir, voiceRoot: env.voiceRoot, locale: config.defaultLocale });
+  const ingame = await getIngameStatus({ finalDir: env.finalDir, voiceRoot: env.voiceRoot, locale: config.ui?.lastApplied?.locale ?? "" });
   const lobby = await getLobbyStatus(env);
   return {
     root: env.voiceRoot,

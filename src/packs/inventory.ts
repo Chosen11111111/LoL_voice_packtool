@@ -180,9 +180,13 @@ export async function getIngameStatus(options: {
   message?: string;
   source?: string;
 }): Promise<IngameStatus> {
-  const locale = options.locale ?? "ja_JP";
-  const activeLocale = await readActiveLocale(options.voiceRoot, locale);
-  const display = localeDisplayName(activeLocale);
+  // 当前生效的语种以"本程序上次开启的记录"为准(options.locale);
+  // 老工具可能在 language\ 下留过 active_locale.json, 作为次要依据。
+  // 注意: 以前这里兜底成 "ja_JP", 结果没记录时状态栏一律显示"日语" —— 与实际切换的语种不符。
+  const locale = options.locale ?? "";
+  const fromFile = await readActiveLocale(options.voiceRoot, "");
+  const activeLocale = locale || fromFile;
+  const display = activeLocale ? localeDisplayName(activeLocale) : "";
 
   if (!options.finalDir) {
     return {
@@ -210,8 +214,8 @@ export async function getIngameStatus(options: {
   return {
     ok: true,
     message: options.message ?? `游戏文件目录：${final}`,
-    voice: voiceActive ? `【已切换为：${display}原声】` : "【当前为：国服中文原版】",
-    lang: langBackup ? `【已切换为：${display}语言】` : "【当前为：国服中文原版】",
+    voice: voiceActive ? (display ? `【已切换为：${display}原声】` : "【已切换为：语音包原声】") : "【当前为：国服中文原版】",
+    lang: langBackup ? (display ? `【已切换为：${display}语言】` : "【已切换为：语音包语言】") : "【当前为：国服中文原版】",
     is_voice_active: voiceActive,
     is_lang_active: langBackup,
     active_locale: activeLocale,

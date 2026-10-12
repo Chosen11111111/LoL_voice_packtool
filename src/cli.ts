@@ -254,7 +254,7 @@ async function commandStatus(jsonMode: boolean): Promise<number> {
   const config = await loadConfig();
   const env = await buildEnvFromConfig(config);
   const [ingame, lobby, lobbyLang] = await Promise.all([
-    getIngameStatus({ finalDir: env.finalDir, voiceRoot: env.voiceRoot, locale: config.defaultLocale, message: env.resolution.message, source: env.resolution.source }),
+    getIngameStatus({ finalDir: env.finalDir, voiceRoot: env.voiceRoot, locale: config.ui?.lastApplied?.locale ?? "", message: env.resolution.message, source: env.resolution.source }),
     getLobbyStatus(env),
     getLobbyLangState(env)
   ]);
