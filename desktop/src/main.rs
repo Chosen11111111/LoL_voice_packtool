@@ -55,46 +55,44 @@ enum Action {
     Drag,
 }
 
-/// 生成图标: 圆角蓝色方块 + 白色 L(与界面主色一致, 不依赖任何图片文件)。
-fn make_icon_rgba(size: u32) -> Vec<u8> {
-    let mut rgba = vec![0u8; (size * size * 4) as usize];
-    let s = size as f32;
-    let radius = s * 0.22;
-    for y in 0..size {
-        for x in 0..size {
-            let fx = x as f32 + 0.5;
-            let fy = y as f32 + 0.5;
-            // 圆角矩形判定: 点到"内核矩形"的距离 <= 圆角半径
-            let cx = fx.clamp(radius, s - radius);
-            let cy = fy.clamp(radius, s - radius);
-            let (dx, dy) = (fx - cx, fy - cy);
-            let inside = dx * dx + dy * dy <= radius * radius;
-            let i = ((y * size + x) * 4) as usize;
-            if !inside {
-                continue; // 透明
-            }
-            // 白色 L: 竖条 + 底横条
-            let is_l = (fx > s * 0.30 && fx < s * 0.43 && fy > s * 0.26 && fy < s * 0.72)
-                || (fy > s * 0.59 && fy < s * 0.72 && fx >= s * 0.30 && fx < s * 0.70);
-            if is_l {
-                rgba[i] = 255;
-                rgba[i + 1] = 255;
-                rgba[i + 2] = 255;
-                rgba[i + 3] = 255;
-            } else {
-                rgba[i] = 37;
-                rgba[i + 1] = 99;
-                rgba[i + 2] = 235;
-                rgba[i + 3] = 255;
-            }
+/// 从 PNG 文件读出 RGBA(tao 的 Icon 只接受原始像素, 没有 from_path)。
+/// 图标由使用者在 assets/ico/voicepack-icon-512.png 提供, 路径由 app.ts 传进来。
+fn load_png_rgba(path: &str) -> Result<(Vec<u8>, u32, u32), String> {
+    let file = std::fs::File::open(path).map_err(|e| e.to_string())?;
+    let decoder = png::Decoder::new(std::io::BufReader::new(file));
+    let mut reader = decoder.read_info().map_err(|e| e.to_string())?;
+    let size = reader.output_buffer_size().ok_or("无法确定 PNG 缓冲区大小")?;
+    let mut buf = vec![0u8; size];
+    let info = reader.next_frame(&mut buf).map_err(|e| e.to_string())?;
+    let bytes = &buf[..info.buffer_size()];
+    let rgba = match info.color_type {
+        png::ColorType::Rgba => bytes.to_vec(),
+        png::ColorType::Rgb => bytes
+            .chunks_exact(3)
+            .flat_map(|p| [p[0], p[1], p[2], 255])
+            .collect(),
+        other => return Err(format!("不支持的 PNG 颜色类型: {other:?}")),
+    };
+    Ok((rgba, info.width, info.height))
+}
+
+/// 窗口图标(任务栏 / Alt-Tab 用)。
+fn load_window_icon(path: &str) -> Option<Icon> {
+    match load_png_rgba(path) {
+        Ok((rgba, w, h)) => Icon::from_rgba(rgba, w, h).ok(),
+        Err(error) => {
+            eprintln!("[voice-shell] 读取窗口图标失败 {path}: {error}");
+            None
         }
     }
-    rgba
 }
 
 /// 建托盘图标(收进右下角时才有; 显示窗口后会被丢弃, 图标随之消失)。
-fn create_tray() -> Option<TrayIcon> {
-    let icon = tray_icon::Icon::from_rgba(make_icon_rgba(32), 32, 32).ok()?;
+fn create_tray(icon_path: Option<&str>) -> Option<TrayIcon> {
+    let icon = match icon_path {
+        Some(path) => tray_icon::Icon::from_path(path, Some((32, 32))).ok()?,
+        None => return None,
+    };
     let menu = Menu::new();
     let show = MenuItem::with_id("show", "显示窗口", true, None);
     let quit = MenuItem::with_id("quit", "退出", true, None);
@@ -111,9 +109,10 @@ fn create_tray() -> Option<TrayIcon> {
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let url = std::env::args()
-        .nth(1)
-        .unwrap_or_else(|| "http://127.0.0.1:43110/".to_string());
+    let mut args = std::env::args().skip(1);
+    let url = args.next().unwrap_or_else(|| "http://127.0.0.1:43110/".to_string());
+    // 第二个参数(可选): 图标 PNG 的路径, 由 app.ts 传进来
+    let icon_path: Option<String> = args.next();
 
     let event_loop = EventLoopBuilder::<Action>::with_user_event().build();
     let proxy: EventLoopProxy<Action> = event_loop.create_proxy();
@@ -150,8 +149,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .with_inner_size(LogicalSize::new(800.0, 600.0))
         .with_min_inner_size(LogicalSize::new(680.0, 520.0))
         .build(&event_loop)?;
-    if let Ok(icon) = Icon::from_rgba(make_icon_rgba(64), 64, 64) {
-        window.set_window_icon(Some(icon)); // 任务栏/Alt-Tab 的图标
+    if let Some(icon) = icon_path.as_deref().and_then(load_window_icon) {
+        window.set_window_icon(Some(icon)); // 任务栏 / Alt-Tab 的图标
     }
 
     let ipc_proxy = proxy.clone();
@@ -174,7 +173,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .build(&window)?;
 
     // 托盘常驻(启动就建): 这样"收进托盘"永远不会出现"窗口藏了但没有图标"的死局
-    let tray: Option<TrayIcon> = create_tray();
+    let tray: Option<TrayIcon> = create_tray(icon_path.as_deref());
     event_loop.run(move |event, _, control_flow| {
         *control_flow = ControlFlow::Wait;
         match event {

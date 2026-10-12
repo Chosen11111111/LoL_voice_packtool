@@ -133,9 +133,14 @@ function findShell(): string | null {
   return fs.existsSync(exe) ? exe : null;
 }
 
-/** 以原生外壳打开界面(关掉窗口 = 退出程序, 和浏览器模式一致)。 */
+/**
+ * 以原生外壳打开界面(关掉窗口 = 退出程序, 和浏览器模式一致)。
+ * 第二个参数是图标路径: 图标在 assets/ico/ 下由使用者提供, 外壳自己解不出来。
+ */
 function openShellWindow(shell: string, url: string): ChildProcess {
-  return spawn(shell, [url], { stdio: "ignore", windowsHide: false });
+  const icon = path.join(appRoot(), "assets", "ico", "voicepack-icon-512.png");
+  const args = fs.existsSync(icon) ? [url, icon] : [url];
+  return spawn(shell, args, { stdio: "ignore", windowsHide: false });
 }
 
 async function waitForever(): Promise<void> {

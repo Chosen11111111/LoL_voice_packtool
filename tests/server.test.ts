@@ -333,6 +333,20 @@ test("静态托管: 前端路由刷新不 404(SPA 兜底), /api 未知路径仍�
   assert.equal(payload.error, "not_found");
 });
 
+test("品牌图: /brand/ 能取子目录素材(assets/ico/ 里的图标), 越权仍被挡", async () => {
+  const icon = await fetch(`${base}/brand/ico/voicepack-icon-512.png`);
+  assert.equal(icon.status, 200, "assets/ico 里的图标应该能取到");
+  assert.match(String(icon.headers.get("content-type")), /image\/png/);
+  const bytes = Buffer.from(await icon.arrayBuffer());
+  assert.ok(bytes.length > 1000, "应该是真实的图片");
+  assert.equal(bytes.subarray(1, 4).toString("latin1"), "PNG");
+
+  const escape = await fetch(`${base}/brand/ico/..%2F..%2Fconfig.json`);
+  const body = await escape.text();
+  assert.ok(!body.includes("leaguePath"), "越权路径不能读到文件内容");
+  assert.equal((JSON.parse(body) as { ok?: boolean }).ok, false);
+});
+
 test("品牌图: 自绘的矢量图能被托管(文字是矢量的, 任何缩放都清晰)", async () => {
   const response = await fetch(`${base}/brand-logo.svg`);
   assert.equal(response.status, 200);

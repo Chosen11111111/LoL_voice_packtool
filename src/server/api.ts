@@ -86,13 +86,22 @@ export function buildRouter(): Router {
     };
   });
 
-  /** 品牌图等静态素材: <软件目录>/assets/<文件>。避免为了显示一张图去复制一份到 web/。 */
-  router.get("/brand/:file", async (context) => {
-    const name = path.basename(String(context.params.file ?? ""));
-    if (!/^[\w.-]+\.(png|jpg|jpeg|webp|gif|svg)$/i.test(name)) {
-      return { ok: false, error: "bad_request", message: "不支持的素材文件名" };
+  /**
+   * 品牌图等静态素材: <软件目录>/assets/<路径>。避免为了显示一张图去复制一份到 web/。
+   * 支持子目录(例如 ico/voicepack-icon-512.png); 只允许图片扩展名, 并且禁止任何 ..
+   * —— 请求路径先过白名单正则, 再校验解析后的绝对路径确实落在 assets 里。
+   */
+  const serveBrandAsset = async (context: { params: Record<string, string>; res: import("node:http").ServerResponse }) => {
+    // 支持 assets/ico/xxx.png 这样的一层子目录
+    const name = [context.params.dir, context.params.file].filter(Boolean).join("/").replace(/\\/g, "/");
+    if (!/^[\w][\w./-]*\.(png|jpg|jpeg|webp|gif|svg|ico)$/i.test(name) || name.includes("..")) {
+      return { ok: false, error: "bad_request", message: "不支持的素材路径" };
     }
-    const file = path.join(appRoot(), "assets", name);
+    const assetsRoot = path.join(appRoot(), "assets");
+    const file = path.resolve(assetsRoot, name);
+    if (!file.startsWith(assetsRoot + path.sep)) {
+      return { ok: false, error: "bad_request", message: "素材路径越界" };
+    }
     const data = await readFile(file).catch(() => null);
     if (!data) {
       context.res.writeHead(404, { "Content-Type": "application/json; charset=utf-8" });
@@ -105,7 +114,10 @@ export function buildRouter(): Router {
     context.res.writeHead(200, { "Content-Type": type, "Content-Length": data.length, "Cache-Control": "no-cache" });
     context.res.end(data);
     return undefined;
-  });
+  };
+  // 路由器按"段数"精确匹配, 所以一段(assets/xx.png)和两段(assets/ico/xx.png)各注册一条
+  router.get("/brand/:file", serveBrandAsset);
+  router.get("/brand/:dir/:file", serveBrandAsset);
 
   /* ------------------------------------------------ 选人语音实时播报 */
 
