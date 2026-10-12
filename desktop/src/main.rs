@@ -5,11 +5,12 @@
 //! 页面上的最小化/最大化/关闭/拖动 通过 wry 的 IPC 传回来执行。
 //!
 //! 用法: voice-shell.exe [url]   默认 http://127.0.0.1:43110/
+//! 窗口默认 800x600(与原来浏览器窗口一致), 可拖边缘缩放。
 
 use tao::dpi::LogicalSize;
 use tao::event::{Event, WindowEvent};
 use tao::event_loop::{ControlFlow, EventLoopBuilder, EventLoopProxy};
-use tao::window::{Window, WindowBuilder};
+use tao::window::WindowBuilder;
 use wry::WebViewBuilder;
 
 #[derive(Debug, Clone)]
@@ -32,7 +33,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .with_title("语音包切换器")
         .with_decorations(false)          // 关键: 不要系统标题栏
         .with_resizable(true)
-        .with_inner_size(LogicalSize::new(900.0, 820.0))
+        .with_inner_size(LogicalSize::new(800.0, 600.0))
         .with_min_inner_size(LogicalSize::new(680.0, 520.0))
         .build(&event_loop)?;
 
