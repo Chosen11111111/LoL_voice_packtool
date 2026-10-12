@@ -90,6 +90,15 @@ if (await exists(launcher)) {
   console.log("[!] 没找到 voice-launcher.exe, 先跑: cd desktop && cargo build --release");
 }
 
+// 5.5) 给用户的使用说明(放最外层, 用户一眼能看到)
+const readmeSource = path.join(root, "docs", "使用说明.txt");
+if (await exists(readmeSource)) {
+  const text = (await fs.readFile(readmeSource, "utf8")).replaceAll("{{VERSION}}", VERSION);
+  // 带 BOM: 老版本记事本、写字板打开中文才不会乱码
+  await fs.writeFile(path.join(out, "使用说明.txt"), "\uFEFF" + text, "utf8");
+  console.log("说明: 使用说明.txt");
+}
+
 // 6) 清掉"低完整性"标记: 带该标记的 exe 只能低权限运行, 而 Windows 禁止低权限进程
 //    注册托盘图标(Shell_NotifyIcon 会返回 5 拒绝访问)。
 spawnSync("icacls", [out, "/setintegritylevel", "(OI)(CI)M", "/T", "/C", "/Q"], { stdio: "ignore" });
