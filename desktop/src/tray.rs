@@ -86,8 +86,6 @@ unsafe extern "system" {
     fn RegisterWindowMessageW(name: *const u16) -> u32;
     fn GetLastError() -> u32;
     fn GetModuleHandleW(name: *const u16) -> isize;
-    fn GetCurrentProcess() -> isize;
-    fn CloseHandle(handle: isize) -> i32;
 }
 
 #[link(name = "shell32")]
@@ -165,68 +163,6 @@ unsafe extern "system" fn window_proc(hwnd: isize, msg: u32, wparam: usize, lpar
     }
 }
 
-#[link(name = "advapi32")]
-unsafe extern "system" {
-    fn OpenProcessToken(process: isize, access: u32, token: *mut isize) -> i32;
-    fn GetTokenInformation(
-        token: isize,
-        class: u32,
-        info: *mut core::ffi::c_void,
-        len: u32,
-        returned: *mut u32,
-    ) -> i32;
-}
-
-/// 读出本进程的完整性级别数字(4096=低, 8192=中, 12288=高/管理员, 16384=系统)。
-/// 托盘注册失败最常见的原因就是它和资源管理器不一致, 所以直接记下来, 省得反复猜。
-fn integrity_level() -> u32 {
-    unsafe {
-        let mut token: isize = 0;
-        if OpenProcessToken(GetCurrentProcess(), 0x0008, &mut token) == 0 {
-            return 0;
-        }
-        // TOKEN_MANDATORY_LABEL { SID_AND_ATTRIBUTES { sid, attributes } }
-        let mut buffer = [0u8; 64];
-        let mut returned: u32 = 0;
-        let ok = GetTokenInformation(
-            token,
-            25, // TokenIntegrityLevel
-            buffer.as_mut_ptr() as *mut core::ffi::c_void,
-            buffer.len() as u32,
-            &mut returned,
-        );
-        CloseHandle(token);
-        if ok == 0 {
-            return 0;
-        }
-        // TOKEN_MANDATORY_LABEL 里放的是个指向缓冲区内部的指针, 所以先按偏移算:
-        // 指针 - 缓冲区首地址 = SID 在缓冲区里的位置。
-        let base = buffer.as_ptr() as usize;
-        let mut raw = [0u8; 8];
-        raw.copy_from_slice(&buffer[0..8]);
-        let sid_ptr = usize::from_le_bytes(raw);
-        if sid_ptr < base {
-            return 0;
-        }
-        let sid = sid_ptr - base;
-        // SID: revision(1) + 子计数器(1) + 标识(6) + 子标识(各 4 字节)
-        if sid + 8 > buffer.len() {
-            return 0;
-        }
-        let count = buffer[sid + 1] as usize;
-        if count < 5 {
-            return 0;
-        }
-        let at = sid + 8 + (count - 1) * 4;
-        if at + 4 > buffer.len() {
-            return 0;
-        }
-        u32::from_le_bytes([buffer[at], buffer[at + 1], buffer[at + 2], buffer[at + 3]])
-    }
-}
-
-
-
 unsafe fn show_menu(hwnd: isize) {
     unsafe {
         let menu = CreatePopupMenu();
@@ -302,11 +238,6 @@ pub fn create(icon_path: Option<&str>, proxy: EventLoopProxy<Action>) -> bool {
     if let Ok(mut slot) = PROXY.lock() {
         *slot = Some(proxy);
     }
-    eprintln!(
-        "[voice-shell] 当前进程: pid={} 完整性级别={} (4096=低 8192=中 12288=高/管理员)",
-        std::process::id(),
-        integrity_level()
-    );
     unsafe {
         ICON.store(0, Ordering::Relaxed);
         if let Some(path) = icon_path {
