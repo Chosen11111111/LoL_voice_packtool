@@ -47,6 +47,8 @@ test("HTTP 写入配置后完全退出进程，新进程从同一文件恢复所
       followClient: false,
       voiceDelayMs: 1000,
       lastApplied: null,
+
+      hideEnableTip: null,
       region: "global"
     };
     const response = await fetch(`${server.base}/api/config`, {

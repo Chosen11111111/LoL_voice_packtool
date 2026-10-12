@@ -4,7 +4,7 @@ import os from "node:os";
 import { copyFile, mkdir, readFile, rename, rm, stat } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
 import { APP_NAME, APP_NAME_CN, APP_VERSION, API_VERSION } from "../version.ts";
-import { loadConfig, appRoot, configPath, type ConfigPatch } from "../core/config.ts";
+import { saveConfig, loadConfig, appRoot, configPath, type ConfigPatch } from "../core/config.ts";
 import { resolveVoiceRoot } from "../core/paths.ts";
 import { lobbyLive } from "../modules/lobbyLive.ts";
 import { isDirectory, listNames } from "../core/fsx.ts";
@@ -81,7 +81,8 @@ export function buildRouter(): Router {
         ...(await getDashboard()),
         lobby_live: lobbyLive.state(),
         // 上次"开启语音包"的记录: 选人语音的开关只看这个状态(勾选框不算)
-        last_applied: config.ui?.lastApplied ?? null
+        last_applied: config.ui?.lastApplied ?? null,
+        hide_enable_tip: config.ui?.hideEnableTip === true
       }
     };
   });
@@ -269,6 +270,12 @@ export function buildRouter(): Router {
       lobbyLang: body.lobbyLang === "en_US" || body.lobbyLang === "zh_CN" ? body.lobbyLang : "keep"
     });
     return { ok: true, task };
+  });
+
+  /** 记住『不再提醒』: 只在用户明确点了那个按钮时才写。 */
+  router.post("/api/ui/hide-enable-tip", async () => {
+    await saveConfig({ ui: { hideEnableTip: true } });
+    return { ok: true };
   });
 
   router.post("/api/restore", async (context) => {
@@ -495,6 +502,7 @@ export async function stateOnce(): Promise<unknown> {
     dashboard: await getDashboard(),
     env: { voiceRoot: env.voiceRoot, baseLocale: env.baseLocale, region: env.region },
     // 上次"开启语音包"的记录: 重启后界面据此说明当前生效的是什么
-    last_applied: config.ui?.lastApplied ?? null
+    last_applied: config.ui?.lastApplied ?? null,
+        hide_enable_tip: config.ui?.hideEnableTip === true
   };
 }

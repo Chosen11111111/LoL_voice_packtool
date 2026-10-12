@@ -57,7 +57,7 @@ async function openWindow(config: any, legacy: Record<string, string> = {}, fail
           Object.assign(config, { ...patch, ui: { ...config.ui, ...patch.ui } });
         }
         payload = { ok: true, config: structuredClone(config), path: "test/config.json" };
-      } else if (url === "/api/state") payload.state = { app: { version: "test" }, paths: {}, busy: {}, ingame: {}, lobby: {}, ...stateExtra };
+      } else if (url === "/api/state") payload.state = { app: { version: "test" }, paths: {}, busy: {}, ingame: {}, lobby: {}, hide_enable_tip: true, ...stateExtra };
       else if (url.startsWith("/api/locales")) payload.locales = [{ code: "ja_JP", name: "日语" }, { code: "ko_KR", name: "韩语" }];
       else if (url === "/api/client-voice") payload = { ok: true, supported: true, auto: true, aligned_volume: 90 };
       else if (url === "/api/apply") {
@@ -278,4 +278,52 @@ test("品牌图是一个按钮: 点击会打开品牌链接", async () => {
   page.el("btnBrand").onclick!();
   assert.equal((page as any).opened.length, 1, "点一下应打开一次链接");
   assert.equal((page as any).opened[0], "https://chosen1.lol", "品牌链接指向 chosen1.lol");
+});
+
+test("开启语音包: 没点过『不再提醒』时先弹提示, 点确定才真的开启", async () => {
+  const config: any = { selectedLocale: "ja_JP", modules: ["ingame_voice"], volume: 60, followClient: false, voiceDelayMs: 1000, lastApplied: null, region: "auto" };
+  const page = await openWindow({ defaultLocale: "ja_JP", ui: config }, {}, false, { last_applied: null, hide_enable_tip: false });
+  page.el("btnApply").onclick!();
+  await page.settle();
+  // 沙箱没有真实 DOM, 所以断言行为: 弹窗挡住时不会发 /api/apply
+  assert.ok(!page.requests.some((r) => r.url === "/api/apply"), "还没确认, 不应该真的开启");
+
+  page.el("btnEnableTipOk").onclick!();
+  await page.settle();
+  assert.ok(page.requests.some((r) => r.url === "/api/apply"), "点确定后才开启");
+});
+
+test("开启语音包: 点『不再提醒』会存下来并继续开启, 之后不再弹", async () => {
+  const config: any = { selectedLocale: "ja_JP", modules: ["ingame_voice"], volume: 60, followClient: false, voiceDelayMs: 1000, lastApplied: null, region: "auto" };
+  const page = await openWindow({ defaultLocale: "ja_JP", ui: config }, {}, false, { last_applied: null, hide_enable_tip: false });
+  page.el("btnApply").onclick!();
+  await page.settle();
+  page.el("btnEnableTipNever").onclick!();
+  await page.settle();
+  const saved = page.requests.find((r) => r.url === "/api/ui/hide-enable-tip");
+  assert.ok(saved, "应把『不再提醒』存到配置");
+  assert.equal(saved!.options.method, "POST");
+  assert.ok(page.requests.some((r) => r.url === "/api/apply"), "并且继续开启");
+
+  // 已经记住之后, 再点就不弹了
+  const next = await openWindow({ defaultLocale: "ja_JP", ui: structuredClone(config) }, {}, false, { last_applied: null, hide_enable_tip: true });
+  next.el("btnApply").onclick!();
+  await next.settle();
+  // 没弹窗挡着 => 点下去直接发请求
+  assert.ok(next.requests.some((r) => r.url === "/api/apply"), "已记住设置, 直接开启不再弹提示");
+  assert.ok(!next.requests.some((r) => r.url === "/api/ui/hide-enable-tip"), "也不该再写一次设置");
+});
+
+test("开启语音包: 提示弹窗的 × 等于取消这次开启", async () => {
+  const config: any = { selectedLocale: "ja_JP", modules: ["ingame_voice"], volume: 60, followClient: false, voiceDelayMs: 1000, lastApplied: null, region: "auto" };
+  const page = await openWindow({ defaultLocale: "ja_JP", ui: config }, {}, false, { last_applied: null, hide_enable_tip: false });
+  page.el("btnApply").onclick!();
+  await page.settle();
+  page.el("btnCloseEnableTip").onclick!();
+  await page.settle();
+  assert.ok(!page.requests.some((r) => r.url === "/api/apply"), "取消(×)就不应该开启");
+  // 再点一次应该重新弹提示(依然不直接开启)
+  page.el("btnApply").onclick!();
+  await page.settle();
+  assert.ok(!page.requests.some((r) => r.url === "/api/apply"), "重按仍要先弹提示");
 });

@@ -119,6 +119,8 @@
 
   /** 上次"开启语音包"的记录(重启后仍能显示当前生效的是什么)。 */
   let lastApplied = null;
+  /** 用户点过『不再提醒』后为 true(来自配置)。 */
+  let hideEnableTip = false;
 
   let preferencesReady = false;
   let preferencesDirty = false;
@@ -488,6 +490,7 @@
     renderStatusRow();
     setBusy(Boolean(Object.keys(store.state.busy || {}).length));
     lastApplied = (store.state && store.state.last_applied) || null;
+    hideEnableTip = (store.state && store.state.hide_enable_tip) === true;
     await loadClientVoice();
     // 状态刷新后同步监听器: 开启语音包(含选人语音)就启动, 还原就停止, 重启后自动恢复
     void syncLobbyLive();
@@ -810,6 +813,50 @@
   }
 
   // 第四排：恢复原版 & 开启语音包
+  /** 真正执行开启(提示确认过之后再走这里)。 */
+  function enableVoicePack(locale, modules, label) {
+    void startTask("开启语音包：" + label, () =>
+      api("/api/apply", {
+        method: "POST",
+        body: JSON.stringify({ locale, modules })
+      })
+    ).then((result) => {
+      // 只有真的成功了才算"本次会话已开启选人语音"
+      if (result === "failed" || (result && result.ok === false)) return;
+      lobbyVoiceSessionOn = modules.includes("lobby_voice");
+      void refresh();
+    });
+  }
+
+  /** 提示弹窗里等待确认的那次开启。 */
+  let pendingEnable = null;
+
+  function closeEnableTip() {
+    $("enableTipModal").classList.add("hidden");
+    pendingEnable = null;
+  }
+
+  // 关闭(×)= 取消这次开启
+  $("btnCloseEnableTip").onclick = closeEnableTip;
+
+  // 不再提醒 = 记住设置 + 继续开启
+  $("btnEnableTipNever").onclick = () => {
+    const pending = pendingEnable;
+    closeEnableTip();
+    hideEnableTip = true;
+    void api("/api/ui/hide-enable-tip", { method: "POST", body: "{}" }).catch((error) =>
+      log("保存『不再提醒』失败：" + (error && error.message ? error.message : error), "warn")
+    );
+    if (pending) enableVoicePack(pending.locale, pending.modules, pending.label);
+  };
+
+  // 确定 = 直接开启
+  $("btnEnableTipOk").onclick = () => {
+    const pending = pendingEnable;
+    closeEnableTip();
+    if (pending) enableVoicePack(pending.locale, pending.modules, pending.label);
+  };
+
   $("btnApply").onclick = () => {
     const locale = store.selected;
     if (!locale) {
@@ -824,17 +871,13 @@
     }
     const found = allLocaleItems().find((item) => item.code === locale);
     const label = found ? found.name : locale;
-    void startTask("开启语音包：" + label, () =>
-      api("/api/apply", {
-        method: "POST",
-        body: JSON.stringify({ locale, modules })
-      })
-    ).then((result) => {
-      // 只有真的成功了才算"本次会话已开启选人语音"
-      if (result === "failed" || (result && result.ok === false)) return;
-      lobbyVoiceSessionOn = modules.includes("lobby_voice");
-      void refresh();
-    });
+    // 没点过「不再提醒」时, 先弹一次提示(里面有关闭 / 不再提醒 / 确定)
+    if (!hideEnableTip) {
+      pendingEnable = { locale, modules, label };
+      $("enableTipModal").classList.remove("hidden");
+      return;
+    }
+    enableVoicePack(locale, modules, label);
   };
 
   $("btnRestore").onclick = () => {

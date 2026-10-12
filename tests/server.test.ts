@@ -448,4 +448,16 @@ test("server.maxUploadBytes 配置实际约束 API 上传", async () => {
     assert.equal((await response.json() as any).error, "payload_too_large");
   } finally { await started.running.close(); await saveConfig({ server: saved.server }); }
 });
+test("提示设置: POST /api/ui/hide-enable-tip 写进配置, /api/state 里读得到", async () => {
+  const before = await get("/api/state");
+  assert.equal((before.json.state as any).hide_enable_tip, false, "默认应是没有设置过");
+
+  const saved = await post("/api/ui/hide-enable-tip", {});
+  assert.equal(saved.json.ok, true);
+
+  const after = await get("/api/state");
+  assert.equal((after.json.state as any).hide_enable_tip, true, "设置之后应为 true");
 });
+
+});
+

@@ -195,6 +195,23 @@
 </div>
 
 <!-- 日志弹窗 -->
+  <!-- 开启语音包前的提示: 关闭 / 不再提醒 / 确定 三个出口 -->
+  <div class="modal hidden" id="enableTipModal">
+    <div class="modal-box glass-modal">
+      <div class="modal-head">
+        <h3>开启语音包</h3>
+        <button type="button" class="modal-close" id="btnCloseEnableTip" aria-label="关闭" title="关闭">×</button>
+      </div>
+      <p class="modal-tip">开启后，请勿通过 Wegame 启动，直接启动英雄联盟客户端</p>
+      <p class="modal-tip">如需启用对局选人语音功能，请勿关闭软件</p>
+      <p class="modal-tip">不想使用，点击还原即可</p>
+      <div class="modal-actions">
+        <button type="button" class="btn soft-blue-btn" id="btnEnableTipNever">不再提醒</button>
+        <button type="button" class="btn primary" id="btnEnableTipOk">我知道了，开启</button>
+      </div>
+    </div>
+  </div>
+
 <div class="modal hidden" id="logModal">
   <div class="modal-box glass-modal">
     <div class="modal-head">
