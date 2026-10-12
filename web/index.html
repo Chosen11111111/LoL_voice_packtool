@@ -218,6 +218,22 @@
     </div>
   </div>
 
+  <!-- 第一次"收进托盘"时的说明: 告诉用户图标在哪、怎么固定 -->
+  <div class="modal hidden" id="trayTipModal">
+    <div class="modal-box glass-modal">
+      <div class="modal-head">
+        <h3>收进右下角托盘</h3>
+        <button type="button" class="modal-close" id="btnCloseTrayTip" aria-label="关闭" title="关闭">×</button>
+      </div>
+      <p class="modal-tip">窗口会收到右下角的通知区域，任务栏里不再显示它。</p>
+      <p class="modal-tip">如果没看到图标：点任务栏右下角的 ^ 展开，把图标拖到外面就固定住了（拖一次以后 Windows 会记住）。</p>
+      <p class="modal-tip">图标上左键单击 = 恢复窗口；右键 = 「恢复窗口 / 关闭软件」。</p>
+      <div class="modal-actions">
+        <button type="button" class="btn primary" id="btnTrayTipOk">知道了，收进托盘</button>
+      </div>
+    </div>
+  </div>
+
 <div class="modal hidden" id="logModal">
   <div class="modal-box glass-modal">
     <div class="modal-head">

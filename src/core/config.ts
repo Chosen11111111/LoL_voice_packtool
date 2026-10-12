@@ -37,6 +37,8 @@ export interface UiConfig {
   lastApplied: { locale: string; modules: string[]; at: string } | null;
   /** 点过『不再提醒』后为 true: 以后再点开启语音包就不弹那段提示。 */
   hideEnableTip: boolean | null;
+  /** 点过『收进托盘』并看过说明后为 true。 */
+  hideTrayTip: boolean | null;
   /** 点"不再提醒"后为 true: 以后再点"开启语音包"就不弹那段提示了。 */
   region: "auto" | "cn" | "global";
 }
@@ -87,6 +89,7 @@ const DEFAULT_CONFIG: AppConfig = {
     voiceDelayMs: 1000,
     lastApplied: null,
   hideEnableTip: null,
+  hideTrayTip: null,
     region: "auto"
   },
   logLevel: "info"

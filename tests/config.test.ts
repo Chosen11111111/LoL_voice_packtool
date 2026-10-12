@@ -79,6 +79,9 @@ test("界面配置分次保存不会覆盖其他选项，重新读取保留空�
     lastApplied: null,
 
     hideEnableTip: null,
+
+
+    hideTrayTip: null,
     region: "global"
   });
 }));

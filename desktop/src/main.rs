@@ -156,7 +156,6 @@ fn create_tray(icon_path: Option<&str>) -> Option<TrayIcon> {
         .with_tooltip("英雄联盟 语音包切换器")
         .with_menu(Box::new(menu))
         .with_menu_on_left_click(false)
-        .with_guid(0x6c6f6c73_6b69_6e73_0001_000000000001)
         .build()
     {
         Ok(tray) => Some(tray),
@@ -240,7 +239,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             Event::UserEvent(Action::ToTray) => {
                 // 收进右下角托盘: 窗口隐藏(任务栏上也不留), 同时亮出托盘图标
                 if tray.is_some() {
-                    // 真正从任务栏移除按钮(不是 tao 那种临时的 DeleteTab)
+                    // 两个机制一起用, 确保任务栏那一格立刻消失、并且不会再自己回来:
+                    //   1) ITaskbarList::DeleteTab —— 立刻抹掉任务栏按钮(tao 的实现)
+                    //   2) 改扩展样式(去 APPWINDOW 加 TOOLWINDOW) —— 防止窗口一显示又回来
+                    let _ = window.set_skip_taskbar(true);
                     set_taskbar_visible(window.hwnd(), false);
                     window.set_visible(false);
                 } else {
@@ -250,6 +252,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
             Event::UserEvent(Action::ShowWindow) => {
                 set_taskbar_visible(window.hwnd(), true); // 回到任务栏
+                let _ = window.set_skip_taskbar(false);
                 window.set_visible(true);
                 window.set_focus();
             }

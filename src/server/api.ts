@@ -83,7 +83,8 @@ export function buildRouter(): Router {
         // 上次"开启语音包"的记录: 选人语音的开关只看这个状态(勾选框不算)
         last_applied: config.ui?.lastApplied ?? null,
         release: process.env.LEAGUE_VOICE_RELEASE === "1",
-        hide_enable_tip: config.ui?.hideEnableTip === true
+        hide_enable_tip: config.ui?.hideEnableTip === true,
+        hide_tray_tip: config.ui?.hideTrayTip === true
       }
     };
   });
@@ -271,6 +272,12 @@ export function buildRouter(): Router {
       lobbyLang: body.lobbyLang === "en_US" || body.lobbyLang === "zh_CN" ? body.lobbyLang : "keep"
     });
     return { ok: true, task };
+  });
+
+  /** 记住"托盘的说明已经看过"。 */
+  router.post("/api/ui/hide-tray-tip", async () => {
+    await saveConfig({ ui: { hideTrayTip: true } });
+    return { ok: true };
   });
 
   /** 记住『不再提醒』: 只在用户明确点了那个按钮时才写。 */
@@ -505,6 +512,7 @@ export async function stateOnce(): Promise<unknown> {
     // 上次"开启语音包"的记录: 重启后界面据此说明当前生效的是什么
     last_applied: config.ui?.lastApplied ?? null,
         release: process.env.LEAGUE_VOICE_RELEASE === "1",
-        hide_enable_tip: config.ui?.hideEnableTip === true
+        hide_enable_tip: config.ui?.hideEnableTip === true,
+        hide_tray_tip: config.ui?.hideTrayTip === true
   };
 }
