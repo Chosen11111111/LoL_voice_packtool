@@ -947,7 +947,7 @@ button, input, select {
   cursor: default;
 }
 .app-titlebar[hidden] { display: none; }
-.app-titlebar__logo { width: 18px; height: 18px; border-radius: 5px; object-fit: contain; }
+.app-titlebar__logo { width: 26px; height: 26px; object-fit: contain; }  /* 已抠掉背景, 不需要圆角遮罩 */
 .app-titlebar__name { font-size: 12.5px; font-weight: 600; letter-spacing: 0.2px; color: #3b4a63; }
 .app-titlebar__actions { margin-left: auto; display: flex; align-items: center; gap: 2px; }
 .win-btn {
