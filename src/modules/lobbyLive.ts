@@ -103,6 +103,8 @@ export class LobbyLiveEngine {
   private baselined = false;
   /** 当前是否处于选人流程(用于判断"选人结束"从而还原原版台词)。 */
   private inChampSelect = false;
+  /** 对局(游戏本体)是否在跑 —— 在跑就暂停一切客户端查询。 */
+  private inMatch = false;
   /** 正在进行的启动(串行化, 防止并发创建多个轮询器)。 */
   private pendingStart: Promise<{ ok: boolean; message: string; state: LobbyLiveState }> | null = null;
   /** 窗口回报的播放结果。 */
@@ -127,6 +129,11 @@ export class LobbyLiveEngine {
 
   isRunning(): boolean {
     return this.stopWatch !== null;
+  }
+
+  /** 对局中(游戏本体在跑): 此时不应向客户端发任何请求。 */
+  isInMatch(): boolean {
+    return this.inMatch;
   }
 
   /** 统计语音包里该语种可用的选人/禁用音频数量。 */

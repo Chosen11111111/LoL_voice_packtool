@@ -12,6 +12,7 @@
  */
 import { createLogger } from "../logger.ts";
 import { lcuRequest } from "./lcu.ts";
+import { isGameRunning } from "./processes.ts";
 import type { ChampSelectSession } from "../../modules/champSelect.ts";
 
 const logger = createLogger("lcu-events");
@@ -34,6 +35,10 @@ export interface WatchOptions {
   fastIntervalMs?: number;
   /** 不在选人时的轮询间隔。 */
   idleIntervalMs?: number;
+  /** 对局开始/结束时回调(让别处也能立刻停止请求)。 */
+  onMatchChange?: (inMatch: boolean) => void;
+  /** 对局中检查游戏进程的间隔(本地 tasklist, 不碰客户端)。 */
+  matchCheckMs?: number;
 }
 
 /** 停止函数。 */
@@ -42,8 +47,12 @@ export type StopWatch = () => void;
 export function watchChampSelect(options: WatchOptions): StopWatch {
   const fast = Math.max(100, options.fastIntervalMs ?? 200);
   const idle = Math.max(fast, options.idleIntervalMs ?? 1500);
+  const matchCheck = Math.max(1000, options.matchCheckMs ?? 3000);
   let stopped = false;
   let lastPresence: ChampSelectPresence | null = null;
+  /** 对局是否正在进行(用本地进程判断, 不发任何客户端请求)。 */
+  let inMatch = false;
+  let lastMatchCheck = 0;
   let lastPollKey = "";
 
   const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -65,6 +74,27 @@ export function watchChampSelect(options: WatchOptions): StopWatch {
 
   void (async () => {
     while (!stopped) {
+      // 对局中: 一个 LCU 请求都不发。
+      // 判断"对局有没有结束"用本地进程检测(tasklist), 不产生任何客户端请求;
+      // 选人阶段不必检测(那时游戏进程必然没起来), 省掉多余的系统调用。
+      if (lastPresence !== "in" && Date.now() - lastMatchCheck >= matchCheck) {
+        lastMatchCheck = Date.now();
+        let running = false;
+        try {
+          running = await isGameRunning();
+        } catch {
+          running = false;
+        }
+        if (running !== inMatch) {
+          inMatch = running;
+          logger.info(running ? "检测到对局进程: 暂停一切客户端查询" : "对局结束: 恢复客户端查询");
+          options.onMatchChange?.(running);
+        }
+      }
+      if (inMatch) {
+        await sleep(matchCheck);
+        continue;
+      }
       let presence: ChampSelectPresence = "offline";
       try {
         const response = await lcuRequest("GET", "/lol-champ-select/v1/session", { timeoutMs: 4000 });

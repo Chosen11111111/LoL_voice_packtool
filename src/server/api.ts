@@ -504,6 +504,13 @@ export async function startApiServer(
   const volumeTimer = setInterval(() => {
     void (async () => {
       if (!lobbyLive.isRunning()) return;
+      // 对局中不对客户端发任何请求(对局状态来自本地进程检测, 零开销)
+      if (lobbyLive.isInMatch()) return;
+      // 读客户端音量是一次 LCU 的 HTTP 请求, 没必要一直每秒一次:
+      // 选人阶段(最近 60 秒有事件)保持 1 秒精度, 让它"调完音量马上生效"; 平时 5 秒一次。
+      const gapMs = Date.now() - lastLobbyEventAt < 60_000 ? 1000 : 5000;
+      if (Date.now() - lastVolumeProbeAt < gapMs) return;
+      lastVolumeProbeAt = Date.now();
       const volumes = readVolumes((await readAudioSettings())?.data);
       if (!volumes) return;
       if (volumes.master === lastKnownMaster) return;
