@@ -94,8 +94,8 @@ fn create_tray(icon_path: Option<&str>) -> Option<TrayIcon> {
         None => return None,
     };
     let menu = Menu::new();
-    let show = MenuItem::with_id("show", "显示窗口", true, None);
-    let quit = MenuItem::with_id("quit", "退出", true, None);
+    let show = MenuItem::with_id("show", "恢复窗口", true, None);
+    let quit = MenuItem::with_id("quit", "关闭软件", true, None);
     menu.append_items(&[&show, &PredefinedMenuItem::separator(), &quit]).ok()?;
     TrayIconBuilder::new()
         .with_icon(icon)
@@ -117,7 +117,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let event_loop = EventLoopBuilder::<Action>::with_user_event().build();
     let proxy: EventLoopProxy<Action> = event_loop.create_proxy();
 
-    // 托盘点击: 左键单击唤回窗口; 右键菜单里的项由 MenuEvent 处理
+    // 托盘交互: 左键单击 = 恢复窗口; 右键 = 菜单(恢复窗口 / 关闭软件)
     let tray_proxy = proxy.clone();
     TrayIconEvent::set_event_handler(Some(move |event: TrayIconEvent| {
         if let TrayIconEvent::Click {
