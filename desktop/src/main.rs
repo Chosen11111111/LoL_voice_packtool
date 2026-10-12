@@ -76,6 +76,39 @@ fn load_png_rgba(path: &str) -> Result<(Vec<u8>, u32, u32), String> {
     Ok((rgba, info.width, info.height))
 }
 
+/// 把 RGBA 缩到 size×size(按 alpha 加权, 免得边缘发黑)。
+fn resize_rgba_to(rgba: &[u8], width: u32, height: u32, size: u32) -> Vec<u8> {
+    let mut out = vec![0u8; (size * size * 4) as usize];
+    for y in 0..size {
+        for x in 0..size {
+            let x0 = x * width / size;
+            let x1 = (((x + 1) * width) / size).max(x0 + 1);
+            let y0 = y * height / size;
+            let y1 = (((y + 1) * height) / size).max(y0 + 1);
+            let (mut r, mut g, mut b, mut a, mut n) = (0u32, 0u32, 0u32, 0u32, 0u32);
+            for sy in y0..y1 {
+                for sx in x0..x1 {
+                    let i = ((sy * width + sx) * 4) as usize;
+                    let alpha = rgba[i + 3] as u32;
+                    r += rgba[i] as u32 * alpha;
+                    g += rgba[i + 1] as u32 * alpha;
+                    b += rgba[i + 2] as u32 * alpha;
+                    a += alpha;
+                    n += 1;
+                }
+            }
+            let o = ((y * size + x) * 4) as usize;
+            if a > 0 {
+                out[o] = (r / a) as u8;
+                out[o + 1] = (g / a) as u8;
+                out[o + 2] = (b / a) as u8;
+            }
+            out[o + 3] = if n > 0 { (a / n) as u8 } else { 0 };
+        }
+    }
+    out
+}
+
 /// 窗口图标(任务栏 / Alt-Tab 用)。
 fn load_window_icon(path: &str) -> Option<Icon> {
     match load_png_rgba(path) {
@@ -89,23 +122,49 @@ fn load_window_icon(path: &str) -> Option<Icon> {
 
 /// 建托盘图标(收进右下角时才有; 显示窗口后会被丢弃, 图标随之消失)。
 fn create_tray(icon_path: Option<&str>) -> Option<TrayIcon> {
-    let icon = match icon_path {
-        Some(path) => tray_icon::Icon::from_path(path, Some((32, 32))).ok()?,
-        None => return None,
+    // 失败时把原因写到 stderr: 之前托盘建不出来只会静默退回"最小化", 很难查
+    let Some(path) = icon_path else {
+        eprintln!("[voice-shell] 没有图标路径, 托盘图标建不了");
+        return None;
+    };
+    // 不用 tray-icon 的 from_path: 实测它对这张 512x512 会报错("操作成功完成" 但失败),
+    // 所以自己解码 PNG 再缩到 32x32, 走 from_rgba 这条路。
+    let (rgba, width, height) = match load_png_rgba(path) {
+        Ok(value) => value,
+        Err(error) => {
+            eprintln!("[voice-shell] 读图标失败 {path}: {error}");
+            return None;
+        }
+    };
+    let small = resize_rgba_to(&rgba, width, height, 32);
+    let icon = match tray_icon::Icon::from_rgba(small, 32, 32) {
+        Ok(icon) => icon,
+        Err(error) => {
+            eprintln!("[voice-shell] 造托盘图标失败: {error}");
+            return None;
+        }
     };
     let menu = Menu::new();
     let show = MenuItem::with_id("show", "恢复窗口", true, None);
     let quit = MenuItem::with_id("quit", "关闭软件", true, None);
-    menu.append_items(&[&show, &PredefinedMenuItem::separator(), &quit]).ok()?;
-    TrayIconBuilder::new()
+    if let Err(error) = menu.append_items(&[&show, &PredefinedMenuItem::separator(), &quit]) {
+        eprintln!("[voice-shell] 拼托盘菜单失败: {error}");
+        return None;
+    }
+    match TrayIconBuilder::new()
         .with_icon(icon)
         .with_tooltip("英雄联盟 语音包切换器")
         .with_menu(Box::new(menu))
         .with_menu_on_left_click(false)
-        // 固定 GUID: 用户把图标拖出折叠区后, Windows 会记住这个选择
         .with_guid(0x6c6f6c73_6b69_6e73_0001_000000000001)
         .build()
-        .ok()
+    {
+        Ok(tray) => Some(tray),
+        Err(error) => {
+            eprintln!("[voice-shell] 建托盘图标失败: {error}");
+            None
+        }
+    }
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
