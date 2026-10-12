@@ -7,6 +7,17 @@
 <link rel="stylesheet" href="/styles.css" />
 </head>
 <body>
+<!-- 自绘标题栏: 只在原生外壳(无边框窗口)里显示; 浏览器里打开时保持隐藏, 见 app.js -->
+<div class="app-titlebar" id="appTitlebar" hidden>
+  <span class="app-titlebar__logo" aria-hidden="true">&#9672;</span>
+  <span class="app-titlebar__name">英雄联盟 语音包切换器</span>
+  <div class="app-titlebar__actions">
+    <button type="button" class="win-btn" id="winMin" title="最小化" aria-label="最小化">&#8722;</button>
+    <button type="button" class="win-btn" id="winMax" title="最大化 / 还原" aria-label="最大化或还原">&#9723;</button>
+    <button type="button" class="win-btn win-btn--close" id="winClose" title="关闭" aria-label="关闭">&#10005;</button>
+  </div>
+</div>
+
 <!-- 柔和蓝白环境底衬（供毛玻璃折射出通透质感，克制不花哨） -->
 <div class="ambient-bg" aria-hidden="true">
   <span class="ambient-blob blob-1"></span>

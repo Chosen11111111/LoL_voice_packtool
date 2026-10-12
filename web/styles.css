@@ -130,12 +130,15 @@ button, input, select {
   z-index: 1;
   width: 100%;
   max-width: 800px;
-  height: 100vh;
+  /* 原来写死 height:100vh + space-between, 那是给 800x600 固定窗口设计的;
+     窗口变高之后会把多余高度摊到每一行, 把「当前状态」三个块撑大。
+     改为: 至少一屏高, 从上往下排, 多余高度留给会自增长的区域(日志)。 */
+  min-height: 100vh;
   margin: 0 auto;
   padding: 18px 22px;
   display: flex;
   flex-direction: column;
-  justify-content: space-between;
+  justify-content: flex-start;
   gap: 12px;
 }
 
@@ -419,7 +422,7 @@ button, input, select {
 
 /* ---------------- 第三排：当前状态（三个状况） ---------------- */
 .status-section {
-  flex: 1;
+  flex: 0 0 auto;          /* 保持自身高度, 不参与拉伸 */
   display: flex;
   flex-direction: column;
   justify-content: center;
@@ -429,7 +432,7 @@ button, input, select {
   display: grid;
   grid-template-columns: repeat(3, 1fr);
   gap: 11px;
-  flex: 1;
+  flex: 0 0 auto;          /* 同上: 三个块按内容高度, 不被撑大 */
 }
 
 .status-item {
@@ -924,3 +927,45 @@ button, input, select {
   outline: 2px solid var(--blue);
   outline-offset: 3px;
 }
+
+/* ---------------- 自绘标题栏(原生外壳的无边框窗口专用) ---------------- */
+.app-titlebar {
+  position: sticky;
+  top: 0;
+  z-index: 100;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 36px;
+  padding: 0 6px 0 14px;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.86), rgba(244, 248, 255, 0.78));
+  border-bottom: 1px solid rgba(37, 99, 235, 0.12);
+  backdrop-filter: blur(12px) saturate(1.1);
+  -webkit-backdrop-filter: blur(12px) saturate(1.1);
+  user-select: none;
+  -webkit-user-select: none;
+  cursor: default;
+}
+.app-titlebar[hidden] { display: none; }
+.app-titlebar__logo { color: var(--blue); font-size: 13px; line-height: 1; }
+.app-titlebar__name { font-size: 12.5px; font-weight: 600; letter-spacing: 0.2px; color: #3b4a63; }
+.app-titlebar__actions { margin-left: auto; display: flex; align-items: center; gap: 2px; }
+.win-btn {
+  width: 34px;
+  height: 28px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 12px;
+  color: #475569;
+  background: none;
+  border: none;
+  border-radius: 7px;
+  cursor: pointer;
+  transition: background-color 0.15s ease, color 0.15s ease;
+}
+.win-btn:hover { background-color: rgba(37, 99, 235, 0.12); color: #1e3a8a; }
+.win-btn:active { background-color: rgba(37, 99, 235, 0.2); }
+.win-btn--close:hover { background-color: #e5453a; color: #fff; }
+.win-btn--close:active { background-color: #c9362c; }
+.win-btn:focus-visible { outline: 2px solid var(--blue); outline-offset: -1px; }

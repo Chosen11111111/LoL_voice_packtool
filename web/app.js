@@ -1365,3 +1365,30 @@
     });
   connectEvents();
 })();
+
+/**
+ * 原生外壳(wry)会给页面注入 window.ipc; 有它才说明我们在无边框窗口里,
+ * 这时才显示自绘标题栏, 并把三个键接到外壳上。
+ * (网页本身没有最小化/关闭窗口的权限, 所以必须由外壳执行)
+ */
+function setupAppTitlebar() {
+  const ipc = window.ipc;
+  if (!ipc || typeof ipc.postMessage !== "function") return;
+  const bar = document.getElementById("appTitlebar");
+  if (!bar) return;
+  bar.hidden = false;
+  const send = (message) => {
+    try { ipc.postMessage(message); } catch (error) { console.warn("窗口操作失败", error); }
+  };
+  document.getElementById("winMin").addEventListener("click", () => send("minimize"));
+  document.getElementById("winMax").addEventListener("click", () => send("toggle-maximize"));
+  document.getElementById("winClose").addEventListener("click", () => send("close"));
+  bar.addEventListener("mousedown", (event) => {
+    if (event.button !== 0 || event.target.closest(".win-btn")) return;
+    send("drag");
+  });
+  bar.addEventListener("dblclick", (event) => {
+    if (!event.target.closest(".win-btn")) send("toggle-maximize");
+  });
+}
+setupAppTitlebar();

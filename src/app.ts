@@ -122,6 +122,22 @@ function openAppWindow(browser: string, url: string): ChildProcess {
   );
 }
 
+/**
+ * 原生外壳(desktop/, Rust + WebView2): 无边框窗口, 那条系统标题栏根本不存在,
+ * 标题栏由页面自己画。编译产物在 desktop/target/release/voice-shell.exe,
+ * 没有就回退到浏览器 --app 模式(功能一样, 只是多一条浏览器的标题栏)。
+ */
+function findShell(): string | null {
+  if (process.platform !== "win32") return null;
+  const exe = path.join(appRoot(), "desktop", "target", "release", "voice-shell.exe");
+  return fs.existsSync(exe) ? exe : null;
+}
+
+/** 以原生外壳打开界面(关掉窗口 = 退出程序, 和浏览器模式一致)。 */
+function openShellWindow(shell: string, url: string): ChildProcess {
+  return spawn(shell, [url], { stdio: "ignore", windowsHide: false });
+}
+
 async function waitForever(): Promise<void> {
   await new Promise<void>((resolve) => {
     const stop = () => resolve();
@@ -171,8 +187,10 @@ async function main(): Promise<void> {
     return;
   }
 
-  const browser = findChromium();
-  if (!browser) {
+  // 优先用原生外壳(无边框窗口); 加 --browser-window 可强制用浏览器
+  const shell = hasFlag("browser-window") ? null : findShell();
+  const browser = shell ? null : findChromium();
+  if (!shell && !browser) {
     console.log("[!] 未找到 Edge/Chrome，改用系统默认浏览器打开；关闭本窗口即退出。");
     openDefaultBrowser(url);
     await waitForever();
@@ -183,7 +201,7 @@ async function main(): Promise<void> {
 
   let windowProcess: ChildProcess;
   try {
-    windowProcess = openAppWindow(browser, url);
+    windowProcess = shell ? openShellWindow(shell, url) : openAppWindow(browser!, url);
   } catch (error) {
     logger.warn(`打开应用窗口失败, 改用默认浏览器: ${String((error as Error).message ?? error)}`);
     openDefaultBrowser(url);
