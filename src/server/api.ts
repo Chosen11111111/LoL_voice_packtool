@@ -82,6 +82,7 @@ export function buildRouter(): Router {
         lobby_live: lobbyLive.state(),
         // 上次"开启语音包"的记录: 选人语音的开关只看这个状态(勾选框不算)
         last_applied: config.ui?.lastApplied ?? null,
+        release: process.env.LEAGUE_VOICE_RELEASE === "1",
         hide_enable_tip: config.ui?.hideEnableTip === true
       }
     };
@@ -503,6 +504,7 @@ export async function stateOnce(): Promise<unknown> {
     env: { voiceRoot: env.voiceRoot, baseLocale: env.baseLocale, region: env.region },
     // 上次"开启语音包"的记录: 重启后界面据此说明当前生效的是什么
     last_applied: config.ui?.lastApplied ?? null,
+        release: process.env.LEAGUE_VOICE_RELEASE === "1",
         hide_enable_tip: config.ui?.hideEnableTip === true
   };
 }

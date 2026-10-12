@@ -386,3 +386,17 @@ cargo build --release      # 产物 desktop/target/release/voice-shell.exe（约
 
 `start.cmd` 会自动优先使用它；找不到 exe 时自动回退到 Edge/Chrome 的应用窗口模式
 （功能一样，只是多一条浏览器自己的标题栏）。想强制用浏览器：`start.cmd --browser-window`。
+
+## 打包给用户（免安装）
+
+```
+node scripts/release.ts          # 生成 release/ 与 release.zip
+node scripts/release.ts --no-zip # 只要文件夹
+```
+
+发布包**自带 Node 运行时**，用户电脑上不需要装任何环境，双击 `release\start.cmd` 即可。
+
+- 不带进用户包：`tests/` `docs/` `scripts/` `desktop/src` `desktop/target` `tsconfig.json`
+  `config.json`（用户自己的配置）`language/`（用户自己的语音包）
+- 发布模式（`start.cmd` 里设 `LEAGUE_VOICE_RELEASE=1`）：后端日志只留 warning 以上、不写日志文件；
+  界面不显示日志入口、也不再往日志区堆内容 —— 用户包不需要这些调试信息

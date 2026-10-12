@@ -33,6 +33,7 @@
   }
 
   function log(line) {
+    if (releaseMode) return; // 发布包不记日志
     const stamp = new Date().toLocaleTimeString("zh-CN", { hour12: false });
     for (const raw of String(line).split("\n")) {
       store.logs.push("[" + stamp + "] " + raw);
@@ -121,6 +122,9 @@
   let lastApplied = null;
   /** 用户点过『不再提醒』后为 true(来自配置)。 */
   let hideEnableTip = false;
+
+  /** 发布包: 不记日志、也不显示日志入口(用户包不需要这些)。 */
+  let releaseMode = false;
 
   let preferencesReady = false;
   let preferencesDirty = false;
@@ -491,6 +495,9 @@
     setBusy(Boolean(Object.keys(store.state.busy || {}).length));
     lastApplied = (store.state && store.state.last_applied) || null;
     hideEnableTip = (store.state && store.state.hide_enable_tip) === true;
+    releaseMode = (store.state && store.state.release) === true;
+    const logButton = $("btnOpenLog");
+    if (logButton) logButton.classList.toggle("hidden", releaseMode);
     await loadClientVoice();
     // 状态刷新后同步监听器: 开启语音包(含选人语音)就启动, 还原就停止, 重启后自动恢复
     void syncLobbyLive();

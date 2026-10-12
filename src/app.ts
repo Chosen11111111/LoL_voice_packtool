@@ -129,8 +129,12 @@ function openAppWindow(browser: string, url: string): ChildProcess {
  */
 function findShell(): string | null {
   if (process.platform !== "win32") return null;
-  const exe = path.join(appRoot(), "desktop", "target", "release", "voice-shell.exe");
-  return fs.existsSync(exe) ? exe : null;
+  // 发布包把外壳放在 desktop/voice-shell.exe; 开发目录里是 cargo 的产物
+  const candidates = [
+    path.join(appRoot(), "desktop", "voice-shell.exe"),
+    path.join(appRoot(), "desktop", "target", "release", "voice-shell.exe")
+  ];
+  return candidates.find((candidate) => fs.existsSync(candidate)) ?? null;
 }
 
 /**
@@ -159,8 +163,15 @@ async function main(): Promise<void> {
   const port = Number(argValue("port") ?? config.server.port) || config.server.port;
   const hideWindow = hasFlag("no-window");
 
-  // 应用模式下把日志落盘, 排障时可直接查看(窗口是独立进程, 控制台输出容易丢)
-  setLogFile(path.join(appRoot(), ".tmp", "app.log"));
+  // 发布模式(发布包的 start.cmd 会设置这个变量): 不写日志文件, 只留 warning 以上。
+  // 开发时照旧落盘 .tmp/app.log, 便于排查轮询/事件细节。
+  const releaseMode = hasFlag("release") || process.env.LEAGUE_VOICE_RELEASE === "1";
+  if (releaseMode) {
+    setLogLevel("warn" as LogLevel);
+  } else {
+    // 应用模式下把日志落盘, 排障时可直接查看(窗口是独立进程, 控制台输出容易丢)
+    setLogFile(path.join(appRoot(), ".tmp", "app.log"));
+  }
 
   let running;
   try {

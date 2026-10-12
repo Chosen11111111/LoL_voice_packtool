@@ -14,3 +14,7 @@ voice/
 
 # Rust 原生外壳的构建产物(体积大, 不进仓库)
 desktop/target/
+
+# 发布包产物(体积大, 用 scripts/release.ts 生成)
+release/
+release.zip
