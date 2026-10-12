@@ -1,33 +1,27 @@
 /**
- * 生成发布包: release/  —— 给最终用户的免安装版本。
+ * 生成发布包: release/LoL_Voice_<版本>/  —— 给最终用户的免安装版本。
  *
- * 用户的电脑上不需要任何环境: 自带一份 Node 运行时(runtime/node.exe),
- * 双击 start.cmd 就能用。发布模式下日志只留 warning 以上, 也不写日志文件。
+ * 用户的电脑上不需要任何环境:
+ *   - LoL_Voice.exe   双击它就能用(Rust 启动器, 图标是使用者设计的 voicepack.ico)
+ *   - runtime/node.exe 自带的 Node 运行时(用户不用装)
  *
  * 用法:
- *   node scripts/release.ts          生成 release/(默认不压缩)
- *   node scripts/release.ts --zip    额外压一个 release.zip
+ *   node scripts/release.ts   生成 release/LoL_Voice_0.01/
  *
- * 刻意不打包的东西(用户用不到, 只会占地方):
+ * 刻意不打包(用户用不到, 只会占地方):
  *   tests/  docs/  scripts/  .tmp/  .git/  desktop/src  desktop/target
  *   tsconfig.json  config.json(用户自己的配置)  language/(用户自己的语音包)
  */
 import fs from "node:fs/promises";
 import path from "node:path";
-import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
+
+/** 版本号: 发布就改这里(文件夹名跟着变)。 */
+const VERSION = "0.01";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(here, "..");
-const out = path.join(root, "release");
-const wantZip = process.argv.includes("--zip"); // 默认不压缩
-
-/** 复制目录(不存在就跳过)。 */
-async function copyDir(from: string, to: string, filter?: (name: string) => boolean) {
-  if (!(await exists(from))) return 0;
-  await fs.cp(from, to, { recursive: true, filter: filter ? (src) => filter(path.basename(src)) : undefined });
-  return 1;
-}
+const out = path.join(root, "release", `LoL_Voice_${VERSION}`);
 
 async function exists(target: string) {
   return fs.stat(target).then(() => true).catch(() => false);
@@ -53,85 +47,72 @@ async function measure(dir: string): Promise<{ bytes: number; files: number }> {
 
 const mb = (n: number) => (n / 1024 / 1024).toFixed(1) + " MB";
 
-// 1) 清空输出目录
-await fs.rm(out, { recursive: true, force: true });
+// 1) 清空 release/ 再建版本文件夹(保证每次都是干净的包)
+await fs.rm(path.join(root, "release"), { recursive: true, force: true });
 await fs.mkdir(out, { recursive: true });
 console.log("输出目录: " + out);
 
-// 2) 程序本体
-await copyDir(path.join(root, "src"), path.join(out, "src"));
-await copyDir(path.join(root, "web"), path.join(out, "web"));
-await copyDir(path.join(root, "assets"), path.join(out, "assets"));
+// 2) 程序本体与素材
+for (const name of ["src", "web", "assets"]) {
+  await fs.cp(path.join(root, name), path.join(out, name), { recursive: true });
+}
 
-// 3) 窗口外壳(只带编译好的 exe, 不带 Rust 源码与 target)
+// 3) 窗口外壳 + 启动器(都带图标; 启动器改名成用户看到的名字)
+const built = path.join(root, "desktop", "target", "release");
 await fs.mkdir(path.join(out, "desktop"), { recursive: true });
-const shell = path.join(root, "desktop", "target", "release", "voice-shell.exe");
+const shell = path.join(built, "voice-shell.exe");
 if (await exists(shell)) {
   await fs.copyFile(shell, path.join(out, "desktop", "voice-shell.exe"));
-  console.log("外壳: voice-shell.exe " + mb((await fs.stat(shell)).size));
 } else {
   console.log("[!] 没找到 voice-shell.exe, 发布包会退回浏览器窗口模式");
+}
+const launcher = path.join(built, "voice-launcher.exe");
+if (await exists(launcher)) {
+  await fs.copyFile(launcher, path.join(out, "LoL_Voice.exe"));
+  console.log("入口: LoL_Voice.exe " + mb((await fs.stat(launcher)).size));
+} else {
+  console.log("[!] 没找到 voice-launcher.exe, 先跑: cd desktop && cargo build --release");
 }
 
 // 4) 自带 Node 运行时(免安装的关键)
 await fs.mkdir(path.join(out, "runtime"), { recursive: true });
 const nodeExe = process.execPath;
 await fs.copyFile(nodeExe, path.join(out, "runtime", "node.exe"));
-console.log("运行时: node.exe " + mb((await fs.stat(nodeExe)).size) + " (来自 " + nodeExe + ")");
+console.log("运行时: node.exe " + mb((await fs.stat(nodeExe)).size));
 
-// 5) 启动脚本(纯 ASCII + CRLF)
-const startCmd = [
-  "@echo off",
-  "rem League Voice - voice pack switcher (portable, no install needed)",
-  "chcp 65001 >nul",
-  'cd /d "%~dp0"',
-  "title League Voice",
-  "rem \u53d1\u5e03\u6a21\u5f0f: \u65e5\u5fd7\u53ea\u7559 warning \u4ee5\u4e0a, \u4e5f\u4e0d\u5199\u65e5\u5fd7\u6587\u4ef6",
-  'set "LEAGUE_VOICE_RELEASE=1"',
-  '"%CD%\\runtime\\node.exe" "%CD%\\src\\app.ts" %*',
-  "if errorlevel 1 pause"
-].join("\r\n") + "\r\n";
-await fs.writeFile(path.join(out, "start.cmd"), startCmd, "ascii");
-
-// 6) 给用户的说明
+// 5) 给用户的说明
 const readme = [
-  "\u82f1\u96c4\u8054\u76df \u8bed\u97f3\u5305\u5207\u6362\u5668 \u2014\u2014 \u514d\u5b89\u88c5\u7248",
+  "LoL Voice  " + VERSION + "  —— 免安装版",
   "",
-  "\u600e\u4e48\u7528",
-  "  \u53cc\u51fb start.cmd \u5373\u53ef\u3002\u4e0d\u9700\u8981\u5b89\u88c5\u4efb\u4f55\u4e1c\u897f(Node \u8fd0\u884c\u65f6\u5df2\u7ecf\u6253\u5305\u5728\u91cc\u9762)\u3002",
+  "怎么用",
+  "  双击 LoL_Voice.exe 即可。不需要安装任何东西。",
+  "  它是绿色软件: 整个文件夹可以随便放(桌面、D 盘都行), 卸载就是删掉文件夹。",
   "",
-  "\u7b2c\u4e00\u6b21\u4f7f\u7528",
-  "  1. \u786e\u8ba4\u754c\u9762\u4e0a\u7684\u201c\u6e38\u620f\u8def\u5f84\u201d(\u4e00\u822c\u4f1a\u81ea\u52a8\u627e\u5230; \u627e\u4e0d\u5230\u5c31\u70b9\u81ea\u52a8\u641c\u7d22\u6216\u624b\u586b)",
-  "  2. \u5148\u70b9\u201c\u4e0b\u8f7d\u8bed\u97f3\u5305\u201d\u62ff\u5230\u8bed\u97f3\u5305, \u5728\u4e0b\u62c9\u680f\u91cc\u9009\u4e2d",
-  "  3. \u70b9\u201c\u5f00\u542f\u8bed\u97f3\u5305\u201d",
+  "第一次使用",
+  "  1. 确认界面上的游戏路径(一般会自动找到; 找不到就点自动搜索或手填)",
+  "  2. 先点下载语音包拿到语音包, 再在下拉栏里选中",
+  "  3. 点开启语音包",
   "",
-  "\u6ce8\u610f",
-  "  \u5f00\u542f\u540e\u8bf7\u52ff\u901a\u8fc7 WeGame \u542f\u52a8, \u76f4\u63a5\u542f\u52a8\u82f1\u96c4\u8054\u76df\u5ba2\u6237\u7aef",
-  "  \u60f3\u7528\u5bf9\u5c40\u9009\u4eba\u8bed\u97f3, \u5f00\u7740\u672c\u8f6f\u4ef6\u5c31\u884c",
-  "  \u4e0d\u60f3\u7528\u4e86, \u70b9\u201c\u8fd8\u539f\u201d\u5373\u53ef",
+  "注意",
+  "  开启后请勿通过 WeGame 启动, 直接启动英雄联盟客户端",
+  "  想用对局选人语音, 开着本软件就行",
+  "  不想用了, 点还原即可",
   "",
-  "\u6587\u4ef6\u8bf4\u660e",
-  "  src\\      \u7a0b\u5e8f\u672c\u4f53",
-  "  web\\      \u754c\u9762",
-  "  runtime\\  \u81ea\u5e26\u7684 Node \u8fd0\u884c\u65f6(\u4e0d\u8981\u5220)",
-  "  desktop\\  \u7a97\u53e3\u5916\u58f3",
-  "  assets\\   \u56fe\u6807\u7b49\u7d20\u6750",
-  "  language\\ \u8bed\u97f3\u5305\u653e\u8fd9\u91cc(\u9996\u6b21\u8fd0\u884c\u4f1a\u81ea\u52a8\u521b\u5efa)",
+  "常见问题",
+  "  双击没反应: 很可能已经在运行了 —— 看看右下角托盘(可能在隐藏的图标里)",
+  "  窗口不见了: 标题栏右侧第二个按钮是收进托盘",
   "",
-  "\u5378\u8f7d: \u76f4\u63a5\u5220\u6389\u6574\u4e2a\u6587\u4ef6\u5939\u5373\u53ef\u3002\u914d\u7f6e\u5728 config.json\u3002"
+  "文件说明",
+  "  LoL_Voice.exe  启动入口",
+  "  src\\  web\\  程序本体与界面",
+  "  runtime\\      自带的 Node 运行时(不要删)",
+  "  desktop\\      窗口外壳",
+  "  assets\\       图标等素材",
+  "  language\\     语音包放这里(首次运行自动创建)"
 ].join("\r\n") + "\r\n";
 await fs.writeFile(path.join(out, "README.txt"), readme, "utf8");
 
-// 7) 统计 + 打包
+// 6) 统计
 const size = await measure(out);
 console.log("\n发布包: " + size.files + " 个文件, " + mb(size.bytes));
-if (wantZip) {
-  const zip = path.join(root, "release.zip");
-  await fs.rm(zip, { force: true });
-  const result = spawnSync("tar", ["-a", "-c", "-f", zip, "-C", out, "."], { stdio: "ignore" });
-  if (result.status === 0 && (await exists(zip))) {
-    console.log("压缩包: release.zip " + mb((await fs.stat(zip)).size));
-  } else {
-    console.log("[!] 压缩失败(可以用系统自带的右键压缩), 文件夹本身已经可用");
-  }
-}
+console.log("直接把这个文件夹发出去就行: " + path.basename(out));

@@ -8,3 +8,11 @@ png = "0.18.1"
 tao = "0.37.1"
 tray-icon = "0.26.1"
 wry = "0.57.0"
+
+[build-dependencies]
+winresource = "0.1"
+
+# 发布包的入口: 双击即用(启动后端后自己退出)
+[[bin]]
+name = "voice-launcher"
+path = "src/bin/launcher.rs"
