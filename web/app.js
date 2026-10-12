@@ -1381,7 +1381,7 @@ function setupAppTitlebar() {
     try { ipc.postMessage(message); } catch (error) { console.warn("窗口操作失败", error); }
   };
   document.getElementById("winMin").addEventListener("click", () => send("minimize"));
-  document.getElementById("winMax").addEventListener("click", () => send("toggle-maximize"));
+  document.getElementById("winTray").addEventListener("click", () => send("tray"));
   document.getElementById("winClose").addEventListener("click", () => send("close"));
   bar.addEventListener("mousedown", (event) => {
     if (event.button !== 0 || event.target.closest(".win-btn")) return;

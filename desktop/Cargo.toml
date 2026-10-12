@@ -5,4 +5,5 @@ edition = "2024"
 
 [dependencies]
 tao = "0.37.1"
+tray-icon = "0.26.1"
 wry = "0.57.0"

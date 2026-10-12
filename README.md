@@ -372,3 +372,17 @@ E:\WeGameApps\英雄联盟\LeagueClient\<时间戳>_<pid>_LeagueClientUx.log
 
 这套办法**不需要提权、不碰反作弊**，纯文件读取。
 
+## 原生外壳（可选，推荐）
+
+界面窗口默认由 `desktop/` 里的 Rust 外壳打开：无边框、标题栏由页面自己画（右侧三个键：
+最小化 / 收进右下角托盘 / 关闭，标题栏空白处可拖动窗口，双击标题栏 = 最大化还原）。
+
+编译一次即可（需要 Rust 工具链；运行时只用系统自带的 WebView2，不需要打包任何运行时）：
+
+```
+cd desktop
+cargo build --release      # 产物 desktop/target/release/voice-shell.exe（约 1 MB）
+```
+
+`start.cmd` 会自动优先使用它；找不到 exe 时自动回退到 Edge/Chrome 的应用窗口模式
+（功能一样，只是多一条浏览器自己的标题栏）。想强制用浏览器：`start.cmd --browser-window`。
