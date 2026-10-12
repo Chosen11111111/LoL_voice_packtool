@@ -6,7 +6,6 @@ edition = "2024"
 [dependencies]
 png = "0.18.1"
 tao = "0.37.1"
-tray-icon = "0.26.1"
 wry = "0.57.0"
 
 [build-dependencies]

@@ -12,8 +12,8 @@ use tao::event::{Event, WindowEvent};
 use tao::event_loop::{ControlFlow, EventLoopBuilder, EventLoopProxy};
 use tao::platform::windows::WindowExtWindows;
 use tao::window::{Icon, WindowBuilder};
-use tray_icon::menu::{Menu, MenuEvent, MenuItem, PredefinedMenuItem};
-use tray_icon::{MouseButton, MouseButtonState, TrayIcon, TrayIconBuilder, TrayIconEvent};
+
+mod tray;
 use wry::WebViewBuilder;
 
 // tao 的 set_skip_taskbar 走 ITaskbarList::DeleteTab —— 只是临时删掉按钮,
@@ -123,67 +123,6 @@ fn load_window_icon(path: &str) -> Option<Icon> {
 }
 
 /// 建托盘图标(收进右下角时才有; 显示窗口后会被丢弃, 图标随之消失)。
-/// 菜单 + 提示 + 左键行为都在这里; 图标由调用方给(ico 原生加载或自解码都行)。
-fn build_tray_with(icon: tray_icon::Icon) -> Option<TrayIcon> {
-    let menu = Menu::new();
-    let show = MenuItem::with_id("show", "恢复窗口", true, None);
-    let quit = MenuItem::with_id("quit", "关闭软件", true, None);
-    if let Err(error) = menu.append_items(&[&show, &PredefinedMenuItem::separator(), &quit]) {
-        eprintln!("[voice-shell] 拼托盘菜单失败: {error}");
-        return None;
-    }
-    match TrayIconBuilder::new()
-        .with_icon(icon)
-        .with_tooltip("LoL Voice - 英雄联盟语音包切换器")
-        .with_menu(Box::new(menu))
-        .with_menu_on_left_click(false)
-        .build()
-    {
-        Ok(tray) => {
-            // 显式再置一次可见: 有些环境下初始 NIM_ADD 的状态会被系统记成隐藏
-            let _ = tray.set_visible(true);
-            Some(tray)
-        }
-        Err(error) => {
-            eprintln!("[voice-shell] 建托盘图标失败: {error}");
-            None
-        }
-    }
-}
-
-fn create_tray(icon_path: Option<&str>) -> Option<TrayIcon> {
-    let Some(path) = icon_path else {
-        eprintln!("[voice-shell] 没有图标路径, 托盘图标建不了");
-        return None;
-    };
-
-    // 优先让系统自己加载 .ico —— 托盘图标本来就是 LoadImageW(IMAGE_ICON) 装的,
-    // 它认 ico/bmp, **不认 PNG**(之前拿 PNG 走这条路一直失败, 报错还很误导)。
-    if path.to_ascii_lowercase().ends_with(".ico") {
-        match tray_icon::Icon::from_path(path, Some((32, 32))) {
-            Ok(icon) => return build_tray_with(icon),
-            Err(error) => eprintln!("[voice-shell] 读 ico 失败 {path}: {error}; 退回自解码"),
-        }
-    }
-
-    // 退回: 自己解码 PNG 再按 alpha 加权缩到 32x32, 走 from_rgba
-    let (rgba, width, height) = match load_png_rgba(path) {
-        Ok(value) => value,
-        Err(error) => {
-            eprintln!("[voice-shell] 读图标失败 {path}: {error}");
-            return None;
-        }
-    };
-    let small = resize_rgba_to(&rgba, width, height, 32);
-    match tray_icon::Icon::from_rgba(small, 32, 32) {
-        Ok(icon) => build_tray_with(icon),
-        Err(error) => {
-            eprintln!("[voice-shell] 造托盘图标失败: {error}");
-            None
-        }
-    }
-}
-
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut args = std::env::args().skip(1);
     let url = args.next().unwrap_or_else(|| "http://127.0.0.1:43110/".to_string());
@@ -195,31 +134,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let event_loop = EventLoopBuilder::<Action>::with_user_event().build();
     let proxy: EventLoopProxy<Action> = event_loop.create_proxy();
-
-    // 托盘交互: 左键单击 = 恢复窗口; 右键 = 菜单(恢复窗口 / 关闭软件)
-    let tray_proxy = proxy.clone();
-    TrayIconEvent::set_event_handler(Some(move |event: TrayIconEvent| {
-        if let TrayIconEvent::Click {
-            button: MouseButton::Left,
-            button_state: MouseButtonState::Up,
-            ..
-        } = event
-        {
-            let _ = tray_proxy.send_event(Action::ShowWindow);
-        }
-    }));
-    let menu_proxy = proxy.clone();
-    MenuEvent::set_event_handler(Some(move |event: MenuEvent| {
-        match event.id().0.as_str() {
-            "show" => {
-                let _ = menu_proxy.send_event(Action::Restore);
-            }
-            "quit" => {
-                let _ = menu_proxy.send_event(Action::Close);
-            }
-            _ => {}
-        }
-    }));
 
     let window = WindowBuilder::new()
         .with_title("LoL Voice")
@@ -258,8 +172,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         })
         .build(&window)?;
 
-    // 托盘常驻(启动就建): 这样"收进托盘"永远不会出现"窗口藏了但没有图标"的死局
-    let tray: Option<TrayIcon> = create_tray(icon_path.as_deref());
+    // 托盘常驻(启动就建)。用的是 desktop/src/tray.rs 里自己写的那套:
+    // 每一步都检查返回值, 失败会写 stderr, 不再"静默失败"。
+    let has_tray = tray::create(icon_path.as_deref(), proxy.clone(), window.hwnd());
     // 收成小条前的位置和大小, 恢复时用
     let mut saved_bounds: Option<(PhysicalPosition<i32>, PhysicalSize<u32>)> = None;
     event_loop.run(move |event, _, control_flow| {
@@ -268,7 +183,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             Event::UserEvent(Action::Minimize) => window.set_minimized(true),
             Event::UserEvent(Action::ToTray) => {
                 // 收进右下角托盘: 窗口隐藏(任务栏上也不留), 同时亮出托盘图标
-                if tray.is_some() {
+                if has_tray {
                     // 两个机制一起用, 确保任务栏那一格立刻消失、并且不会再自己回来:
                     //   1) ITaskbarList::DeleteTab —— 立刻抹掉任务栏按钮(tao 的实现)
                     //   2) 改扩展样式(去 APPWINDOW 加 TOOLWINDOW) —— 防止窗口一显示又回来

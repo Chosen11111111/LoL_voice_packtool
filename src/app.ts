@@ -148,7 +148,14 @@ function openShellWindow(shell: string, url: string): ChildProcess {
   const icon = fs.existsSync(ico) ? ico : png;
   // 第三个参数是窗口/任务栏图标用的 PNG(ico 只有托盘能直接用)
   const args = fs.existsSync(icon) ? [url, icon, ...(fs.existsSync(png) ? [png] : [])] : [url];
-  return spawn(shell, args, { stdio: "ignore", windowsHide: false });
+  const child = spawn(shell, args, { stdio: ["ignore", "ignore", "pipe"], windowsHide: false });
+  // 外壳的报错(比如托盘图标注册失败)记进日志 —— 以前直接被丢掉, 排障时看不到
+  child.stderr?.on("data", (chunk: Buffer) => {
+    for (const line of String(chunk).split(/\r?\n/)) {
+      if (line.trim()) logger.warn("[外壳] " + line.trim());
+    }
+  });
+  return child;
 }
 
 async function waitForever(): Promise<void> {
