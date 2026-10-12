@@ -174,7 +174,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // 托盘常驻(启动就建)。用的是 desktop/src/tray.rs 里自己写的那套:
     // 每一步都检查返回值, 失败会写 stderr, 不再"静默失败"。
-    let has_tray = tray::create(icon_path.as_deref(), proxy.clone(), window.hwnd());
+    let has_tray = tray::create(icon_path.as_deref(), proxy.clone());
     // 收成小条前的位置和大小, 恢复时用
     let mut saved_bounds: Option<(PhysicalPosition<i32>, PhysicalSize<u32>)> = None;
     event_loop.run(move |event, _, control_flow| {

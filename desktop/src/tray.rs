@@ -234,7 +234,7 @@ unsafe fn add_icon(hwnd: isize) -> bool {
 }
 
 /// 建托盘图标。返回 false 表示没成功(原因已经写到 stderr)。
-pub fn create(icon_path: Option<&str>, proxy: EventLoopProxy<Action>, main_hwnd: isize) -> bool {
+pub fn create(icon_path: Option<&str>, proxy: EventLoopProxy<Action>) -> bool {
     if let Ok(mut slot) = PROXY.lock() {
         *slot = Some(proxy);
     }
