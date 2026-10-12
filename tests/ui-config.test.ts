@@ -327,3 +327,16 @@ test("开启语音包: 提示弹窗的 × 等于取消这次开启", async () =>
   await page.settle();
   assert.ok(!page.requests.some((r) => r.url === "/api/apply"), "重按仍要先弹提示");
 });
+
+test("开启语音包: 明确要求重启客户端(客户端在运行时会自动重启生效)", async () => {
+  const config: any = { selectedLocale: "ja_JP", modules: ["ingame_voice"], volume: 60, followClient: false, voiceDelayMs: 1000, lastApplied: null, region: "auto" };
+  const page = await openWindow({ defaultLocale: "ja_JP", ui: config }, {}, false, { last_applied: null, hide_enable_tip: true });
+  page.el("btnApply").onclick!();
+  await page.settle();
+  const apply = page.requests.find((r) => r.url === "/api/apply");
+  assert.ok(apply, "应该发出 /api/apply");
+  const body = JSON.parse(apply!.options.body);
+  assert.equal(body.restartClient, true, "要带上 restartClient: true, 后端才会在客户端运行时帮用户重启");
+  assert.equal(body.locale, "ja_JP");
+  assert.deepEqual(body.modules, ["ingame_voice"]);
+});

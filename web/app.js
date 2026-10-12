@@ -829,7 +829,9 @@
     void startTask("开启语音包：" + label, () =>
       api("/api/apply", {
         method: "POST",
-        body: JSON.stringify({ locale, modules })
+        // restartClient: 客户端正在运行时, 切换完自动帮用户重启一次(客户端占着文件句柄, 重启后才生效)。
+        // 后端只会在"客户端在运行 + 勾了需要重启的项"时才真的重启, 纯选人语音不会重启。
+        body: JSON.stringify({ locale, modules, restartClient: true })
       })
     ).then((result) => {
       // 只有真的成功了才算"本次会话已开启选人语音"
