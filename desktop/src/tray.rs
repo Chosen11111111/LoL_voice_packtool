@@ -16,8 +16,6 @@ const TRAY_ID: u32 = 0x4C56;
 const TRAY_CLASS: &str = "LoLVoiceTrayWindow";
 
 const NIM_ADD: u32 = 0x0000_0000;
-const NIM_MODIFY: u32 = 0x0000_0001;
-const NIM_DELETE: u32 = 0x0000_0002;
 const NIM_SETVERSION: u32 = 0x0000_0004;
 const NIF_MESSAGE: u32 = 0x0000_0001;
 const NIF_ICON: u32 = 0x0000_0002;

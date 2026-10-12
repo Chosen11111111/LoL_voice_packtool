@@ -14,7 +14,7 @@ use tao::platform::windows::WindowExtWindows;
 use tao::window::{Icon, WindowBuilder};
 
 mod tray;
-use wry::WebViewBuilder;
+use wry::{WebViewBuilder, WebViewBuilderExtWindows};
 
 // tao 的 set_skip_taskbar 走 ITaskbarList::DeleteTab —— 只是临时删掉按钮,
 // 窗口一显示又回来。要真正不进任务栏, 必须改窗口的扩展样式:
@@ -79,6 +79,7 @@ fn load_png_rgba(path: &str) -> Result<(Vec<u8>, u32, u32), String> {
 }
 
 /// 把 RGBA 缩到 size×size(按 alpha 加权, 免得边缘发黑)。
+#[allow(dead_code)]
 fn resize_rgba_to(rgba: &[u8], width: u32, height: u32, size: u32) -> Vec<u8> {
     let mut out = vec![0u8; (size * size * 4) as usize];
     for y in 0..size {
@@ -153,6 +154,24 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let ipc_proxy = proxy.clone();
     let webview = WebViewBuilder::new()
         .with_url(&url)
+        // 省内存: 界面内核是 Chromium, 这几个参数能砍掉它一半的常驻占用。
+        // 注意: 传了这里就会【覆盖】wry 的默认参数, 所以第一段必须保留 wry 原来的默认值。
+        // 其中 --disable-gpu 省得最多(单独一个 GPU 进程约 37MB), 代价是界面改由 CPU 渲染。
+        // 如果以后觉得界面变卡或显示不对, 把 --disable-gpu 去掉即可。
+        .with_additional_browser_args(
+            "--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection \
+             --disable-gpu \
+             --disable-gpu-compositing \
+             --renderer-process-limit=1 \
+             --disable-extensions \
+             --disable-background-networking \
+             --disable-component-update \
+             --disable-domain-reliability \
+             --disable-sync \
+             --metrics-recording-only \
+             --no-first-run \
+             --no-default-browser-check",
+        )
         .with_ipc_handler(move |req| {
             let body = req.body().to_string();
             let action = match body.as_str() {
