@@ -63,11 +63,20 @@ async function tallyFromGameFiles(finalDir: string): Promise<Record<string, numb
 
 /** 读客户端设置里的 locale(国际服/国服都写在 LeagueClientSettings.yaml)。 */
 async function localeFromClientSettings(leagueDir: string): Promise<string | null> {
-  const file = path.join(leagueDir, "Config", "LeagueClientSettings.yaml");
-  const text = await readTextFile(file);
-  if (!text) return null;
-  const match = /locale:\s*["']([A-Za-z_]+)["']/.exec(text);
-  return match ? match[1]! : null;
+  // 实测真实位置多一层 LeagueClient: <客户端>/LeagueClient/Config/LeagueClientSettings.yaml
+  // (老代码只找 <客户端>/Config/..., 于是这条来源永远读不到)
+  const candidates = [
+    path.join(leagueDir, "LeagueClient", "Config", "LeagueClientSettings.yaml"),
+    path.join(leagueDir, "Config", "LeagueClientSettings.yaml")
+  ];
+  for (const file of candidates) {
+    const text = await readTextFile(file);
+    if (!text) continue;
+    // 引号可有可无: 实测 YAML 里 "en_US" 与 en_US 两种写法都有
+    const match = /locale:\s*["']?([A-Za-z]{2}_[A-Za-z]{2})["']?/.exec(text);
+    if (match) return match[1]!;
+  }
+  return null;
 }
 
 /**
@@ -110,8 +119,17 @@ export async function detectBaseLocale(options: BaseLocaleOptions): Promise<Base
   }
 
   const fallback = (options.fallbackLocale ?? "").trim() || DEFAULT_BASE_LOCALE;
-  logger.debug(`未探测到基准语种, 使用渠道兜底值 ${fallback}`);
-  return { locale: fallback, source: "default", detail: `未探测到，使用该渠道自带语种 ${fallback}`, tally };
+  const seen = Object.entries(tally)
+    .sort((a, b) => b[1] - a[1])
+    .map(([code, count]) => `${code}:${count}`)
+    .join(" ");
+  logger.warn(`未探测到基准语种, 使用渠道兜底值 ${fallback}(游戏文件统计: ${seen || "无"})`);
+  return {
+    locale: fallback,
+    source: "default",
+    detail: `未探测到，使用该渠道自带语种 ${fallback}（游戏文件统计 ${seen || "无"}）`,
+    tally
+  };
 }
 
 export type ClientRegion = "cn" | "global";

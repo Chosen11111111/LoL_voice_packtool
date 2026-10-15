@@ -1,6 +1,7 @@
 /** 国服 / 外服 适配: 基准语种探测 + 槽位跟随客户端语种。 */
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import * as fs from "node:fs/promises";
 import path from "node:path";
 import { detectBaseLocale, detectRegion, wadSuffix } from "../src/packs/baselocale.ts";
 import { applyIngameLang, restoreIngameLang } from "../src/modules/ingameLang.ts";
@@ -10,6 +11,49 @@ import { backupPath } from "../src/core/fsx.ts";
 import { cleanupSuite, exists, makePack, makeTempDir, readFile, useSuite, writeFile } from "./helpers.ts";
 
 useSuite("baselocale");
+
+
+/** 下面四条来自"外服换语音失效"的真实故障排查 —— 旧测试用的是老路径, 抓不到这个 bug。 */
+
+/** 造一个客户端目录, 把 locale 写进指定位置的设置文件。 */
+async function makeClientWithSettings(localeLine: string | null, withLeagueClientLayer = true) {
+  const root = await makeTempDir("baselocale-real");
+  if (localeLine !== null) {
+    const dir = withLeagueClientLayer
+      ? path.join(root, "LeagueClient", "Config")
+      : path.join(root, "Config");
+    await fs.mkdir(dir, { recursive: true });
+    await fs.writeFile(path.join(dir, "LeagueClientSettings.yaml"), localeLine + "\n", "utf8");
+  }
+  return root;
+}
+
+test("基准语种(真机): 认 <客户端>/LeagueClient/Config 下的设置文件", async () => {
+  // 实测国服: E:\WeGameApps\英雄联盟\LeagueClient\Config\LeagueClientSettings.yaml
+  const root = await makeClientWithSettings("locale: ko_KR");
+  const info = await detectBaseLocale({ finalDir: null, leagueDir: root, fallbackLocale: "en_US" });
+  assert.equal(info.locale, "ko_KR", "必须按客户端自己的设置走, 不能退到渠道兜底值");
+});
+
+test("基准语种(真机): 不带引号的 locale 也要认", async () => {
+  const root = await makeClientWithSettings("locale: zh_TW");
+  const info = await detectBaseLocale({ finalDir: null, leagueDir: root, fallbackLocale: "en_US" });
+  assert.equal(info.locale, "zh_TW");
+});
+
+test("基准语种(真机): 带引号的 locale 同样认", async () => {
+  const root = await makeClientWithSettings('locale: "en_US"');
+  const info = await detectBaseLocale({ finalDir: null, leagueDir: root, fallbackLocale: "zh_CN" });
+  assert.equal(info.locale, "en_US");
+});
+
+test("基准语种(真机): 什么都读不到时用渠道兜底值, 并把统计写进说明", async () => {
+  const root = await makeClientWithSettings(null);
+  const info = await detectBaseLocale({ finalDir: null, leagueDir: root, fallbackLocale: "en_US" });
+  assert.equal(info.locale, "en_US");
+  assert.equal(info.source, "default");
+  assert.match(info.detail, /游戏文件统计/);
+});
 
 test.after(async () => {
   await cleanupSuite();
