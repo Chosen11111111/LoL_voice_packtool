@@ -30,7 +30,7 @@ class Element {
   addEventListener(name: string, fn: Function) { this.handlers[name] = fn; }
   setAttribute() {} contains() { return false; }
 }
-async function openWindow(config: any, legacy: Record<string, string> = {}, failSave = false, stateExtra: Record<string, unknown> = {}) {
+async function openWindow(config: any, legacy: Record<string, string> = {}, failSave = false, stateExtra: Record<string, unknown> = {}, saveGate?: Promise<void>) {
   const elements = new Map<string, Element>();
   const el = (id: string) => { if (!elements.has(id)) elements.set(id, new Element()); return elements.get(id)!; };
   const requests: { url: string; options: any }[] = [];
@@ -52,6 +52,7 @@ async function openWindow(config: any, legacy: Record<string, string> = {}, fail
       let payload: any = { ok: true };
       if (url === "/api/config") {
         if (options.method === "PUT") {
+          await saveGate;
           if (failSave) return { ok: false, status: 500, json: async () => ({ error: "write_failed", message: "磁盘写入失败" }) };
           const patch = JSON.parse(options.body);
           Object.assign(config, { ...patch, ui: { ...config.ui, ...patch.ui } });
@@ -339,4 +340,36 @@ test("开启语音包: 明确要求重启客户端(客户端在运行时会自�
   assert.equal(body.restartClient, true, "要带上 restartClient: true, 后端才会在客户端运行时帮用户重启");
   assert.equal(body.locale, "ja_JP");
   assert.deepEqual(body.modules, ["ingame_voice"]);
+});
+
+test("刚切外服就点开启，必须等区服配置保存完再提交任务", async () => {
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => { release = resolve; });
+  const config: any = { defaultLocale: "ja_JP", ui: { selectedLocale: "ja_JP", modules: ["ingame_voice"], volume: 60, followClient: false, voiceDelayMs: 1000, region: "cn" } };
+  const page = await openWindow(config, {}, false, { hide_enable_tip: true }, gate);
+  page.el("btnServerRegion").onclick!();
+  page.el("btnApply").onclick!();
+  await page.settle();
+  try {
+    assert.ok(!page.requests.some((r) => r.url === "/api/apply"), "配置还没写完不能用旧渠道启动任务");
+  } finally { release(); }
+  await page.settle();
+  assert.equal(config.ui.region, "global");
+  assert.ok(page.requests.some((r) => r.url === "/api/apply"));
+});
+
+test("区服配置保存失败时阻止切换，不继续用旧配置执行", async () => {
+  const config: any = { defaultLocale: "ja_JP", ui: { selectedLocale: "ja_JP", modules: ["ingame_voice"], volume: 60, followClient: false, voiceDelayMs: 1000, region: "cn" } };
+  const page = await openWindow(config, {}, true, { hide_enable_tip: true });
+  page.el("btnServerRegion").onclick!();
+  page.el("btnApply").onclick!();
+  await page.settle();
+  assert.ok(!page.requests.some((r) => r.url === "/api/apply"));
+  assert.match(page.el("statusText").textContent, /配置.*保存/);
+});
+
+test("外服未替换时状态显示客户端原版，不显示国服", async () => {
+  const page = await openWindow({ defaultLocale: "ja_JP", ui: { selectedLocale: "ja_JP", modules: [], volume: 60, followClient: false, voiceDelayMs: 1000, region: "global" } });
+  assert.equal(page.el("statusIngameVoice").textContent, "客户端原版文件");
+  assert.equal(page.el("statusIngameLang").textContent, "客户端原版文件");
 });

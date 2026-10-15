@@ -196,7 +196,7 @@
   window.addEventListener("pageshow", () => { pageClosing = false; });
 
   function cleanStatusDetail(raw, isActive, fallbackLocale) {
-    if (!isActive) return "国服原版文件";
+    if (!isActive) return "客户端原版文件";
     const cleaned = String(raw || "")
       .replace(/[【】]/g, "")
       .replace(/^已切换为：/, "")
@@ -543,9 +543,17 @@
       setStatus("已有任务正在执行，请稍候…", "err");
       return;
     }
+    setBusy(true);
     log("=== " + label + " ===");
     setStatus("正在执行：" + label + "…", "", 0);
     try {
+      // 渠道等参数通过配置传给后端；必须等写盘后再创建切换/还原任务。
+      for (;;) {
+        const pending = preferenceQueue;
+        await pending;
+        if (pending === preferenceQueue) break;
+      }
+      if (!preferencesReady || preferencesDirty) throw new Error("配置尚未保存成功，请先重试保存配置。");
       const payload = await request();
       return await waitTask(payload.task.id);
     } catch (error) {

@@ -77,12 +77,10 @@ test("wadSuffix / detectRegion: 后缀与渠道判定", () => {
   assert.equal(detectRegion("D:\\Games\\League of Legends", ""), "global");
 });
 
-test("detectBaseLocale: 按游戏文件里的语种后缀判定(而不是写死 zh_CN)", async () => {
+test("detectBaseLocale: 单语种安装按实际后缀判定(而不是写死 zh_CN)", async () => {
   const root = await makeTempDir("baselocale-files");
   const finalDir = path.join(root, "Game", "DATA", "FINAL");
   await makeForeignFinal(finalDir, "en_US");
-  // 混入一个别的语种残留, 不能影响判断
-  await writeFile(path.join(finalDir, "Champions", "Lux.ko_KR.wad.client"), "x");
 
   const info = await detectBaseLocale({ finalDir, leagueDir: null });
   assert.equal(info.locale, "en_US");
@@ -184,4 +182,33 @@ test("目标槽位缺失时提示里带上客户端基准语种", async () => {
   assert.equal(result.ok, false);
   assert.match(result.reason, /目标槽位缺失/);
   assert.match(result.message, /en_US/);
+});
+
+test("多语种安装不能用文件数量覆盖客户端当前语种", async () => {
+  const root = await makeTempDir("foreign-locale-counts");
+  const finalDir = path.join(root, "Game", "DATA", "FINAL");
+  await makeForeignFinal(finalDir, "en_US");
+  await makeForeignFinal(finalDir, "ko_KR");
+  await writeFile(path.join(finalDir, "Champions", "Lux.en_US.wad.client"), "EXTRA-EN");
+  await writeFile(path.join(root, "Config", "LeagueClientSettings.yaml"), "install:\n  globals:\n    locale: ko_KR\n");
+  const info = await detectBaseLocale({ finalDir, leagueDir: root, fallbackLocale: "en_US" });
+  assert.equal(info.locale, "ko_KR");
+});
+
+test("设置解析跳过注释和其他键，当前目录的配置优先于子目录旧配置", async () => {
+  const root = await makeTempDir("foreign-settings-priority");
+  await writeFile(path.join(root, "Config", "LeagueClientSettings.yaml"), '# locale: en_US\nother_locale: ja_JP\ninstall:\n  globals:\n    locale: "zh_TW" # active\n');
+  await writeFile(path.join(root, "LeagueClient", "Config", "LeagueClientSettings.yaml"), "locale: ko_KR\n");
+  const info = await detectBaseLocale({ finalDir: null, leagueDir: root });
+  assert.equal(info.locale, "zh_TW");
+});
+
+test("设置不可读且有多个语种时标记歧义，不把英文兜底当成识别成功", async () => {
+  const root = await makeTempDir("foreign-locale-ambiguous");
+  const finalDir = path.join(root, "Game", "DATA", "FINAL");
+  await makeForeignFinal(finalDir, "en_US");
+  await makeForeignFinal(finalDir, "zh_TW");
+  const info = await detectBaseLocale({ finalDir, leagueDir: root, fallbackLocale: "en_US" });
+  assert.equal(info.source, "ambiguous");
+  assert.match(info.detail, /baseLocale/);
 });

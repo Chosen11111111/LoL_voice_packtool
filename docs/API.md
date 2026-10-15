@@ -69,7 +69,7 @@
     "voiceRoot": "E:\\ChosenSkin2.0\\voice", "voiceRootSource": "sibling",
     "ingame": {
       "ok": true, "message": "游戏文件目录：…",
-      "voice": "【已切换为：日服 (ja_JP)原声】", "lang": "【当前为：国服中文原版】",
+      "voice": "【已切换为：日服 (ja_JP)原声】", "lang": "【当前为：客户端原版】",
       "is_voice_active": true, "is_lang_active": false,
       "active_locale": "ja_JP", "final_dir": "…", "source": "registry",
       "voice_backups": 180, "lang_backup": false
@@ -99,7 +99,7 @@
   "region": "cn",                  // cn = 国服(WeGame/Tencent), global = 国际服(Riot)
   "region_label": "国服",
   "base_locale": "zh_CN",          // 客户端当前语种 = 要替换哪个槽位文件
-  "base_locale_source": "game-files",   // config | game-files | client-settings | default
+  "base_locale_source": "client-settings",   // config | game-files | client-settings | default | ambiguous
   "base_locale_detail": "游戏文件里 zh_CN 共 351 个",
   "target_suffix": ".zh_CN.wad.client"
 }
@@ -108,7 +108,7 @@
 > `target_suffix` 是替换的关键：国服是 `.zh_CN.wad.client`，国际服按客户端实际语种
 > （例如 `E:\Riot Games\...` 那台是 `.zh_TW.wad.client`）。**目标槽位永远跟随 `base_locale`，
 > 所以国服和外服走同一套流程，不需要前端做任何特殊处理。**
-> 探测顺序：配置 `baseLocale` > 游戏文件里的语种多数票 > 客户端设置 `locale` > `zh_CN`。
+> 探测顺序：配置 `baseLocale` > 客户端设置 `locale` > 同一安装的客户端接口 > 游戏文件中唯一的语种 > 渠道兜底。`ambiguous` 表示多语种安装中未能读取当前语种；`/api/plan` 会列出阻塞原因，对局切换任务会失败且不写文件。还原不依赖当前语种，仍可恢复已有备份。
 
 ### GET /api/locales?stats=0|1
 `stats=0` 跳过逐项文件统计（快）。`stats=1`（默认）附带文件数。

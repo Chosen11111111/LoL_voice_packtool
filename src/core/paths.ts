@@ -95,7 +95,7 @@ export async function findGameDir(leagueDir: string | null | undefined): Promise
   if (!leagueDir) return null;
   const normalized = path.resolve(leagueDir).replace(/[\\/]+$/, "");
   const parent = path.dirname(normalized);
-  const candidates = [path.join(parent, "Game"), path.join(normalized, "Game"), normalized];
+  const candidates = [path.join(normalized, "Game"), normalized, path.join(parent, "Game")];
   for (const candidate of candidates) {
     if (await isFile(path.join(candidate, LEAGUE_GAME_EXE))) return candidate;
   }
@@ -398,9 +398,23 @@ export async function leagueClientDir(resolution: GamePathResolution): Promise<s
   return (await isDirectory(resolution.leagueDir)) ? resolution.leagueDir : null;
 }
 
-export async function settingsYamlPath(resolution: GamePathResolution): Promise<string | null> {
-  const client = await leagueClientDir(resolution);
-  return client ? path.join(client, "Config", "LeagueClientSettings.yaml") : null;
+/** 只匹配独立 locale 项，跳过注释、other_locale 等键，兼容引号和 CRLF。 */
+export const CLIENT_LOCALE_PATTERN = /^([\t \uFEFF]*locale:[\t ]*)(?:"([a-z]{2}_[A-Z]{2})"|'([a-z]{2}_[A-Z]{2})'|([a-z]{2}_[A-Z]{2}))(?=[\t ]*(?:#[^\r\n]*)?\r?$)/m;
+
+export function readClientLocale(text: string): string | null {
+  const match = CLIENT_LOCALE_PATTERN.exec(text);
+  return match ? match[2] ?? match[3] ?? match[4] ?? null : null;
+}
+
+export async function settingsYamlPath(resolution: Pick<GamePathResolution, "leagueDir">): Promise<string | null> {
+  const client = resolution.leagueDir;
+  if (!client || !(await isDirectory(client))) return null;
+  const candidates = [
+    path.join(client, "Config", "LeagueClientSettings.yaml"),
+    path.join(client, "LeagueClient", "Config", "LeagueClientSettings.yaml")
+  ];
+  for (const file of candidates) if (await isFile(file)) return file;
+  return candidates[0]!;
 }
 
 /* ------------------------------------------------------------------ 资源根目录 */

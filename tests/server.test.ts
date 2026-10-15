@@ -310,6 +310,47 @@ test("PUT /api/config 修改默认语种并持久化", async () => {
   });
 });
 
+test("外服 HTTP 全链路：确认路径与区服、预检、开启语音/文字、还原", async () => {
+  const saved = await loadConfig();
+  try {
+    for (const locale of ["ko_KR", "zh_TW", "fr_FR", "en_US"]) {
+      const league = path.join(fixture!.root, "foreign", locale, "Riot Games", "League of Legends");
+      const final = path.join(league, "Game", "DATA", "FINAL");
+      await writeFile(path.join(league, "LeagueClient.exe"), "CLIENT");
+      await writeFile(path.join(league, "Game", "League of Legends.exe"), "GAME");
+      const yaml = path.join(league, "Config", "LeagueClientSettings.yaml");
+      await writeFile(yaml, `install:\n  globals:\n    locale: ${locale}\n`);
+      const other = locale === "en_US" ? "zh_CN" : "en_US";
+      for (const code of [locale, other]) {
+        for (const name of ["Champions/Ahri", "Maps/Shipping/Map11", "Localized/Global"]) {
+          await writeFile(path.join(final, `${name}.${code}.wad.client`), `${code}:${name}`);
+        }
+      }
+      const configured = await fetch(`${base}/api/config`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ leaguePath: league, baseLocale: "", ui: { region: "global" } }) });
+      assert.equal(configured.status, 200);
+      const client = await get("/api/client");
+      assert.equal(client.json.base_locale, locale);
+      assert.equal(client.json.region, "global");
+      const plan = await post("/api/plan", { locale: "ja_JP", modules: ["ingame_voice", "ingame_lang"] });
+      assert.equal(plan.json.plan.ok, true, JSON.stringify(plan.json.plan.blockers));
+      const apply = await post("/api/apply", { locale: "ja_JP", modules: ["ingame_voice", "ingame_lang"], restartClient: false });
+      const done = await waitTask(apply.json.task.id);
+      assert.equal(done.task.status, "succeeded", JSON.stringify(done.result));
+      assert.equal(await readFile(path.join(final, `Champions/Ahri.${locale}.wad.client`)), "ja_JP-Ahri");
+      assert.equal(await readFile(path.join(final, `Localized/Global.${locale}.wad.client`)), "ja_JP-LANG");
+      assert.equal(await readFile(path.join(final, `Champions/Ahri.${other}.wad.client`)), `${other}:Champions/Ahri`);
+      const restore = await post("/api/restore", { restartClient: false });
+      assert.equal((await waitTask(restore.json.task.id)).task.status, "succeeded");
+      assert.equal(await readFile(path.join(final, `Champions/Ahri.${locale}.wad.client`)), `${locale}:Champions/Ahri`);
+      assert.equal(await readFile(path.join(final, `Localized/Global.${locale}.wad.client`)), `${locale}:Localized/Global`);
+      assert.equal(await readFile(yaml), `install:\n  globals:\n    locale: ${locale}\n`);
+      const state = await get("/api/state");
+      assert.equal(state.json.state.ingame.is_voice_active, false);
+      assert.doesNotMatch(state.json.state.ingame.voice, /国服/);
+    }
+  } finally { await saveConfig(saved); }
+});
+
 test("GET /api/events 建立 SSE 连接并推送进度", async () => {
   const controller = new AbortController();
   const response = await fetch(`${base}/api/events`, { signal: controller.signal });

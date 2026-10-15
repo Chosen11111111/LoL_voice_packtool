@@ -64,6 +64,9 @@ export async function applyAll(env: SwitchEnv, options: RunOptions): Promise<Run
       results: []
     };
   }
+  if (modules.some((module) => module.startsWith("ingame_")) && env.baseLocaleSource === "ambiguous") {
+    return stoppedOutcome(env.baseLocaleDetail);
+  }
   if (modules.some((module) => module.startsWith("ingame_")) && await isGameRunning()) {
     return stoppedOutcome("检测到游戏对局正在进行中，请退出对局后再切换！");
   }
@@ -176,7 +179,7 @@ export async function restoreAll(env: SwitchEnv, options: Omit<RunOptions, "loca
     partial: summary.partial,
     restarted,
     message: summary.ok
-      ? `已恢复为官方默认国服原版${restarted ? "，客户端正在自动重启生效…" : "，启动客户端后生效。"}`
+      ? `已恢复为该客户端原版${restarted ? "，客户端正在自动重启生效…" : "，启动客户端后生效。"}`
       : (summary.partial ? "部分失败：" : "还原失败：") + summary.lines.join("；"),
     summary,
     results

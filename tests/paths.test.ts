@@ -79,3 +79,13 @@ test("resolveGamePaths: 找不到客户端时给出明确指引", async () => {
   assert.equal(resolution.ok, false);
   assert.match(resolution.message, /未能自动定位英雄联盟客户端/);
 });
+
+test("Riot 安装优先使用自己目录下的 Game，不误选上一级同名目录", async () => {
+  const root = await makeTempDir("paths-riot-sibling-game");
+  const league = path.join(root, "Riot Games", "League of Legends");
+  await writeFile(path.join(league, "LeagueClient.exe"), "client");
+  const ownGame = path.join(league, "Game");
+  const otherGame = path.join(root, "Riot Games", "Game");
+  for (const dir of [ownGame, otherGame]) await writeFile(path.join(dir, "League of Legends.exe"), "game");
+  assert.equal(await findGameDir(league), ownGame);
+});

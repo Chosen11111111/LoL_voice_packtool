@@ -17,7 +17,7 @@ import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
 /** 版本号: 发布就改这里(文件夹名跟着变)。 */
-const VERSION = "1.01";
+const VERSION = "1.02";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(here, "..");

@@ -5,11 +5,14 @@
  * 国际服客户端: 可能是 <名字>.en_US.wad.client / .zh_TW.wad.client ...
  * 因此目标文件名绝不能用某个固定语种写死, 必须跟着客户端实际语种走。
  *
- * 探测优先级: 配置显式指定 > 游戏文件里的语种后缀统计 > 客户端设置 locale > zh_CN(兜底)
+ * 探测优先级: 配置显式指定 > 客户端当前设置 > 唯一游戏语种 > 渠道兜底。
+ * 多语种安装无法凭文件数量确定当前使用哪一套，缺少设置时必须说明歧义。
  */
 import path from "node:path";
 import { isDirectory, listNames, readTextFile } from "../core/fsx.ts";
 import { createLogger } from "../core/logger.ts";
+import { pathsEquivalent, readClientLocale, settingsYamlPath } from "../core/paths.ts";
+import { findClientExeDir } from "../core/win/processes.ts";
 
 const logger = createLogger("base-locale");
 
@@ -20,7 +23,7 @@ export function wadSuffix(locale: string): string {
   return `.${locale}.wad.client`;
 }
 
-export type BaseLocaleSource = "config" | "game-files" | "client-settings" | "default";
+export type BaseLocaleSource = "config" | "game-files" | "client-settings" | "default" | "ambiguous";
 
 export interface BaseLocaleInfo {
   locale: string;
@@ -41,7 +44,7 @@ export interface BaseLocaleOptions {
 
 const LOCALE_SUFFIX = /\.([a-z]{2}_[A-Z]{2})\.wad\.client$/;
 
-/** 统计目录里各语种 wad 的数量, 取最多的作为基准语种。 */
+/** 统计目录里各语种 wad 的数量，仅作诊断与单语种回退。 */
 async function tallyFromGameFiles(finalDir: string): Promise<Record<string, number>> {
   const tally: Record<string, number> = {};
   const directories = [
@@ -63,26 +66,34 @@ async function tallyFromGameFiles(finalDir: string): Promise<Record<string, numb
 
 /** 读客户端设置里的 locale(国际服/国服都写在 LeagueClientSettings.yaml)。 */
 async function localeFromClientSettings(leagueDir: string): Promise<string | null> {
-  // 实测真实位置多一层 LeagueClient: <客户端>/LeagueClient/Config/LeagueClientSettings.yaml
-  // (老代码只找 <客户端>/Config/..., 于是这条来源永远读不到)
-  const candidates = [
-    path.join(leagueDir, "LeagueClient", "Config", "LeagueClientSettings.yaml"),
-    path.join(leagueDir, "Config", "LeagueClientSettings.yaml")
-  ];
-  for (const file of candidates) {
-    const text = await readTextFile(file);
-    if (!text) continue;
-    // 引号可有可无: 实测 YAML 里 "en_US" 与 en_US 两种写法都有
-    const match = /locale:\s*["']?([A-Za-z]{2}_[A-Za-z]{2})["']?/.exec(text);
-    if (match) return match[1]!;
+  const file = await settingsYamlPath({ leagueDir });
+  const text = file ? await readTextFile(file) : null;
+  return text ? readClientLocale(text) : null;
+}
+
+/**
+ * 直接问客户端自己是什么语种(最权威: 客户端一定知道自己的语种)。
+ *
+ * 客户端没开 / 老版本没有这个接口时返回 null —— 只当补充来源, 失败不影响其它来源。
+ * 这一步很关键: 用户的客户端可能是韩文、繁中、西语…… 只要问得到, 就绝不会写错槽位。
+ */
+async function localeFromClient(leagueDir: string | null): Promise<string | null> {
+  // 配置可能指向离线安装；另一份正在运行的客户端不能替它决定语种。
+  if (!leagueDir || !pathsEquivalent(await findClientExeDir(), leagueDir)) return null;
+  try {
+    const { lcuRequest } = await import("../core/win/lcu.ts");
+    const response = await lcuRequest("GET", "/riotclient/region-locale", { timeoutMs: 2500 });
+    if (response.status !== 200 || !response.body) return null;
+    const value = (JSON.parse(response.body) as { locale?: unknown })?.locale;
+    return typeof value === "string" && /^[a-z]{2}_[A-Z]{2}$/.test(value) ? value : null;
+  } catch {
+    return null;
   }
-  return null;
 }
 
 /**
  * 解析基准语种。
- * 游戏文件的统计结果只在"多数票"成立时采信(最多且严格多于第二名),
- * 这样零星的其它语种残留文件不会把判断带偏; 判断不了再退回客户端设置与兜底值。
+ * 文件数只用于诊断：多语种安装的数量差不能代表当前语种。
  */
 export async function detectBaseLocale(options: BaseLocaleOptions): Promise<BaseLocaleInfo> {
   const configured = (options.configured ?? "").trim();
@@ -96,26 +107,26 @@ export async function detectBaseLocale(options: BaseLocaleOptions): Promise<Base
     return { locale: configured, source: "config", detail: "配置指定", tally };
   }
 
-  const entries = Object.entries(tally).sort((a, b) => b[1] - a[1]);
-  const best = entries[0];
-  const runnerUp = entries[1];
-  const majority = Boolean(best) && best[1] >= 2 && (!runnerUp || best[1] > runnerUp[1]);
-  if (best && majority) {
-    return { locale: best[0], source: "game-files", detail: `游戏文件里 ${best[0]} 共 ${best[1]} 个`, tally };
-  }
-
   const fromSettings = options.leagueDir ? await localeFromClientSettings(options.leagueDir) : null;
   if (fromSettings) {
-    // 客户端设置里写的语种如果在游戏文件里确实存在, 以文件为准
-    if (tally[fromSettings]) {
-      return {
-        locale: fromSettings,
-        source: "game-files",
-        detail: `客户端语种 ${fromSettings}（游戏文件里 ${tally[fromSettings]} 个）`,
-        tally
-      };
-    }
-    return { locale: fromSettings, source: "client-settings", detail: "客户端设置", tally };
+    return { locale: fromSettings, source: "client-settings", detail: `客户端当前语种 ${fromSettings}（游戏文件里 ${tally[fromSettings] ?? 0} 个）`, tally };
+  }
+
+  // 设置文件读不到时, 直接问客户端本身(客户端没开就跳过, 不阻塞)。
+  const fromClient = await localeFromClient(options.leagueDir);
+  if (fromClient) {
+    return {
+      locale: fromClient,
+      source: "client-settings",
+      detail: `客户端当前语种 ${fromClient}（来自客户端接口）`,
+      tally
+    };
+  }
+
+  const entries = Object.entries(tally);
+  if (entries.length === 1) {
+    const [locale, count] = entries[0]!;
+    return { locale, source: "game-files", detail: `游戏文件只有 ${locale}，共 ${count} 个`, tally };
   }
 
   const fallback = (options.fallbackLocale ?? "").trim() || DEFAULT_BASE_LOCALE;
@@ -123,6 +134,11 @@ export async function detectBaseLocale(options: BaseLocaleOptions): Promise<Base
     .sort((a, b) => b[1] - a[1])
     .map(([code, count]) => `${code}:${count}`)
     .join(" ");
+  if (entries.length > 1) {
+    const detail = `无法确定客户端当前语种（游戏文件统计 ${seen}）。请确认该安装的 Config/LeagueClientSettings.yaml 中 locale 项可读，或在工具配置中指定 baseLocale。`;
+    logger.warn(detail);
+    return { locale: fallback, source: "ambiguous", detail, tally };
+  }
   logger.warn(`未探测到基准语种, 使用渠道兜底值 ${fallback}(游戏文件统计: ${seen || "无"})`);
   return {
     locale: fallback,

@@ -214,8 +214,8 @@ export async function getIngameStatus(options: {
   return {
     ok: true,
     message: options.message ?? `游戏文件目录：${final}`,
-    voice: voiceActive ? (display ? `【已切换为：${display}原声】` : "【已切换为：语音包原声】") : "【当前为：国服中文原版】",
-    lang: langBackup ? (display ? `【已切换为：${display}语言】` : "【已切换为：语音包语言】") : "【当前为：国服中文原版】",
+    voice: voiceActive ? (display ? `【已切换为：${display}原声】` : "【已切换为：语音包原声】") : "【当前为：客户端原版】",
+    lang: langBackup ? (display ? `【已切换为：${display}语言】` : "【已切换为：语音包语言】") : "【当前为：客户端原版】",
     is_voice_active: voiceActive,
     is_lang_active: langBackup,
     active_locale: activeLocale,

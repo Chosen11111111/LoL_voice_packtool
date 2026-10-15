@@ -163,6 +163,7 @@ export async function planSwitch(options: { locale: string; modules?: ModuleId[]
   const warnings: string[] = [];
 
   if (!env.resolution.ok) blockers.push(env.resolution.message);
+  if (modules.some((module) => module.startsWith("ingame_")) && env.baseLocaleSource === "ambiguous") blockers.push(env.baseLocaleDetail);
   if (await isGameRunning()) blockers.push("检测到游戏对局正在进行中，请退出对局后再切换。");
   if (!env.resolution.leagueDir && modules.includes("lobby_lang")) {
     blockers.push("未定位到联盟客户端目录，无法修改大厅界面语言。");
