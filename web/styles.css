@@ -909,7 +909,7 @@ button, input, select {
 }
 .brand-banner img {
   display: block;
-  height: 22px;             /* 品牌图裁成横条后(5974x655), 22px 高对应约 200px 宽 —— 与改动前一致, 不会挤到排版;
+  height: 26px;             /* 品牌图裁成横条后(5974x655), 26px 高对应约 237px 宽(原先约 200px, 稍微放大一点);
                                底部对齐靠 .brand-banner 的 align-self: flex-end, 行高仍由胶囊决定, 不会被撑高 */
   width: auto;
   -webkit-user-select: none;
