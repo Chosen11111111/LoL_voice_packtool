@@ -1,0 +1,210 @@
+/**
+ * 客户端界面文字替换核心(运行在英雄联盟客户端页面里)。
+ *
+ * 设计约束:
+ * - 只用浏览器标准接口(MutationObserver / requestAnimationFrame / localStorage / clipboard),
+ *   不依赖任何加载器的私有 API, 所以换成别的加载器也能用。
+ * - 整个能力集中在这一个自包含函数里(不引用外部变量), 打包时直接把它转成字符串塞进插件,
+ *   因此这里改成任何东西都不需要改打包脚本。
+ * - 任何异常都必须自我禁用: 最坏情况是"没翻译", 绝不能把客户端界面搞卡死。
+ */
+
+/** 含中日韩文字才算"需要翻译"的原文。 */
+export const CJK = /[\u3400-\u9fff\u3000-\u303f\uff00-\uffef]/;
+
+/** 这些标签里的文字绝不动。 */
+export const SKIP_TAGS = ["SCRIPT", "STYLE", "NOSCRIPT", "TEXTAREA", "CODE", "PRE", "SVG", "CANVAS", "IFRAME", "TITLE", "HEAD"];
+
+/** 默认不动的区域: 输入框、可编辑区(聊天框、昵称编辑等)。 */
+export const DEFAULT_SKIP_SELECTORS = ["[contenteditable='true']", "[contenteditable='']", "input", "textarea", "select"];
+
+/**
+ * 把一段文字翻译成目标语言。
+ * 返回 null 表示"没有对应译文, 保持原样"。
+ * 前后空白原样保留, 只有中间的主体参与查表 —— 界面文字常带缩进和换行。
+ */
+export function translate(text, dict, patterns) {
+  if (typeof text !== "string" || text.length === 0) return null;
+  const leading = text.match(/^\s*/)[0];
+  const trailing = text.match(/\s*$/)[0];
+  const core = text.slice(leading.length, text.length - trailing.length);
+  if (!core || !CJK.test(core)) return null;
+  const direct = Object.prototype.hasOwnProperty.call(dict, core) ? dict[core] : undefined;
+  if (typeof direct === "string" && direct.length > 0) return leading + direct + trailing;
+  if (patterns) {
+    for (let i = 0; i < patterns.length; i += 1) {
+      const [re, to] = patterns[i];
+      if (re.test(core)) return leading + core.replace(re, to) + trailing;
+    }
+  }
+  return null;
+}
+
+/** 是否值得记录进"待翻译清单"(含中文、长度适中、还没有译文)。 */
+export function isCollectable(text, dict, maxLength) {
+  if (typeof text !== "string") return false;
+  const core = text.trim();
+  if (!core || core.length > maxLength) return false;
+  if (!CJK.test(core)) return false;
+  return !Object.prototype.hasOwnProperty.call(dict, core);
+}
+
+/**
+ * 安装文字替换器。返回一个控制器(可 off/on/dump/stats), 出任何问题都自动禁用自己。
+ * options: { dict, patterns, collect, maxLength, skipSelectors, storageKey, debug }
+ */
+export function createTextReplacer(options) {
+  const opts = options || {};
+  const dict = opts.dict || {};
+  const patterns = opts.patterns || [];
+  const collect = opts.collect !== false;
+  const maxLength = typeof opts.maxLength === "number" ? opts.maxLength : 40;
+  const skipSelectors = opts.skipSelectors || ["[contenteditable='true']", "input", "textarea"];
+  const storageKey = opts.storageKey || "__tr_collected";
+  const SKIP_TAGS = ["SCRIPT", "STYLE", "NOSCRIPT", "TEXTAREA", "CODE", "PRE", "SVG", "CANVAS", "IFRAME", "TITLE", "HEAD"];
+  const CJK = /[\u3400-\u9fff\u3000-\u303f\uff00-\uffef]/;
+  const state = { on: true, replaced: 0, scanned: 0, failed: 0, error: "" };
+  const written = new WeakMap();
+  const pending = new Set();
+  const collected = new Set();
+  let scheduled = false;
+
+  try {
+    const saved = window.localStorage.getItem(storageKey);
+    if (saved) for (const item of JSON.parse(saved)) collected.add(item);
+  } catch (error) { /* 存储不可用不影响替换 */ }
+
+  function saveCollection() {
+    try { window.localStorage.setItem(storageKey, JSON.stringify([...collected])); } catch (error) { /* 忽略 */ }
+  }
+
+  function shouldSkip(element) {
+    let node = element;
+    let depth = 0;
+    while (node && node.nodeType === 1 && depth < 40) {
+      const tag = node.tagName;
+      if (tag && SKIP_TAGS.indexOf(tag) >= 0) return true;
+      if (tag === "BODY" || tag === "HTML") return false;
+      for (let i = 0; i < skipSelectors.length; i += 1) {
+        try { if (node.matches && node.matches(skipSelectors[i])) return true; } catch (error) { /* 选择器不合法就忽略 */ }
+      }
+      node = node.parentElement;
+      depth += 1;
+    }
+    return false;
+  }
+
+  function handleTextNode(node) {
+    const value = node.nodeValue;
+    if (typeof value !== "string" || value.length === 0) return;
+    if (written.get(node) === value) return;            // 是我们自己刚写的, 不要再动
+    state.scanned += 1;
+    const parent = node.parentElement;
+    if (parent && shouldSkip(parent)) return;
+    const result = translate(value, dict, patterns);
+    if (result !== null) {
+      if (result === value) return;
+      written.set(node, result);
+      try { node.nodeValue = result; state.replaced += 1; } catch (error) { state.failed += 1; }
+      return;
+    }
+    if (collect) {
+      const core = value.trim();
+      if (core.length > 0 && core.length <= maxLength && CJK.test(core) && !collected.has(core)) {
+        collected.add(core);
+        saveCollection();
+      }
+    }
+  }
+
+  /** 手动深度优先遍历(不用 TreeWalker, 因为要能递归进 shadow root, 也好测试)。 */
+  function walk(root, depth) {
+    if (!state.on || !root || depth > 60) return;
+    const children = root.childNodes;
+    if (children) {
+      for (let i = 0; i < children.length; i += 1) {
+        const child = children[i];
+        if (child.nodeType === 3) handleTextNode(child);
+        else if (child.nodeType === 1) {
+          if (child.shadowRoot) { observe(child.shadowRoot); walk(child.shadowRoot, depth + 1); }
+          walk(child, depth + 1);
+        }
+      }
+    }
+    if (root.shadowRoot && root.nodeType === 1) { observe(root.shadowRoot); walk(root.shadowRoot, depth + 1); }
+  }
+
+  function flush() {
+    scheduled = false;
+    if (!state.on) return;
+    if (state.error) return;
+    const queue = [...pending];
+    pending.clear();
+    try {
+      for (const node of queue) {
+        if (!node.isConnected) continue;
+        if (node.nodeType === 3) handleTextNode(node);
+        else walk(node, 0);
+      }
+    } catch (error) {
+      state.error = String((error && error.message) || error);
+      state.on = false;                                  // 自我禁用, 绝不影响客户端
+      try { console.error("[text-replacer] 出错已自动停用:", error); } catch (e) { /* 忽略 */ }
+    }
+  }
+
+  function schedule(node) {
+    if (!state.on || state.error) return;
+    pending.add(node);
+    if (pending.size > 4000) pending.clear();            // 极端情况下宁可漏也不卡
+    if (scheduled) return;
+    scheduled = true;
+    try { window.requestAnimationFrame(flush); } catch (error) { flush(); }
+  }
+
+  const observed = new WeakSet();
+  const observer = new MutationObserver((records) => {
+    for (const record of records) {
+      if (record.type === "characterData") schedule(record.target);
+      else for (const node of record.addedNodes) schedule(node);
+    }
+  });
+
+  function observe(root) {
+    if (!root || observed.has(root)) return;
+    try {
+      observer.observe(root, { childList: true, subtree: true, characterData: true });
+      observed.add(root);
+    } catch (error) { /* 观察失败不影响已处理的部分 */ }
+  }
+
+  // 新挂上来的 shadow root 也要被观察到(客户端大量使用组件)
+  try {
+    const original = Element.prototype.attachShadow;
+    Element.prototype.attachShadow = function (init) {
+      const root = original.call(this, init);
+      try { observe(root); schedule(root); } catch (error) { /* 忽略 */ }
+      return root;
+    };
+  } catch (error) { /* 忽略 */ }
+
+  observe(document.documentElement);
+  walk(document.body || document.documentElement, 0);
+
+  const controller = {
+    get on() { return state.on; },
+    off() { state.on = false; return "off"; },
+    on_() { state.on = true; state.error = ""; walk(document.body || document.documentElement, 0); return "on"; },
+    stats() { return { replaced: state.replaced, scanned: state.scanned, failed: state.failed, error: state.error, collected: collected.size }; },
+    /** 导出"没翻译到"的中文清单(按出现次数无从统计, 按长度排序)。 */
+    dump() {
+      const list = [...collected].sort();
+      const text = JSON.stringify(list, null, 2);
+      try { navigator.clipboard.writeText(text); } catch (error) { /* 忽略 */ }
+      return list;
+    },
+    clear() { collected.clear(); saveCollection(); return "cleared"; },
+    translate
+  };
+  return controller;
+}

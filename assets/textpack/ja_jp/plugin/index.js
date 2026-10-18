@@ -1,0 +1,222 @@
+/* 自动生成, 请勿手改 —— 由 scripts/build-text-plugin.ts 从 runtime.mjs + ja_jp/dict.json 生成 */
+/* 作用: 把英雄联盟**客户端界面**的中文替换成目标语言。只改客户端页面里的文字, */
+/*       不涉及任何文件, 也不涉及局内游戏(局内是另一个进程, 本插件碰不到)。 */
+(() => {
+/**
+ * 客户端界面文字替换核心(运行在英雄联盟客户端页面里)。
+ *
+ * 设计约束:
+ * - 只用浏览器标准接口(MutationObserver / requestAnimationFrame / localStorage / clipboard),
+ *   不依赖任何加载器的私有 API, 所以换成别的加载器也能用。
+ * - 整个能力集中在这一个自包含函数里(不引用外部变量), 打包时直接把它转成字符串塞进插件,
+ *   因此这里改成任何东西都不需要改打包脚本。
+ * - 任何异常都必须自我禁用: 最坏情况是"没翻译", 绝不能把客户端界面搞卡死。
+ */
+
+/** 含中日韩文字才算"需要翻译"的原文。 */
+const CJK = /[\u3400-\u9fff\u3000-\u303f\uff00-\uffef]/;
+
+/** 这些标签里的文字绝不动。 */
+const SKIP_TAGS = ["SCRIPT", "STYLE", "NOSCRIPT", "TEXTAREA", "CODE", "PRE", "SVG", "CANVAS", "IFRAME", "TITLE", "HEAD"];
+
+/** 默认不动的区域: 输入框、可编辑区(聊天框、昵称编辑等)。 */
+const DEFAULT_SKIP_SELECTORS = ["[contenteditable='true']", "[contenteditable='']", "input", "textarea", "select"];
+
+/**
+ * 把一段文字翻译成目标语言。
+ * 返回 null 表示"没有对应译文, 保持原样"。
+ * 前后空白原样保留, 只有中间的主体参与查表 —— 界面文字常带缩进和换行。
+ */
+function translate(text, dict, patterns) {
+  if (typeof text !== "string" || text.length === 0) return null;
+  const leading = text.match(/^\s*/)[0];
+  const trailing = text.match(/\s*$/)[0];
+  const core = text.slice(leading.length, text.length - trailing.length);
+  if (!core || !CJK.test(core)) return null;
+  const direct = Object.prototype.hasOwnProperty.call(dict, core) ? dict[core] : undefined;
+  if (typeof direct === "string" && direct.length > 0) return leading + direct + trailing;
+  if (patterns) {
+    for (let i = 0; i < patterns.length; i += 1) {
+      const [re, to] = patterns[i];
+      if (re.test(core)) return leading + core.replace(re, to) + trailing;
+    }
+  }
+  return null;
+}
+
+/** 是否值得记录进"待翻译清单"(含中文、长度适中、还没有译文)。 */
+function isCollectable(text, dict, maxLength) {
+  if (typeof text !== "string") return false;
+  const core = text.trim();
+  if (!core || core.length > maxLength) return false;
+  if (!CJK.test(core)) return false;
+  return !Object.prototype.hasOwnProperty.call(dict, core);
+}
+
+/**
+ * 安装文字替换器。返回一个控制器(可 off/on/dump/stats), 出任何问题都自动禁用自己。
+ * options: { dict, patterns, collect, maxLength, skipSelectors, storageKey, debug }
+ */
+function createTextReplacer(options) {
+  const opts = options || {};
+  const dict = opts.dict || {};
+  const patterns = opts.patterns || [];
+  const collect = opts.collect !== false;
+  const maxLength = typeof opts.maxLength === "number" ? opts.maxLength : 40;
+  const skipSelectors = opts.skipSelectors || ["[contenteditable='true']", "input", "textarea"];
+  const storageKey = opts.storageKey || "__tr_collected";
+  const SKIP_TAGS = ["SCRIPT", "STYLE", "NOSCRIPT", "TEXTAREA", "CODE", "PRE", "SVG", "CANVAS", "IFRAME", "TITLE", "HEAD"];
+  const CJK = /[\u3400-\u9fff\u3000-\u303f\uff00-\uffef]/;
+  const state = { on: true, replaced: 0, scanned: 0, failed: 0, error: "" };
+  const written = new WeakMap();
+  const pending = new Set();
+  const collected = new Set();
+  let scheduled = false;
+
+  try {
+    const saved = window.localStorage.getItem(storageKey);
+    if (saved) for (const item of JSON.parse(saved)) collected.add(item);
+  } catch (error) { /* 存储不可用不影响替换 */ }
+
+  function saveCollection() {
+    try { window.localStorage.setItem(storageKey, JSON.stringify([...collected])); } catch (error) { /* 忽略 */ }
+  }
+
+  function shouldSkip(element) {
+    let node = element;
+    let depth = 0;
+    while (node && node.nodeType === 1 && depth < 40) {
+      const tag = node.tagName;
+      if (tag && SKIP_TAGS.indexOf(tag) >= 0) return true;
+      if (tag === "BODY" || tag === "HTML") return false;
+      for (let i = 0; i < skipSelectors.length; i += 1) {
+        try { if (node.matches && node.matches(skipSelectors[i])) return true; } catch (error) { /* 选择器不合法就忽略 */ }
+      }
+      node = node.parentElement;
+      depth += 1;
+    }
+    return false;
+  }
+
+  function handleTextNode(node) {
+    const value = node.nodeValue;
+    if (typeof value !== "string" || value.length === 0) return;
+    if (written.get(node) === value) return;            // 是我们自己刚写的, 不要再动
+    state.scanned += 1;
+    const parent = node.parentElement;
+    if (parent && shouldSkip(parent)) return;
+    const result = translate(value, dict, patterns);
+    if (result !== null) {
+      if (result === value) return;
+      written.set(node, result);
+      try { node.nodeValue = result; state.replaced += 1; } catch (error) { state.failed += 1; }
+      return;
+    }
+    if (collect) {
+      const core = value.trim();
+      if (core.length > 0 && core.length <= maxLength && CJK.test(core) && !collected.has(core)) {
+        collected.add(core);
+        saveCollection();
+      }
+    }
+  }
+
+  /** 手动深度优先遍历(不用 TreeWalker, 因为要能递归进 shadow root, 也好测试)。 */
+  function walk(root, depth) {
+    if (!state.on || !root || depth > 60) return;
+    const children = root.childNodes;
+    if (children) {
+      for (let i = 0; i < children.length; i += 1) {
+        const child = children[i];
+        if (child.nodeType === 3) handleTextNode(child);
+        else if (child.nodeType === 1) {
+          if (child.shadowRoot) { observe(child.shadowRoot); walk(child.shadowRoot, depth + 1); }
+          walk(child, depth + 1);
+        }
+      }
+    }
+    if (root.shadowRoot && root.nodeType === 1) { observe(root.shadowRoot); walk(root.shadowRoot, depth + 1); }
+  }
+
+  function flush() {
+    scheduled = false;
+    if (!state.on) return;
+    if (state.error) return;
+    const queue = [...pending];
+    pending.clear();
+    try {
+      for (const node of queue) {
+        if (!node.isConnected) continue;
+        if (node.nodeType === 3) handleTextNode(node);
+        else walk(node, 0);
+      }
+    } catch (error) {
+      state.error = String((error && error.message) || error);
+      state.on = false;                                  // 自我禁用, 绝不影响客户端
+      try { console.error("[text-replacer] 出错已自动停用:", error); } catch (e) { /* 忽略 */ }
+    }
+  }
+
+  function schedule(node) {
+    if (!state.on || state.error) return;
+    pending.add(node);
+    if (pending.size > 4000) pending.clear();            // 极端情况下宁可漏也不卡
+    if (scheduled) return;
+    scheduled = true;
+    try { window.requestAnimationFrame(flush); } catch (error) { flush(); }
+  }
+
+  const observed = new WeakSet();
+  const observer = new MutationObserver((records) => {
+    for (const record of records) {
+      if (record.type === "characterData") schedule(record.target);
+      else for (const node of record.addedNodes) schedule(node);
+    }
+  });
+
+  function observe(root) {
+    if (!root || observed.has(root)) return;
+    try {
+      observer.observe(root, { childList: true, subtree: true, characterData: true });
+      observed.add(root);
+    } catch (error) { /* 观察失败不影响已处理的部分 */ }
+  }
+
+  // 新挂上来的 shadow root 也要被观察到(客户端大量使用组件)
+  try {
+    const original = Element.prototype.attachShadow;
+    Element.prototype.attachShadow = function (init) {
+      const root = original.call(this, init);
+      try { observe(root); schedule(root); } catch (error) { /* 忽略 */ }
+      return root;
+    };
+  } catch (error) { /* 忽略 */ }
+
+  observe(document.documentElement);
+  walk(document.body || document.documentElement, 0);
+
+  const controller = {
+    get on() { return state.on; },
+    off() { state.on = false; return "off"; },
+    on_() { state.on = true; state.error = ""; walk(document.body || document.documentElement, 0); return "on"; },
+    stats() { return { replaced: state.replaced, scanned: state.scanned, failed: state.failed, error: state.error, collected: collected.size }; },
+    /** 导出"没翻译到"的中文清单(按出现次数无从统计, 按长度排序)。 */
+    dump() {
+      const list = [...collected].sort();
+      const text = JSON.stringify(list, null, 2);
+      try { navigator.clipboard.writeText(text); } catch (error) { /* 忽略 */ }
+      return list;
+    },
+    clear() { collected.clear(); saveCollection(); return "cleared"; },
+    translate
+  };
+  return controller;
+}
+  const dict = {"护甲":"物理防御","攻击速度":"攻撃速度","格挡":"ブロック","暴击几率":"クリティカル率","暴击伤害":"クリティカルダメージ","能量":"気","能量回复/5秒":"気自動回復(5秒毎)","经验值":"経験値","生命值":"体力","生命回复/5秒":"体力自動回復(5秒毎)","法术强度":"魔力","移动速度":"移動速度","法力":"マナ","法力回复/5秒":"マナ自動回復(5秒毎)","攻击力":"攻撃力","魔法抗性":"魔法防御","闪避":"回避","经验获取":"獲得経験値","生命回复":"体力自動回復","生命偷取":"ライフスティール","法力回复":"マナ自動回復","法术吸血":"スペルヴァンプ","护甲于18级":"物理防御(Lv18)","护甲穿透":"物理防御貫通","护甲穿透于18级":"物理防御貫通(Lv18)","暴击几率于18级":"クリティカル率(Lv18)","暴击伤害于18级":"クリティカルダメージ(Lv18)","闪避于18级":"回避(Lv18)","能量于18级":"気(Lv18)","能量回复于18级":"気自動回復(Lv18)","金/10秒":"獲得ゴールド(10秒毎)","生命值于18级":"体力(Lv18)","生命回复于18级":"体力自動回復(Lv18)","法术强度于18级":"魔力(Lv18)","法术穿透":"魔法防御貫通","法术穿透于18级":"魔法防御貫通(Lv18)","移动速度于18级":"移動速度(Lv18)","法力于18级":"マナ(Lv18)","法力回复于18级":"マナ自動回復(Lv18)","攻击力于18级":"攻撃力(Lv18)","魔法抗性于18级":"魔法防御(Lv18)","死亡时间":"死亡待機時間","死亡时间于18级":"死亡待機時間(Lv18)","攻击速度于18级":"攻撃速度(Lv18)","冷却缩减":"クールダウン短縮","冷却缩减于18级":"クールダウン短縮(Lv18)","穿甲":"脅威","穿甲于18级":"脅威(Lv18)","正在更新《英雄联盟》……":"リーグ・オブ・レジェンドのアップデート中",";annie;安妮;黑暗之女;heianzhinv;huonv;火女;an;hazn;hn":";annie;ani-;あにー;アニー",";kayle;kaier;凯尔;tianshi;天使;审判;ke;ts;shenpan;spts":";kayle;keiru;けいる;ケイル",";xerath;zelasi;泽拉斯;tesila;特斯拉;yuanguwuling;远古巫灵;zls;tsl;ygwl":";xerath;zerasu;ぜらす;ゼラス",";shyvana;龙女;longnv;xiwana;希瓦娜;龙血武姬;longxuewuji;ln;xwn;lxwj":";shyvana;sibana;shivana;shibana;siva-na;しゔぁーな;しばーな;シヴァーナ;シバーナ",";ahri;ali;阿狸;huli;狐狸;九尾妖狐;jiuweiyaohu;hl;jwyh":";ahri;a-ri;a-li;あーり;アーリ",";graves;格雷福斯;geleifusi;法外狂徒;fawaikuangtu;nanqiang;男枪;nq;glfs;fwkt":";graves;gureibusu;ぐれいぶす;ぐれいゔす;グレイブス;グレイヴス",";fizz;feizi;chaoxihailing;菲兹;潮汐海灵;xiaoyuren;小鱼人;fz;cxhl;xyr":";fizz;fizu;ふぃず;フィズ",";volibear;gouxiong;狗熊;wolibeier;沃利贝尔;不灭狂雷;bumiekuanglei;gx;wlbe;bmkl":";volibear;boribea;ぼりべあ;ゔぉりべあ;ボリベア;ヴォリベア",";rengar;shizigou;狮子狗;leienjiaer;雷恩加尔;aozhizhuiliezhe;傲之追猎者;szg;leje;azzlz":";rengar;れんがー;レンガー",";master yi;yidashi;易大师;jiansheng;剑圣;wuji;无极;yds;js;wjjs;yi":";master yi;i-;yi;ますたー・いー;ますたーいー;マスターイー;マスター・イー;イー;いー",";varus;weilusi;韦鲁斯;chengjiezhijian;惩戒之箭;wls;cjzj":";varus;barusu;ゔぁるす;ばるす;ヴァルス;バルス",";nautilus;taitan;泰坦;nuotilesi;诺提勒斯;shenhai;深海;ntls;sstt;tt":";nautilus;no-tirasu;no-chirasu;のーちらす;ノーチラス",";viktor;weiketuo;维克托;jixiexianqu;机械先驱;三只手;sanzhishou;szs;wkt;jxxq;aoshuxianqu;asxq;奥术先驱":";viktor;bikuta-;victor;びくたー;ゔぃくたー;ビクター;ヴィクタ",";sejuani;zhunv;zhumei;猪女;猪妹;sezhuangni;瑟庄妮;beidizhinu;北地之怒;szn;zn;zm;bdzn":";sejuani;せじゅあに;セジュアニ;せじゅあに",";fiora;剑姬;jianji;feiaona;菲奥娜;wushuang;无双;fan;fon;jj;wsjj":";fiora;ふぃおら;フィオラ",";ziggs;zhadanren;炸弹人;吉格斯;jigesi;guicai;鬼才;baopo;爆破;jgs;bpgc;gc;zdr":";ziggs;jigusu;じぐす;ジグス",";lulu;璐璐;露露;仙灵女巫;xianlingnvwu;ll;xlnw":";lulu;ruru;るる;ルル",";draven;德莱文;delaiwen;文森特;wensente;rongyaoxingxingguan;荣耀行刑官;dlw;wst;ryxxg":";draven;doreibun;doreivun;どれいゔん;どれいぶん;ドレイヴン;ドレイブン",";alistar;niutou;牛头;alisita;阿利斯塔;nt;alst":";alistar;arisuta;ありすたー;アリスター",";hecarim;hekalimu;赫卡里姆;renma;人马;zhanzhengzhiying;战争之影;hklm;rm;zzzy":";hecarim;hekarimu;へかりむ;ヘカリム",";kha'zix;tanglang;螳螂;kazike;卡兹克;xukong;虚空;tl;kzk;xk":";kha'zix;kajikkusu;kajixtukusu;kazikkusu;kazixtukusu;か＝じっくす;かじっくす;カジックス;カ＝ジックス",";darius;delaiesi;德莱厄斯;nuoshou;诺手;dles;ns;诺克萨斯之手;nuokesasizhishou;nksszs":";darius;だりうす;ダリウス",";jayce;jiesi;杰斯;weilaishouhuzhe;未来守护者;js;wlshz":";jayce;jeisu;じぇいす;ジェイス",";lissandra;bingnv;冰女;lisangzhuo;丽桑卓;bingshuangnvwu;冰霜女巫;bn;lsz;bsnw":";lissandra;risandora;りさんどら;リサンドラ",";ryze;faker;liulang;流浪;瑞兹;ruizi;fuwenfashi;符文法师;guangtou;光头;rz;ll;fwfs;gt":";ryze;raizu;らいず;ライズ",";diana;daianna;黛安娜;jiaoyue;皎月女神;戴安娜;dan;jyns;jy":";diana;daiana;だいあな;ダイアナ",";quinn;kuiyin;奎因;niaoren;鸟人;demaxiyazhiyi;德玛西亚之翼;ky;dmxyzy":";quinn;kuin;くいん;クイン",";syndra;qiunv;球女;xindela;辛德拉;anheiyuanshou;暗黑元首;qn;xdl;ahys":";syndra;sindra;sindora;shindora;しんどら;シンドラ",";aurelion sol;龙王;奥瑞利安;索尔;zhuxing;longwang;铸星;aoruilian;arla;lw;zxlw":";aurelion sol;orerion soru;sol;soru;おれりおんそる;おーれりおんそる;オレリオンソル;オレリオン・ソル;オーレリオンソル;そる;ソル",";sion;saien;赛恩;wanglingzhanshen;亡灵战神;se;wlzs":";sion;saion;さいおん;サイオン",";凯隐;kaiyin;kayn;暗裔魔镰;anyimolian;yingliuzhilian;影流之镰;ky;ayml;ylzl":";kayn;けいん;ケイン;kein;keinn;keixn",";zoe;zuoyi;佐伊;muguangxingling;暮光星灵;zy;mgxl;":";zoe;zo-i;ゾーイ;ぞーい;ゾーイー;ぞーいー",";zyra;jiela;婕拉;jingjizhixing;荆棘之兴;jl;jjzx":";zyra;zaira;ざいら;ザイラ",";kai'sa;kasha;xukong;虚空;卡莎;ks;xkzn":";kai'sa;kaisa;kai=sa,かいさ,かい＝さ,かい=さ;カイサ;カイ＝サ",";Seraphine;salefenni;geji;slfn;xlgj;gj;萨勒芬妮;星籁;歌姬;酸辣粉;suanlafen":";Seraphine;serafin;serafi-n;せらふぃーん;せらふぃん;セラフィーン;セラフィン",";qiyana;qyn;ysnh;yuansunvhuang;奇亚娜;元素女皇;圈子妈;quanzima":";キヤナ;きやな;kiyana;qiyana;きあな;キアナ;kiana;kiyana",";sivir;xiweier;希维尔;lunzima;轮子妈;zhanzhengnvshen;战争女神;xwe;lzm;zzns":";sivir;shivia;shibia;syibia;syivia;しゔぃあ;しびあ;シヴィア;シビア",";gnar;naer;纳尔;mishizhiya;迷失之牙;ne;mszy":";gnar;na-;なー;ナー",";zac;zhake;扎克;shenghuamoren;生化魔人;zk;shmr":";zac;zakku;zaxtuku;ざっく;ザック",";yasuo;kuaile;fengnan;快乐;风男;亚索;jianhao;剑豪;jifeng;疾风;ys;jfjh;klfn":";yasuo;やすお;ヤスオ",";soraka;naima;奶妈;索拉卡;suolaka;slk;nm;星妈;xingma;xm":";soraka;そらか;ソラカ",";vel'koz;大眼;dayan;weikezi;维克兹;xukong;虚空;dy;wkz;xkzy":";vel'koz;beru kozu;ゔぇる=こず;ゔぇるこず;べるこず;ヴェルコズ;ヴェル＝コズ",";taliyah;taliya;塔利亚;塔莉垭;yanque;岩雀;tly;yq":";taliyah;tariya;たりや;タリヤ",";camille;青钢影;卡蜜尔;qinggangying;kamier;qgy;kme":";camille;kami-ru;かみーる;カミール",";akshan;阿克尚;影哨;the Rogue Sentinel;aks;akeshang;yingshao;ys":";akshan;あくしゃん;アクシャン;akushan;akushann;akusyan;akusyann",";teemo;timo;提莫;tibaiwan;提百万;xunjiechihou;迅捷斥候;tm;xjch":";teemo;thi-mo;teli-mo;texi-mo;texi-mo;てぃーも;ティーモ",";tristana;xiaopao;小炮;paoniang;炮娘;崔丝塔娜;cuisitana;mailinpaoshou;麦林炮手;xp;cstn;mlps":";tristana;torisuta-na;とりすたーな;トリスターナ",";warwick;langren;狼人;wolike;沃里克;祖安怒兽;zuan;wlk;lr;zans":";warwick;wa-wikku;wa-uxixtuku;わーうぃっく;ワーウィック;ワーイック;わーいっく",";olaf;aolafu;奥拉夫;kuangzhanshi;狂战士;alf;kzs":";olaf;orafu;おらふ;オラフ",";nunu;努努;xueren;雪人;xueyuanshuangzi;雪原双子;xr;xysz;nn":";nunu;wirunpu;ulirunpu;uxirunpu;whirunpu;ぬぬ;ヌヌ;ウィルンプ;うぃるんぷ;ぬぬあんどうぃるんぷ;ヌヌアンドウィルンプ;ヌヌ&ウィルンプ;ぬぬ&うぃるんぷ",";belveth;beierweisi;xukongnvhuang;brws;xknh;Void Empress;卑尔维斯;虚空;女皇;虚空女皇;nvhuang;nh":";belveth;べる＝ヴぇす;べる=ヴぇす;べる＝ゔぇす;べる=ゔぇす;べるヴぇす;べるゔぇす;ベル＝ヴェス;ベル=ヴェス;ベルヴェス;beru=vesu;beru=vuxesu;beru=vulesu;beruvesu;beruvuxesu;beruvulesu;berubesu",";braum;bulong;布隆;fuleierzhuode;弗雷尔卓德;bl;flezd":";braum;buraumu;ぶらうむ;ぶらーむ;ブラウム;ブラーム",";jhin;烬;戏命师;jin;wangyuan;望远;ximingshi;xms;wyj":";jhin;jin;じん;ジン",";kindred;qianjue;千珏;yonglieshuangzi;永猎双子;qj;ylsz":";kindred;kindoreddo;kinndorextudo;きんどれっど;キンドレッド",";miss fortune;nvqiang;女枪;mf;eyunxiaojie;厄运小姐;haoyunjie;好运姐;shangjin;赏金;nq;eyxj;sj;hyj":";miss fortune;fortune;fo-chun;misu fo-tyunn;みす・ふぉーちゅん;ミス・フォーチュン;みすふぉーちゅん;ミスフォーチュン;えむえふ;エムエフ;ふぉーちゅん;フォーチュン",";ashe;aishe;爱射;aixi;艾希;hanbing;寒冰;as;ax;hb":";ashe;asshu;axtusyu;あっしゅ;アッシュ",";zeli;zeri;zuanhuahuo;zahh;泽丽;zl;祖安花火":";zeri;ゼリ;ぜり",";jinx;jinkesi;金克丝;baozou;luoli;暴走;萝莉;jks;bzll;powder;baobao;bb;爆爆":";jinx;jinkusu;zinkusu;じんくす;ジンクス",";tahm kench;hama;蛤蟆;tamu;塔姆;hm;tm;河流之王;hlzw;heliuzhiwang":";tahm kench;tamu kenchi;tamu kennti;tamukenchi;tamukennti;たむ・けんち;たむけんち;タムケンチ;タム・ケンチ;tam",";tryndamere;manwang;蛮王;taidamier;泰达米尔;mw;tdme":";tryndamere;trindamea;torindamea;とりんだめあ;トリンダメア",";briar;the Restrained Hunger;贝蕾亚;狂厄蔷薇;bly;keqw;beileiya;kuangeqiangwei":";briar;ぶらいあー;ブライアー;buraia-;buraia",";viego;Ruined King;佛耶戈;破败之王;v哥;foyege;fyg;pobaizhiwang;pbzw;破败王;pobaiwang;pbw":";viego;biego;ヴィエゴ;ゔぃえご;ビエゴ;びえご",";saina;senna;赛娜;dihunshengqiang;涤魂圣枪;sn;dhsq":";senna;せな;セナ;sena;cena;cenna;",";lucian;aobama;奥巴马;luxian;卢锡安;shengqiangyouxia;圣枪游侠;abm;lxa;sqyx":";lucian;rusian;るしあん;ルシアン",";zed;jie;劫;yingliuzhizhu;影流之主;ylzz":";zed;zedo;ぜど;ゼド",";jax;jiakesi;贾克斯;wuqidashi;武器大师;jks;wqds;武器":";jax;jakkusu;jyaxtukusu;じゃっくす;ジャックス",";kled;克烈;暴怒骑士;kelie;baonuqishi;kl;bnqs":";kled;kureddo;kurextudo;くれっど;クレッド",";ekko;aike;艾克;时间刺客;shijiancike;ak;sjck":";ekko;えこー;エコー;eko",";morgana;moganna;莫甘娜;duoluotianshi;堕落天使;mgn;dlts":";morgana;morugana;もるがな;モルガナ",";vi;wei;蔚;pichengzhifaguan;皮城执法官;pczfg;violet;蔚奥莱;weiaolai;wal;楚雨荨;chuyuxun;cyx":";vi;bai;vai;ゔぁい;ばい;ヴァイ;バイ",";zilean;shiguang;laotou;时光;老头;jilan;基兰;sg;jl":";zilean;jiriann;じりあん;ジリアン",";aatrox;yatuokesi;亚托克斯;jianmo;剑魔;anyi;暗裔;ytks;jm;ayjm":";aatrox;eitorokkusu;eitoroxtukusu;えいとろっくす;エイトロックス;エイトロクス",";nami;namei;娜美;huanchaojiaoji;唤潮鲛姬;nm;hcjj":";nami;なみ;ナミ",";azir;shahuang;沙皇;azier;阿兹尔;shamohuangdi;沙漠皇帝;sh;aze;smhd":";azir;aji-ru;aji-lu;あじーる;アジール",";singed;lianjin;炼金;xinjide;辛吉德;lj;xjd":";singed;shinnjido;しんじど;シンジド",";evelynn;guafu;寡妇;yifulin;伊芙琳;tongkuzhiyong;痛苦之拥;gf;yfl;tkzy":";evelynn;iburin;eburin;ivurin;evurin;iburinn;いぶりん;いゔりん;イブリン;イヴリン",";twitch;laoshu;老鼠;tuqi;图奇;wenyizhiyuan;瘟疫之源;ls;tq;wyzy":";twitch;toluicchi;toxuitti;とぅいっち;ついっち;トゥイッチ;ツイッチ",";galio;jialiao;加里奥;zhengyijuxiang;正义巨像;jla;jlo;zyjx":";galio;gario;がりお;ガリオ",";karthus;sige;死歌;kaersasi;卡尔萨斯;sg;kess":";karthus;ka-sasu;かーさす;カーサス",";cho'gath;kejiasi;科加斯;dachongzi;大虫子;xukong;虚空恐惧;kjs;dcz;xkkj":";cho'gath;chogasu;tyogasu;cyogasu;ちょ＝がす;ちょがす;チョガス;チョ＝ガス",";amumu;阿木木;munaiyi;木乃伊;amm;mny":";amumu;あむむ;アムム",";rammus;longgui;wangba;龙龟;王八;lamosi;拉莫斯;lms;lg;wb":";rammus;ramusu;らむす;ラムス",";anivia;bingniao;冰鸟;fenghuang;凤凰;ainiweiya;艾尼维亚;bn;fh;anwy":";anivia;anibia;あにびあ;あにゔぃあ;アニビア;アニヴィア",";shaco;xiaochou;小丑;sake;萨科;xc;sk":";shaco;shako;syako;しゃこ;シャコ",";youmi;yuumi;maomi;cat;mfmm;魔法猫咪;猫咪;魔法;悠米;ym;mm":";yuumi;ゆーみ;ゆうみ;yumi;ユーミ;ユミ;ゆみ;yu-mi",";dr. mundo;mengduo;蒙多;zuan;祖安狂人;md;zakr":";dr. mundo;dokuta-;mundo;どくたー・むんど;どくたーむんど;ムンド;ドクタームンド;ドクター・ムンド;mundo;むんど;ムンド",";samira;沙漠玫瑰;莎弥拉;shamila;desert rose;samila;shamomeigui;萨米拉;sml;smmg":";samira;samila;さみーら;サミーラ;samiira;samiila;sami-ra;sami-la",";sona;qinnv;琴女;suona;娑娜;qinsexiannv;琴瑟仙女;sn;qn;qsxn":";sona;そな;ソナ",";kassadin;kasading;卡萨丁;xukong;虚空行者;xkxz;xukongxingzhe;ksd":";kassadin;kasadhin;kasadelin;kasadexin;かさでぃん;カサディン",";irelia;daomei;刀妹;airuiliya;艾瑞丽娅;daofengwuzhe;刀锋舞者;dm;arly;dfwz;女刀;nd;nvdao":";irelia;ireria;いれりあ;イレリア",";twisted fate;tf;kapai;卡牌大师;cuisite;崔斯特;kp;kpds;kapaidashi;cst":";twisted fate;tuisuteddo;tsuisuteddo;feito;fuleito;fuxeito;tuxisutextudo;ついすてっど・ふぇいと;ついすてっどふぇいと;ふぇいと;フェイト;ツイステッド・フェイト;ツイステッドフェイト;ティーエフ;てぃーえふ;TF",";janna;998;fengnv;风女;jiana;迦娜;fengbaozhinu;风暴之怒;fn;jn;fbzn":";janna;jyannna;jilyannna;jixyannna;じゃんな;じゃな;ジャンナ;ジャナ",";gangplank;chuanzhang;船长;pulangke;普朗克;haiyangzhizai;海洋之灾;cz;plk;hyzz":";gangplank;がんぐぷらんく;がんぷら;ガングプランク;ギャングプランク;ギャンプラ;ジーピー",";thresh;chuishi;锤石;hunsuodianyuzhang;魂锁典狱长;cs;hsdyz":";thresh;suresshu;surextusyu;すれっしゅ;スレッシュ",";corki;feiji;飞机;kuqi;库奇;yingyongtoudanshou;英勇投弹手;fj;kq;yytds":";corki;koki;ko-ki;こーき;コーキ",";illaoi;eluoyi;俄洛伊;haishoujisi;海兽祭司;chushouma;触手妈;大妈;dama;ely;hsjs;csm;dm":";illaoi;iraoi;いらおい;イラオイ",";rek'sai;leikesai;雷克塞;挖掘机;wajueji;xukongdundishou;虚空;lks;wjj;xkdds":";rek'sai;rekusai;れく＝さい;れくさい;レクサイ;レク＝サイ",";ivern;艾翁;翠神;aiweng;cuishen;xiaoju;小菊;aw;cs;xj;xiaoshu;xs;小树":";ivern;aiba-n;aiva-n;aiba-nn;あいばーん;あいゔぁーん;アイバーン;アイヴァーン",";kalista;huabanxie;滑板鞋;kalisita;卡莉丝塔;fuchouzhimao;复仇之矛;hbx;klst;fczm":";kalista;karisuta;かりすた;カリスタ",";karma;shanzima;扇子妈;kaerma;卡尔玛;tianqizhe;天启者;kem;szm;tqz":";karma;karuma;かるま;カルマ",";bard;bade;巴德;yinyoushiren;吟游诗人;xingjieyoushen;星界游神;bd;yysr;xjys":";bard;ba-do;ばーど;バード",";taric;baoshi;宝石;talike;塔里克;waluolanzhidun;瓦洛兰之盾;tlk;bs;wllzd":";taric;tarikku;tarixtuku;たりっく;タリック",";veigar;weijia;维迦;xieexiaofashi;邪恶小法师;wj;xiaofashi;小法师;xfs;xexfs;小法":";veigar;beiga-;べいがー;ベイガー",";trundle;jumo;巨魔;telangdeer;特朗德尔;tlde;jm":";trundle;torandoru;とらんどる;トランドル",";rakan;洛;幻翎;luo;huanling;fenghuangchuanqi;凤凰传奇;hl;fhcq":";rakan;らかん;ラカン",";xayah;霞;逆羽;xia;niyu;fenghuangchuanqi;凤凰传奇;fhcq;ny":";xayah;zaya;ざや;ザヤ",";xin zhao;zhaoxin;赵信;xinye;信爷;zx;xy;debangzongguan;德邦总管;dbzg":";xin zhao;しん・じゃお;しんじゃお;シンジャオ;シン＝ジャオ;sinjyao;shinjyao;sinzyao;sinjyao",";swain;wuya;乌鸦;siweiyin;斯维因;nuokesasitongling;诺克萨斯统领;wy;swy;nksstl":";swain;suweinn;すうぇいん;すうえいん;スウェイン",";caitlyn;nvjing;女警;kaitelin;凯特琳;picheng;皮城;nj;ktl;pcnj;cupcake;xiaodangao;xdg;小蛋糕":";caitlyn;kaitlyn;caytlin;kaytlin;keitorin;けいとりん;ケイトリン",";ornn;奥恩;山隐之焰;aoen;shanyinzhiyan;ae;syzy;yang;羊":";ornn;o-nn;おーん;オーン",";解脱者;sailasi;sls;jtz;jietuozhe;sylas;Unshackled;塞拉斯":";sylas;さいらす;サイラス;sairasu;sailasu;syras",";nikou;neeko;wanhua;whtl;nk;妮蔻;万花通灵":";neeko;niiko;niko;ni-ko;ニーコ;にーこ;にいこ;ニイコ",";efeiliusi;aphelios;the Weapon of Faith;canyuezhisu;厄斐琉斯;残月之肃;无E烦;wuefan;wuyifan;月男;yuenan;efls;cyzs;yn;wyf":";aphelios;アフェリオス;あふぇりおす;aferiosu;afuxeriosu;afuleriosu;アヘリオス;aheriosu;",";rell;ruier;芮尔;铁女;Iron Maiden;镕铁少女;re;rongtieshaonv;rtsn;tienv;tn;mamei;mm;马妹":";rell;レル;れる;reru;lelu",";blitzcrank;jiqiren;机器人;bulici;布里茨;jqr;blc;zhengqi;蒸汽;zqjqr":";blitzcrank;burittsukuranku;ぶりっつくらんく;ブリッツクランク",";malphite;shitouren;石头人;mofeite;墨菲特;rongyanjushou;熔岩巨兽;str;mft;ryjs;ry":";malphite;marufaito;まるふぁいと;マルファイト",";katarina;katelinna;卡特琳娜;buxiangzhiren;不祥之刃;卡特;kate;ktln;kt;bxzr":";katarina;catarina;かたりな;カタリナ",";pyke;paike;派克;xuegangguiying;血港鬼影;pk;xggy":";pyke;ぱいく;パイク;paiku",";nocturne;mengyan;梦魇;moteng;魔腾;my;mt;夜曲;yequ;yq":";nocturne;nokuta-nn;のくたーん;ノクターン",";maokai;茂凯;dashu;大树;niuqushujing;扭曲树精;mk;ds;nqsj":";maokai;まおかい;マオカイ",";renekton;eyu;鳄鱼;leikedun;雷克顿;huangmotufu;荒漠屠夫;lkd;hmtf":";renekton;renekutonn;れねくとん;レネクトン",";jarvan iv;huangzi;皇子;jiawensishi;嘉文四世;hz;jwss;dmxyhz;demaxiyahuangzi;德玛西亚皇子":";jarvan iv;ja-ban;ja-van;じゃーゔぁんⅣ;じゃーばん;J4;ジャーバン;ジェイフォー;ジャーバン;よんせい;ヨンセイ",";urgot;pangxie;螃蟹;ejiate;厄加特;wuweizhanche;无畏战车;ejt;dpx;px;大螃蟹;wwzc":";urgot;argot;a-got;a-gotto;a-goxtuto;あーごっと;アーゴット",";elise;zhizhu;蜘蛛;yilisi;伊莉丝;zznh;女皇;yls":";elise;erisu;えりす;エリス",";orianna;fatiao;发条;aolianna;奥莉安娜;ft;alan;魔灵;ftml":";orianna;oriana;おりあな;オリアナ",";wukong;悟空;houzi;猴子;qitiandasheng;齐天大圣;孙悟空;swk;wk;hz;qtds;sunwukong":";wukong;u-kon;うーこん;ウーコン",";brand;huonan;火男;bulande;布兰德;fuchouyanhun;复仇焰魂;bld;hn;fcyh":";brand;burando;ぶらんど;ブランド",";lee sin;xiazi;盲僧;瞎子;mangseng;liqing;李青;xz;ms;lq":";lee sin;ri-sin;ri-shinn;leeshin;りー・しん;りーしん;リーシン;リー・シン",";vayne;uzi;weien;薇恩;anyelieshou;暗夜猎手;we;ayls":";vayne;bein;vein;beinn;ゔぇいん;べいん;ヴェイン;ベイン",";rumble;lanbo;兰博;jixiegongdi;机械公敌;lb;jxgd":";rumble;ranburu;らんぶる;ランブル",";cassiopeia;shenv;蛇女;kaxiaopeiya;卡西奥佩娅;moshezhiyong;魔蛇之拥;sn;kxopy;mszy":";cassiopeia;kasiopea;かしおぺあ;カシオペア",";leblanc;yaoji;妖姬;lefulan;乐芙兰;yj;lfl;诡术妖姬;guishu;gsyj":";leblanc;ruburan;るぶらん;ルブラン;リブランク",";vex;gloomist;薇古丝;愁云使者;vgs;cysz;wgs;weigusi;veigusi;chouyunshizhe;aybb;aoyebobi;熬夜波比":";vex;ゔぇっくす;べっくす;ヴェックス;ベックス;vekkusu;bekkusu;",";skarner;xiezi;蝎子;sikana;斯卡纳;shanggulingzhu;上古领主;xz;skn;sglz":";skarner;suka-na-;すかーなー;スカーナー",";heimerdinger;datou;大头;dafamingjia;大发明家;heimodingge;黑默丁格;dt;dmmj;hmdg;famingjia;fmj;发明家":";heimerdinger;haima-dhinga-;haima-dexinga-;はいまーでぃんがー;ハイマーディンガ―",";nasus;goutou;狗头;neisesi;内瑟斯;shamosishen;沙漠死神;nss;gt;smss":";nasus;nasasu;なさす;ナサス",";nidalee;naidali;奶大力;baonv;豹女;naideli;奈德丽;kuangyenvlieshou;狂野女猎手;ndl;bn;kynls":";nidalee;nidari-;にだりー;ニダリー",";udyr;wudier;乌迪尔;shoulingxingzhe;兽灵行者;ud;wde;slxz;xiaoyan;xy;萧炎;野区萧炎;yequxiaoyan;yqxy":";udyr;udhia;udelia;udexia;udexia;うでぃあ;ウディア;うでぃーる;ウディール",";yone;永恩;封魔剑魂;yongen;fengmojianhun;fmjh;ye":";yone;よね;ヨネ",";poppy;bobi;波比;圣锤之毅;shengchuizhiyi;bb;sczy":";poppy;poppi-;poxtupi-;ぽっぴー;ポッピー",";gragas;jiutong;酒桶;gulajiasi;古拉加斯;gljs;jt":";gragas;guragasu;ぐらがす;グラガス",";ambessa;anbeisa;tiexielangmu;tiexuelangmu;txlm;abs;安蓓萨;铁血狼母;狼母;langmu;lm":";ambessa;annbessa;annbextusa;アンベッサ;あんべっさ",";vladimir;xixuegui;吸血鬼;fulajimier;弗拉基米尔;xinghongshougezhe;猩红收割者;xxg;fljme;xhsgz":";vladimir;vuraddomia;buraddomia;blood;ぶらっどみあ;ゔらっどみあ;ブラッドミア;ヴラッドミア;ウラジミール",";pantheon;pansen;潘森;sibada;斯巴达;buquzhiqiang;不屈之枪;ps;bqzq":";pantheon;panteon;ぱんておん;パンテオン;パンツ;ぱんつ",";mel;jingyingliuguang;meier;梅尔;me;镜影流光;jylg;流光镜影;liuguangjingying;lgjy":";mel;meru;メル;める",";yunana;芸阿娜;不破之誓;the Unbroken Faith;yan;yunara;bupozhishi;bpzs":";yunara;ゆなら;ユナラ",";locke;灰烬驱魔人;洛克;the Ashen Exorcist;hjqmr;huijinqumoren;luoke;lk":";locke;rokku;ロック;ろっく",";ezreal;ez;yize;伊泽;tanxianjia;探险家;yz;txj;yizeruier;伊泽瑞尔;yzre":";ezreal;ezuriaru;えずりある;エズリアル",";mordekaiser;tienan;铁男;modekaisa;莫德凯撒;tiekaiminghun;铁铠冥魂;mdks;jsds;jinshudashi;金属大师;modeganqing;莫得感情;tn;mdgq;tkmh":";mordekaiser;morudekaiza-;もるでかいざー;モルデカイザー",";yorick;yuelike;约里克;juemu;掘墓;muhunren;牧魂人;ylk;jm;mhr":";yorick;yorikku;yorixtuku;よりっく;ヨリック",";akali;阿卡丽;liqunzhici;离群之刺;akl;lqzc":";akali;akari;あかり;アカリ",";kennen;kainan;凯南;dianhaozi;电耗子;kuangbaozhixin;狂暴之心;kn;kbzx":";kennen;kenenn;けねん;ケネン",";garen;gailun;盖伦;德玛西亚之力;demaxiyazhili;gl;dmxyzl":";garen;がれん;ガレン",";seti;sett;the Boss;瑟提;st;腕豪;wh;wanhao;男拳;nanquan;nq":";sett;seto;セト;せと",";莉莉娅;liliya;hxbl;hanxiubeilei;lillia;含羞;蓓蕾;妮马;蔻马;nima;kouma;鹿女;lunv;梦鹿;menglu;beilei;lly":";lillia;リリア;りりあ;riria;lilia",";gwen;gewen;the Hallowed Seamstress;灵罗娃娃;格温;gw;llww;lingluowawa;剪子妈;jianzima;jzm;剪妹;jianmei;jm;一剪没;yijianmei;yjm;滚;gun":";gwen;guen;guwen;guulen;guxuenn;ぐうぇん;ぐえん;グウェン;グエン",";lienata;lnt;lianjinnanjue;ljnj;renata;chemtech;baroness;烈娜塔;炼金男爵;glsk;gelasike;戈拉斯克;glasc":";renata glasc;glasc;れなーた・ぐらすく;れなーた ぐらすく;ぐらすく;レナータ・グラスク;レナータ グラスク;グラスク;rena-ta gurasuku;gurasuku",";leona;nvtan;rinv;女坦;日女;leiouna;蕾欧娜;shuguangnvshen;曙光女神;lon;rn;nt;sgns":";leona;reona;れおな;レオナ;リオナ",";阿萝拉;aluola;aurora;双界灵兔;shuangjielingtu;sjlt;all;兔女;tunv;tn;tuzi;tz;兔子":";aurora;オーロラ;おーろら;o-rora;うさぎ;ウサギ;usagi;",";nila;nilah;the Joy Unbound;尼菈;nl;不羁之悦;bujizhiyue;bjzy":";nilah;にーら;ニーラ;ni-ra;niira;ni-la;niila",";k'sante;kuisangti;kst;nazumangrongyao;nzmry;奎桑提;纳祖芒荣耀":";k'sante;か・さんて;かさんて;カ・サンテ;カサンテ;ka・sante;kasante;sante;",";fiddlesticks;daocaoren;稻草人;feidetike;费德提克;yuangukongju;远古恐惧;dcr;fdtk;ygkj":";fiddlesticks;fidorusuthikkusu;ふぃどるすてぃっくす;フィドルスティックス",";malzahar;mazha;蚂蚱;maerzhaha;玛尔扎哈;xukongxingzhe;虚空先知;mezh;mz;xkxz":";malzahar;maruzaha-ru;まるざはーる;マルザハール",";simode;smolder;youlong;long;chiyan;chulong;chiyanchulong;炽;龙;炽炎雏龙;斯莫德;smd;cycl;yl;幼龙;xiaolongren;xlr;小龙人;小火龙;xiaohuolong;xhl;mabaolong;mbl;妈宝龙":";smolder;すもるだー;スモルダー;sumoruda-",";milio;the gentle flame;mingzhu;miliou;mlo;mz;米利欧;明烛":";milio;みりお;ミリオ;mirio;",";zaahen;The Unsundered;不落魔锋;亚恒;yaheng;buluomofeng;yh;blmf":";zaahen;za-hen;ザーヘン;ざーへん",";talon;nandao;男刀;tailong;泰隆;daofengzhiying;刀锋之影;tl;nd;df":";talon;taron;たろん;タロン",";hwei;彗;hui;yihuashi;the Visionary;huajia;画家;异画师;yhs;hj;maobiren;mbr;毛笔人":";hwei;ふぇい;フェイ;fei;fuxei;fulei;huxei;hulei;",";riven;ruiwen;锐雯;fangzhuzhiren;放逐之刃;rw;fzzr":";riven;riben;りゔぇん;りべん;リヴェン;リベン",";naafiri;the Hound of a Hundred Bites;纳亚菲利;百裂冥犬;nayafeili;nyfl;bailiemingquan;blmq;gou;狗;dog":";naafiri;なふぃーり;なふぃり;なーふぃり;ナフィーリ;ナフィリ;ナーフィリ;nafi-ri;nafiri;na-firi;",";kog'maw;dazui;大嘴;kegemo;克格莫;shenyuanjukou;深渊巨口;kgm;dz;shenyuanjukou;syjk":";kog'maw;kogumau;こぐ＝まう;こぐまう;コグマウ;コグ＝マウ",";shen;慎;muguangzhiyan;暮光之眼;yaozi;腰子;mgzy;yz":";shen;silenn;sixenn;shilen;shixenn;しぇん;シェン",";lux;lakesi;拉克丝;guanghuinvlang;光辉女郎;lks;ghnl":";lux;rakkusu;raxtukusu;らっくす;ラックス;ラクス","见习刺客":"悪童","初级刺客":"ごろつき","中级刺客":"鉄砲玉","高级刺客":"殺し屋","杀戮之影":"暗殺者","杀戮宗师":"処刑人","见习战士":"暴れん坊","初级战士":"喧嘩屋","中级战士":"武人","高级战士":"猛者","征服之刃":"豪傑","征服宗师":"戦鬼","战神":"覇王","见习法师":"見習い","初级法师":"魔法使い","中级法师":"魔術師","高级法师":"魔導師","织法之杖":"大魔導師","织法宗师":"暗黒魔導師","法神":"魔帝","见习射手":"追跡者","初级射手":"斥候","中级射手":"狩人","高级射手":"射手","鹰隼之眼":"狙撃手","射击宗师":"心眼","狙神":"弓聖","见习辅助":"お手伝い","初级辅助":"お供","中级辅助":"護衛","高级辅助":"守護者","庇护之光":"守護王","庇护宗师":"守護神","守护之神":"戦場の守り神","见习坦克":"力自慢","初级坦克":"強者","中级坦克":"大黒柱","高级坦克":"百人力","无畏之盾":"千人力","无畏宗师":"難攻不落","巨神":"不死身","登录失败，请重试。":"無効なログイン認証情報です。もう一度お試しください。","一个意料之外的错误发生了":"予期せぬエラーが発生しました","所有角色定位":"すべてのロール","刺客":"アサシン","战士":"ファイター","法师":"メイジ","射手":"マークスマン","辅助":"サポート","坦克":"タンク","错误代码":"エラーコード","我们无法加载这个页面。如果你的互联网连接没问题的话，请稍等几分钟然后重试。":"ページを読み込めませんでした。インターネット接続に問題がない場合は、時間をおいて再度お試しください。","重试":"再試行","{{feature}}目前已被禁用":"{{feature}}は現在利用できません","这个功能目前已被禁用":"この機能は現在利用できません","暂未实装":"未実装です","创建房间":"ロビーを作成","对水晶之痕的简短描述。":"クリスタルスカーの解説。","和随机选择英雄的队友一起，去摧毁敌人的水晶枢纽。":"ランダムに選出されたチャンピオン5人でチームを編成し、橋の反対側にある敵のネクサスを破壊しましょう。","正义之地最古老最威严的战场当属召唤师峡谷。几百年间无数对立的召唤师们在这片战场上延续着战斗，这片战场也因此而得名。有三条不同的道路穿越整个战场。与友军一起攻击敌人最脆弱的地方，摧毁他们的基地！":"サモナーズリフトはフィールド・オブ・ジャスティスでもっとも権威ある最古のマップ。フレヨルド、サーペンタイン河とアイアンスパイク山脈に囲まれた、人里離れた森の中に存在している。","对扭曲丛林的简短描述。":"ツイステッドツリーラインの解説。","水晶之痕":"クリスタルスカー","水晶\n之痕":"クリスタル\nスカー","已被禁用，并在维修中。我们对此带来的不便深表歉意。":"は現在メンテナンスのためご利用できません。ご迷惑をおかけして誠に申し訳ありません。","嚎哭深渊":"ハウリングアビス","嚎哭\n深渊":"ハウリング\nアビス","召唤师峡谷":"サモナーズリフト","召唤师\n峡谷":"サモナーズ\nリフト","扭曲丛林":"ツイステッドツリーライン","扭曲\n丛林":"ツイステッド\nツリーライン","创建自定义游戏":"カスタムを作成","这个模式目前已被禁用":"現在このモードは選択できません","加入自定义游戏":"カスタムに参加","匹配模式":"ノーマル","排位赛":"ランク","新手教程":"チュートリアル","人机":"AI戦","极地大乱斗":"ランダムミッド","全随机（极地大乱斗）1v1":"オールランダム (ランダムミッド) 1v1","全随机（极地大乱斗）2v2":"オールランダム (ランダムミッド) 2v2","全随机（极地大乱斗）3v3":"オールランダム (ランダムミッド) 3v3","全随机（极地大乱斗）5v5":"オールランダム (ランダムミッド) 5v5","全随机（极地大乱斗）6v6":"オールランダム (ランダムミッド) 6v6","全随机人机对战（极地大乱斗）5v5":"オールランダム vs AI (ランダムミッド) 5v5","统治战场5v5":"ドミニオン 5v5","极地大乱斗5v5":"ランダムミッド 5v5","经典模式5v5":"クラシック 5v5","经典模式3v3":"クラシック 3v3","全随机（大乱斗）":"オールランダム (ランダムミッド) ","内部服务器错误，请稍后重试":"内部サーバーエラー。時間をおいて再度お試しください。","你已经与新闻服务断开了连接。请手动重新连接。":"ニュースサービスから切断されました。手動で再接続してください。","经常使用":"頻繁にプレイ","退出":"終了","确认":"OK","是":"はい","否":"いいえ","接受":"同意する","拒绝":"同意しない","最终用户许可协议":"エンドユーザー使用許諾契約","使用条款":"利用規約","取消":"キャンセル","授予邀请":"招待権を与える","移出玩家":"除外","提升为队长":"キャプテンにする","撤回邀请":"招待権を取り消す","通过拖动来邀请玩家。":"ドラッグして招待","寻找对局":"マッチメイキング","阻塞":"ブロックされています","邀请":"招待","添加":"追加","邀请玩家":"プレイヤーを招待","发送邀请":"招待を送る","输入玩家名称":"プレイヤー名を入力","已邀请":"招待済み","你真的想移出{{summonerName}}吗？":"本当に{{summonerName}}を除外しますか？","你已被移出了组房间":"ゲームロビーから除外されました。","与你的好友一起玩，你就会获得组队奖励！更多好友组队意味着更多战利品，所以快去组队吧！":"フレンドとプレイしてグループ報酬を獲得しましょう。一緒にプレイするフレンドが増えると報酬も増えます！","组队奖励":"グループ報酬","与你的好友一起玩来获得蓝色精萃奖励！更多好友组队意味着更多战利品！":"フレンドとプレイしてIP報酬を獲得しましょう。一緒にプレイするフレンドが増えると報酬も増えます！","快组队吧！":"チームを組もう！","待定":"承認待ち","已推荐":"おすすめ","<span class='click-instruction'>点击以添加{{pointsAssignedOnClick}}点。</span><span class='click-instruction'>按住SHIFT键点击以添加1点。</span>":"<span class='click-instruction'>クリックで{{pointsAssignedOnClick}}ポイントを追加</span><span class='click-instruction'>Shiftキーを押しながらクリックで1ポイントを追加</span>","<span class='click-instruction'>点击以添加1点。</span>":"<span class='click-instruction'>クリックで1ポイントを追加</span>","下个点数":"次のポイント","无法在服务器上创建一个天赋页。也许是因为连接问题。":"サーバー上にマスタリーページを作成できませんでした。接続に問題があった可能性があります。","添加新的天赋页":"新しいページを作成","天赋页{{number}}":"マスタリーページ {{number}}","你确定想要删除该页吗？":"本当にこのページを削除しますか？","删除天赋页":"ページを削除","编辑天赋页名称":"ページ名を編集","可用点数：{{number}}":"使用可能ポイント: {{number}}","重置此天赋页的点数":"このページのポイントをリセット","重置此天赋树的点数":"このツリーのポイントをリセット","点击这里来保存你对天赋页的所有改动。":"クリックするとマスタリーページへの変更がすべて保存されます。","由于连接失败，无法保存天赋页面。":"ネットワークの問題のため、マスタリーページを保存できませんでした。","你的天赋有尚未保存的改动。你想要保存吗？":"マスタリーの変更内容が保存されていません。保存しますか？","需要在<span class='mastery-type'>{{type}}</span>至少分配{{ranks}}点":"<span class='mastery-type'>{{type}}</span>ランクであと{{ranks}}ポイント必要です","需要在{{prereq}}至少分配{{ranks}}点":"{{prereq}}に{{ranks}}ランク必要","剩余{{pointsLeft}}点数":"残り{{pointsLeft}}ポイント","诡诈":"計略思想","凶猛":"闘争本能","坚决":"不撓不屈","诡诈系":"計略思想","凶猛系":"闘争本能","坚决系":"不撓不屈","房间":"グループ","藏品":"コレクション","冠军杯赛":"Clash","电竞":"eスポーツ","主页":"ホーム","经典模式":"クラシック","战利品/圣堂":"戦利品/クラフト","新闻":"ニュース","云顶之弈":"TFT","幸运商店":"ユアショップ","生涯":"プロフィール","商城":"ストア","海斗第3季":"メイヘムセット3","更多信息":"その他","检测到必要更新":"必要なアップデートが見つかりました","你的网络连接出问题了。如果你目前还没有连接上互联网，请先连接互联网。如果你已经连上互联网了但无法连接上《英雄联盟》，请查阅我们的<a href=\"https://support-leagueoflegends.riotgames.com/hc/articles/201752664\" target='_blank'>客服信息</a>来看看是否有可行的解决方案。":"ネットワーク接続に問題があります。インターネットに接続しているか確認してください。インターネットに接続しているのにリーグ・オブ・レジェンドが始められない場合は<a href=\"https://support-leagueoflegends.riotgames.com/hc/articles/201752664\" target='_blank'>サポートページ</a>をご確認ください。","好的":"OK","我们复原了一个较旧版本的《英雄联盟》。现在我们将尝试把它更新为最新版本。":"リーグ・オブ・レジェンドを以前のバージョンにロールバックしました。これから最新のアップデートを適用します。","{{megabytes}} MB / {{kilobytes_per_second}} KB/秒":"{{megabytes}} MB / {{kilobytes_per_second}} KBps","在你安装目录下的文件权限正在阻止《英雄联盟》的安装。请按“OK”键，然后我们将尝试唤起你的操作系统的权限管理器。":"インストール先のファイルへのアクセス許可が与えられていないため、リーグ・オブ・レジェンドをインストールできませんでした。「OK」を押すと、お使いのOSのアクセス許可設定を開きます。","在连接至服务器时出问题了。请检查你的网络连接并重启补丁器。如果你的网络连接没有问题，请联系客服进行处理。":" サーバーへの接続に問題があります。インターネット接続を確認のうえパッチャーを再起動してください。インターネット接続の問題がない場合は、<a href=\"https://support-leagueoflegends.riotgames.com/hc/articles/201752664\" target='_blank'>こちら</a>からプレイヤーサポートサイトへアクセスし、手順に従ってトラブルシューティングを行ってください。","补丁器无法下载内容至你的硬盘。请检查下你的电脑，至少需要8GB的空闲容量和写入硬盘的必要权限才能安装《英雄联盟》。你可以联系我们的客服来获取更多有关这个错误的帮助。*注意*：点击“是”将关闭客户端。":"パッチをお使いのハードディスクにダウンロードできませんでした。この問題はダウンロードに必要なディスク容量の不足により生じる場合があります。リーグ・オブ・レジェンドをインストールするには、お使いのコンピューターに少なくとも8 GBの空き容量があり、あなたがディスクへの書き込み権限をお持ちであることが必要です。該当のエラーについてさらに情報が必要な場合には、<a href=\"https://support-leagueoflegends.riotgames.com/hc/articles/202969434\" target='_blank'>こちら</a>をご参照のうえ、トラブルシューティングを行ってください。注: OKをクリックするとクライアントが終了します。","我们的服务器出故障了，并且在阻止你下载补丁内容。我们正在给服务器另一次机会。你可以<a href=\"http://lol.qq.com/act/a20150326dqpd/\" target='_blank'>点此</a>查看我们的服务器状态。":"サーバーに問題があり、現在パッチの適用を行うことができません。すぐに再試行します。サーバー状況については<a href=\"http://status.leagueoflegends.com/?ja_JP#jp\" target='_blank'>こちらから</a>ご確認ください。","《英雄联盟》无法更新，因为你没有足够的硬盘空间。请至少释放{{Bytes}}空间然后重试。":"HDD空き容量が足りないためアップデートを実行できません。{{Bytes}}以上の空き容量を確保してから再度お試しください。","补丁更新失败，并且我们不确定原因是什么。请重启客户端并重试补丁更新。":"不明の原因によりパッチを適用できませんでした。クライアントを再起動してから再度お試しください。","预计用时 {{number}}分钟":"あと {{number}} 分","好":"OK","文件无法写入硬盘。请检查你是否有足够的磁盘空间和必要的许可。":"ディスクへの書き込みに失敗しました。書き込みが可能になっているか、空き容量が十分にあるかを確認してください。","已修复档案：{{number}}":"修正済みファイル数: {{number}}","已扫描的文件：{{number}}":"スキャンしたファイル: {{number}}","联盟客户端":"リーグクライアント","游戏客户端":"ゲームクライアント","我们的服务器发生了些状况，导致你无法从服务器中获得更新文件。我们正在对服务器进行停机维护。在维护时，你可以在这里查看我们的服务器状态。":"サーバー側の問題でパッチを行えません。現在対応中です。こちらでサーバーの状況をご確認ください。","这个错误也许由以下现网内部事故导致：":"以下の問題がエラーの原因になっている可能性があります:","我们已经将这个安装程序恢复至一个较早的《英雄联盟》版本、现在我们将尝试将它更新至最新版本。":"リーグ・オブ・レジェンドを以前のバージョンにロールバックしました。これから最新のアップデートを適用します。","正在应用版本补丁":"パッチを適用中","正在下载文件":"ファイルをダウンロード中","正在提取所需的版本数据":"必要なパッチデータを取得中","正在安装":"インストール中","正在下载":"ダウンロード中","正在修复":"修復中","正在扫描":"スキャン中","修复":"修復","抱歉！我们在你的安装过程中检测到一些数据损坏。你想要修复受损的文件么？":"インストール中にデータが破損した可能性があります。関連するファイルを修復しますか？","更新已完成下载。你必须重启客户端才能让更新生效。":"アップデートをダウンロードしました。更新のためにリーグ・オブ・レジェンドを再起動してください。","现在还不行":"後で","重新启动":"再起動","第{{current_step}}步（共{{total_steps}}步）":"ステップ {{current_step}} / {{total_steps}}","更新失败，而我们不确定是什么原因。点击我们的客服页面{{support page}}来查找可能的解决方法。":"不明な原因のためパッチに失敗しました。サポートページ {{support page}} で解決方法を検索してみてください。","正在更新……":"アップデート中","在更新《英雄联盟》时出现了一个问题。我们正在复原《英雄联盟》的备份版本，并会在你重新启动后再次尝试":"リーグ・オブ・レジェンドの更新に失敗しました。バックアップしたバージョンで起動し、再起動後に再度更新します。","游戏仍在进行中…":"ゲームがまだ進行中です…","全随机":"オールランダム","跳过等待，直接开始下一局游戏。":"ステータス画面表示を省略","开始游戏":"ゲーム開始","可用":"オンライン","剩余1日":"あと1日","剩余{{days}}天":"残り{{days}}日","金币加成":"IPブースト","网吧特权加成":"ロイヤルティブースト","下一个奖励的进度":"次のボーナスまで","下一次重随的进度":"次のリロール","没有激活加成":"使用中のブーストなし","剩余1胜":"あと1勝","剩余{{wins}}胜场":"残り{{wins}}勝","双倍经验卡":"XPブースト","记分板":"スコアボード","下一个":"次へ","失败":"敗北","第二名":"2位 ","第1名":"1位","蓝色精萃":"BE","全员战斗加成蓝色精萃已获得":"バトルブーストBE獲得","蓝色精萃加成":"BEブースト","当天首次胜利":"本日の初勝利","蓝色精萃获取":"獲得BE","特权加成蓝色精萃已获取":"ロイヤルティブーストBE獲得","统治战场蓝色精萃加成":"オーディンBEボーナス","小队奖励蓝色精萃加成已获得":"BEボーナス獲得(グループ報酬)","排队加成已获取":"対戦待ちボーナス獲得","逃兵":"退出者","等级":"レベル","此负场不作记录":"無効試合です","加成点数":"ボーナスポイント","点数获取":"獲得ポイント","总计：":"合計:","胜利":"勝利","点数":"ポイント","总经验":"XP合計","特权加成经验已获取":"ロイヤルティXP獲得","经验已获取":"獲得XP","还需{{points}}点即可到达{{level}}级":"{{points}}ポイント獲得でレベル{{level}}に到達","重新连接":"再接続","游戏已经结束。你现在将返回主页。":"ゲームは終了しました。ホームページに戻ります。","您中途退出游戏，\n请重新连接。":"進行中のゲームから離脱しました。再接続してください。","添加好友":"フレンドを追加","首页":"ホーム","再玩一次":"もう一度プレイ","审核用的举报已经发送。感谢您的反馈。":"送信完了しました。内容を検証のうえ適宜対応いたします。ご協力ありがとうございました。","你已经用完了所有可用的奖励。":"賞賛を使い切っています。","确定":"OK","队伍2":"チーム 2","队伍1":"チーム 1","查看高级详情":"詳細情報を表示","附加评论":"追加コメント","给敌方放水":"利敵行為","在这里输出评论":"ここにコメントを入力","不当的用户名":"不適切な名前です","故意送人头":"意図的なフィード","挂机":"途中退出 / AFK(離席)","消极态度":"非協力的な態度","不与团队进行沟通":"味方とのコミュニケーション拒否","攻击性的语言":"不適切な言葉","举报":"報告","举报玩家":"プレイヤーを報告","滥发信息":"スパム行為","无法举报这个玩家。请稍后再试。":"報告することができません。時間をおいて再度お試しください。","玩家水平过低":"未熟なプレイヤー","口头谩骂":"言葉による攻撃","态度友好":"フレンドリー","乐于助人":"アドバイザー","可敬的对手":"リスペクト","无法称赞这个玩家。请稍后再试。":"このプレイヤーを評価することができません。時間をおいて再度お試しください。","团队合作":"チームワーク","助攻":"アシスト","英雄击杀":"倒したチャンピオン数","死亡":"デス","金币获取":"獲得ゴールド","小兵击杀":"倒したミニオン数","该局总分":"トライスコア","召唤师等级：":"サモナーレベル:","加成":"ブースト","你确定要从英雄选择阶段离开吗？":"本当にチャンピオン選択画面から退出しますか？","一位玩家秒退了；你已经回到了房间。":"プレイヤーの一人が対戦回避をしたため、ロビーに戻りました。","敌方队伍":"敵チーム","你有{{rerolls}}个可用的英雄重随机会。":"あと{{rerolls}}回チャンピオンを再抽選することができます。","这个召唤师技能已被禁用。":"このスペルは使用不可です","等级需求：{{level}}":"レベル{{level}}から使用可能","{{actor}}正在和其他人交换":"{{actor}}は、他のプレイヤーとトレード中です。","这个交换已被取消。":"このトレードは取り消されました。","交换已被拒绝。":"このトレードは辞退されました。","还不能发出交换请求。请重试。":"トレードをリクエストできませんでした。もう一度お試しください。","{{actor}}想要用{{entity1}}交换{{entity2}}。":"{{actor}}が{{entity1}}と{{entity2}}のトレードを希望しています。","用{{entity1}}交换{{entity2}}。":"{{entity1}}と{{entity2}}をトレードします。","正在等待{{actor}}回应你的交换请求……":"あなたのトレードリクエストに対する{{actor}}の返答を待っています…","己方队伍":"味方チーム","接受！":"承諾","{{summonerName}}在英雄选择时离开。你已重新回到房间。":"{{summonerName}}がチャンピオン選択中に退出したため、ロビーに戻りました。","一名玩家在英雄选择时离开。你已重新回到房间。":"プレイヤーの一人がチャンピオン選択中に退出したため、マッチメイキングに戻りました。","对局已找到":"対戦が見つかりました","准备战斗":"準備は良いですか？","对局已接受":"対戦を承諾しました","对局已拒绝":"対戦が辞退されました","正在等待其他玩家":"他のプレイヤーを待っています","符文页{{number}}":"ルーンページ{{number}}","选择全部":"すべて選択","都不选择":"選択をすべて解除","选择玩家来解除聊天黑名单，然后点击保存。":"ブロックを解除するプレイヤーを選択し、保存を押してください。","按字母顺序排列":"五十音順","开启语言过滤器":"言語フィルターを適用する","启动链接警告":"リンク警告をオンにする","在线状态":"オンライン状況","好友列表的排列顺序：":"フレンドリストを並び替える:","启动菜单动画":"メニューのアニメーションをオンにする","启动警告弹窗":"ポップアップ通知をオンにする","聊天黑名单":"ブロックリスト","聊天&好友":"チャット＆フレンド","恢复默认设置":"デフォルトに戻す","你确定要将所有选项重置为默认设置吗？":"本当にすべてのオプションをリセットしてデフォルトの設定に戻しますか？","综合":"一般","键位绑定":"キーバインド","选项":"オプション","全部恢复默认设置":"すべてデフォルトに戻す","声音":"サウンド","如果你的《英雄联盟》出了什么毛病，就点击下方的修复按钮来搞定它吧！警告：这个操作会耗费很长一段时间。":"リーグ・オブ・レジェンドに不具合がある場合は修復をお試しください。注意: 修復には長時間かかる場合があります。","你真的想要修复吗？它会耗费很长一段时间！":"本当に修復しますか？ 修復には長時間かかります。","英雄选择界面的音乐音量":"チャンピオン選択画面のBGMボリューム","启动英雄选择界面的音乐":"チャンピオン選択画面のBGMをオンにする","启动登陆音乐":"ログインBGMをオンにする","启动音效":"効果音をオンにする","音效音量":"効果音ボリューム","关闭登录动画":"ログインアニメーションをオフにする","关闭登录音效":"ログインBGMをオフにする","选择":"選択","传说之证 边框":"プレステージ ボーダー","排位边框":"ランク ボーダー","展示往届排位旗帜":"過去のランクバナーを表示","无法保存。请稍后重试。":"保存できません。時間をおいて再度お試しください。","已选择":"選択中","当前不可用。":"現在利用できません。","进行排位赛以解锁！":"ランク戦をプレイして解除しましょう！","选择一个召唤师图标":"サモナーアイコンを選択","召唤师图标&边框选择器":"サモナーアイコン&ボーダーセレクター","无法保存你的选择。":"選択を保存できませんでした。","屏障":"バリア","为你的英雄套上护盾，吸收115-455（取决于英雄等级）点伤害，持续2秒。":"2秒間自身のチャンピオンにバリアを張って115～455のダメージを軽減(チャンピオンのレベルに応じて変動)。","洞察":"クレアボヤンス","将地图上任意一块区域暴露给你的队伍，持续5秒。":"指定した範囲の視界を5秒間獲得する。","清晰术":"クラリティ","为你的英雄回复40%的最大法力值。也会为友军回复他们40%的最大法力值":"自身と味方のマナを、それぞれ最大マナの40%分回復する。","净化":"クレンズ","移除身上的所有限制效果和召唤师技能的减益效果，并且若在接下来的3秒里再次被施加限制效果时，新效果的持续时间会减少65%。":"行動妨害やサモナースペルによるデバフをすべて解除し、その後3秒間は自身への行動妨害効果を65%低減する。","虚弱":"イグゾースト","虚弱目标敌方英雄，降低目标英雄30%的移动速度和攻击速度，以及10护甲与魔法抗性，并且他们所造成的伤害减少40%，持续2.5秒。":"敵のチャンピオンを疲弊させ、2.5秒間にわたって移動速度および攻撃速度を30%、物理防御および魔法防御を10、与ダメージを40%低下させる。","闪现":"フラッシュ","使英雄朝着你的指针所停的区域瞬间传送一小段距离。":"自身のチャンピオンを短い距離、指定した方向に瞬間移動させる。","卫戍部队":"ギャリソン","友方防御塔：提供巨量回复，持续8秒。敌方防御塔：降低伤害输出，持续8秒":"自陣タワー: 8秒間にわたって大幅に回復する。\n敵陣タワー: 8秒間にわたって与ダメージが80%低下する。","幽灵疾步":"ゴースト","你的英雄在移动时会无视单位的碰撞体积，移动速度增加27%，持续10秒。":"10秒間にわたって移動速度が27%増加し、ユニットをすり抜けての移動が可能。","治疗术":"ヒール","为你和目标友军英雄回复95-345（取决于英雄等级）生命值，并为你和目标友军英雄提供30%移动速度加成，持续1秒。若目标近期已受到过其它治疗术的影响，则治疗术对目标产生的治疗效果减半。":"自身および対象の味方チャンピオンの体力を90 - 345(チャンピオンのレベルに応じて変動)回復し、移動速度を1秒間にわたって30%増加。直前にサモナースペル「ヒール」の効果を受けていた場合は、体力の回復量が半減する。","引燃":"イグナイト","引燃是对单体敌方目标施放的持续性伤害技能，在5秒的持续时间里造成70-410（取决于英雄等级）真实伤害，获得目标的视野，并减少目标所受的治疗和回复效果。":"敵のチャンピオンに火をつけ、5秒間かけて70 - 410の確定ダメージ(チャンピオンのレベルに応じて変動)を与える。効果時間中、発火した対象の位置を確認できるようになり、対象への体力回復効果は減少する。","标记":"マーク","沿直线扔出一个雪球。如果雪球命中了一个敌人，那么这个敌人会被【标记】，并且你的英雄接下来可以快速突进到被【标记】的目标旁边。":"直線上の敵に向かって雪玉を投げる。敵に当たるとマークを残し、マークをつけたチャンピオンはこの対象まで素早く移動することができる。","魄罗投掷":"ポロ投げ","把一个魄罗投向你的敌人。如果它命中了一名敌人，那么你接下来就可以快速位移到被命中的敌人旁边。":"ポロを敵に投げましょう。当たるとターゲットまで移動できます。","重生":"リバイブ","立刻在本队的召唤师平台上复活你的英雄，并暂时提升英雄的移动速度。":"自身のチャンピオンを即座にスタート地点上に復活させ、移動速度を短時間増加させる。","惩戒":"スマイト","对目标史诗野怪、大型野怪或敌方小兵造成390-1000（取决于英雄等级）点真实伤害。":"対象の特殊なモンスター、大型モンスター、または敵ミニオンに対し、390～1000の確定ダメージ(チャンピオンのレベルに応じて変動)を与える。","传送":"テレポート","在引导3.5秒后，将英雄传送到目标友方建筑物、小兵或守卫旁边。":"3.5秒間の詠唱後、チャンピオンを自陣の建造物、ミニオン、またはワードの位置にテレポートさせる。","护驾！":"王のために！","快速位移到魄罗之王旁边。":"ポロキングの側へ素早く移動する。","立刻领取":"即時","免费":"無料","设置数量":"数量を設定","你没有足够的代币。":"トークンが足りません","输入至少{{minQuantity}}个。":"{{minQuantity}}以上の数値を入力してください","你只能以{{minQuantity}}的倍数来购买。":"{{minQuantity}}個単位でしか購入できません","愚人节快乐，乐子人们！来庆祝一下吧！ ":"エイプリルフールおめでとう！お祭り好きなら、一緒にお祝いしよう！","愚人节大军需要增援，而你就是那个完美的呆萌士兵！":"エイプリルフール軍が増援を求めている。おふざけセンスのある兵ならピッタリだ！","冲啊！我的无-羽-伦比的派对礼品就给你拿去用来对抗混乱大军吧。":"いざ、戦いへ！ペングの楽しいパーティーグッズを使って、混沌の勢力に立ち向かえ！","在非排位的【召唤师峡谷】，【极地大乱斗】和【人机对战】里找我。我们在黎明时兜风！":"ランクなしのサモナーズリフト、ランダムミッド、AI戦で会おう。夜明けに出陣だ！","咕噜噜……(“你不玩吗？我可为你准备了很多愚人节惊喜……”)":"ゴロゴロ…（遊んでくれにゃい？エイプリルフールのサプライズがたくさんあるよ…）","喵呜！ (“捏哈哈！有本事来抓我呀！”)":"にゃあ！（ニャハハ！捕まえてみな。できるものなら！）","咪嗷呜！ (“混乱就是我的地盘！一场喵灾在等待！”)":"みゃお！（混沌は得意分野！大混乱の始まりだ！）","企鹅 盖伦":"ペング ガレン","盒子猫 萨科":"ニャコ"};
+  const patterns = [];
+  try {
+    window.__tr = createTextReplacer({ dict, patterns, collect: true });
+  } catch (error) {
+    /* 最坏情况: 什么都没发生, 客户端保持原样 */
+  }
+})();

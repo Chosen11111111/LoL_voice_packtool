@@ -1,0 +1,222 @@
+/* 自动生成, 请勿手改 —— 由 scripts/build-text-plugin.ts 从 runtime.mjs + vi_vn/dict.json 生成 */
+/* 作用: 把英雄联盟**客户端界面**的中文替换成目标语言。只改客户端页面里的文字, */
+/*       不涉及任何文件, 也不涉及局内游戏(局内是另一个进程, 本插件碰不到)。 */
+(() => {
+/**
+ * 客户端界面文字替换核心(运行在英雄联盟客户端页面里)。
+ *
+ * 设计约束:
+ * - 只用浏览器标准接口(MutationObserver / requestAnimationFrame / localStorage / clipboard),
+ *   不依赖任何加载器的私有 API, 所以换成别的加载器也能用。
+ * - 整个能力集中在这一个自包含函数里(不引用外部变量), 打包时直接把它转成字符串塞进插件,
+ *   因此这里改成任何东西都不需要改打包脚本。
+ * - 任何异常都必须自我禁用: 最坏情况是"没翻译", 绝不能把客户端界面搞卡死。
+ */
+
+/** 含中日韩文字才算"需要翻译"的原文。 */
+const CJK = /[\u3400-\u9fff\u3000-\u303f\uff00-\uffef]/;
+
+/** 这些标签里的文字绝不动。 */
+const SKIP_TAGS = ["SCRIPT", "STYLE", "NOSCRIPT", "TEXTAREA", "CODE", "PRE", "SVG", "CANVAS", "IFRAME", "TITLE", "HEAD"];
+
+/** 默认不动的区域: 输入框、可编辑区(聊天框、昵称编辑等)。 */
+const DEFAULT_SKIP_SELECTORS = ["[contenteditable='true']", "[contenteditable='']", "input", "textarea", "select"];
+
+/**
+ * 把一段文字翻译成目标语言。
+ * 返回 null 表示"没有对应译文, 保持原样"。
+ * 前后空白原样保留, 只有中间的主体参与查表 —— 界面文字常带缩进和换行。
+ */
+function translate(text, dict, patterns) {
+  if (typeof text !== "string" || text.length === 0) return null;
+  const leading = text.match(/^\s*/)[0];
+  const trailing = text.match(/\s*$/)[0];
+  const core = text.slice(leading.length, text.length - trailing.length);
+  if (!core || !CJK.test(core)) return null;
+  const direct = Object.prototype.hasOwnProperty.call(dict, core) ? dict[core] : undefined;
+  if (typeof direct === "string" && direct.length > 0) return leading + direct + trailing;
+  if (patterns) {
+    for (let i = 0; i < patterns.length; i += 1) {
+      const [re, to] = patterns[i];
+      if (re.test(core)) return leading + core.replace(re, to) + trailing;
+    }
+  }
+  return null;
+}
+
+/** 是否值得记录进"待翻译清单"(含中文、长度适中、还没有译文)。 */
+function isCollectable(text, dict, maxLength) {
+  if (typeof text !== "string") return false;
+  const core = text.trim();
+  if (!core || core.length > maxLength) return false;
+  if (!CJK.test(core)) return false;
+  return !Object.prototype.hasOwnProperty.call(dict, core);
+}
+
+/**
+ * 安装文字替换器。返回一个控制器(可 off/on/dump/stats), 出任何问题都自动禁用自己。
+ * options: { dict, patterns, collect, maxLength, skipSelectors, storageKey, debug }
+ */
+function createTextReplacer(options) {
+  const opts = options || {};
+  const dict = opts.dict || {};
+  const patterns = opts.patterns || [];
+  const collect = opts.collect !== false;
+  const maxLength = typeof opts.maxLength === "number" ? opts.maxLength : 40;
+  const skipSelectors = opts.skipSelectors || ["[contenteditable='true']", "input", "textarea"];
+  const storageKey = opts.storageKey || "__tr_collected";
+  const SKIP_TAGS = ["SCRIPT", "STYLE", "NOSCRIPT", "TEXTAREA", "CODE", "PRE", "SVG", "CANVAS", "IFRAME", "TITLE", "HEAD"];
+  const CJK = /[\u3400-\u9fff\u3000-\u303f\uff00-\uffef]/;
+  const state = { on: true, replaced: 0, scanned: 0, failed: 0, error: "" };
+  const written = new WeakMap();
+  const pending = new Set();
+  const collected = new Set();
+  let scheduled = false;
+
+  try {
+    const saved = window.localStorage.getItem(storageKey);
+    if (saved) for (const item of JSON.parse(saved)) collected.add(item);
+  } catch (error) { /* 存储不可用不影响替换 */ }
+
+  function saveCollection() {
+    try { window.localStorage.setItem(storageKey, JSON.stringify([...collected])); } catch (error) { /* 忽略 */ }
+  }
+
+  function shouldSkip(element) {
+    let node = element;
+    let depth = 0;
+    while (node && node.nodeType === 1 && depth < 40) {
+      const tag = node.tagName;
+      if (tag && SKIP_TAGS.indexOf(tag) >= 0) return true;
+      if (tag === "BODY" || tag === "HTML") return false;
+      for (let i = 0; i < skipSelectors.length; i += 1) {
+        try { if (node.matches && node.matches(skipSelectors[i])) return true; } catch (error) { /* 选择器不合法就忽略 */ }
+      }
+      node = node.parentElement;
+      depth += 1;
+    }
+    return false;
+  }
+
+  function handleTextNode(node) {
+    const value = node.nodeValue;
+    if (typeof value !== "string" || value.length === 0) return;
+    if (written.get(node) === value) return;            // 是我们自己刚写的, 不要再动
+    state.scanned += 1;
+    const parent = node.parentElement;
+    if (parent && shouldSkip(parent)) return;
+    const result = translate(value, dict, patterns);
+    if (result !== null) {
+      if (result === value) return;
+      written.set(node, result);
+      try { node.nodeValue = result; state.replaced += 1; } catch (error) { state.failed += 1; }
+      return;
+    }
+    if (collect) {
+      const core = value.trim();
+      if (core.length > 0 && core.length <= maxLength && CJK.test(core) && !collected.has(core)) {
+        collected.add(core);
+        saveCollection();
+      }
+    }
+  }
+
+  /** 手动深度优先遍历(不用 TreeWalker, 因为要能递归进 shadow root, 也好测试)。 */
+  function walk(root, depth) {
+    if (!state.on || !root || depth > 60) return;
+    const children = root.childNodes;
+    if (children) {
+      for (let i = 0; i < children.length; i += 1) {
+        const child = children[i];
+        if (child.nodeType === 3) handleTextNode(child);
+        else if (child.nodeType === 1) {
+          if (child.shadowRoot) { observe(child.shadowRoot); walk(child.shadowRoot, depth + 1); }
+          walk(child, depth + 1);
+        }
+      }
+    }
+    if (root.shadowRoot && root.nodeType === 1) { observe(root.shadowRoot); walk(root.shadowRoot, depth + 1); }
+  }
+
+  function flush() {
+    scheduled = false;
+    if (!state.on) return;
+    if (state.error) return;
+    const queue = [...pending];
+    pending.clear();
+    try {
+      for (const node of queue) {
+        if (!node.isConnected) continue;
+        if (node.nodeType === 3) handleTextNode(node);
+        else walk(node, 0);
+      }
+    } catch (error) {
+      state.error = String((error && error.message) || error);
+      state.on = false;                                  // 自我禁用, 绝不影响客户端
+      try { console.error("[text-replacer] 出错已自动停用:", error); } catch (e) { /* 忽略 */ }
+    }
+  }
+
+  function schedule(node) {
+    if (!state.on || state.error) return;
+    pending.add(node);
+    if (pending.size > 4000) pending.clear();            // 极端情况下宁可漏也不卡
+    if (scheduled) return;
+    scheduled = true;
+    try { window.requestAnimationFrame(flush); } catch (error) { flush(); }
+  }
+
+  const observed = new WeakSet();
+  const observer = new MutationObserver((records) => {
+    for (const record of records) {
+      if (record.type === "characterData") schedule(record.target);
+      else for (const node of record.addedNodes) schedule(node);
+    }
+  });
+
+  function observe(root) {
+    if (!root || observed.has(root)) return;
+    try {
+      observer.observe(root, { childList: true, subtree: true, characterData: true });
+      observed.add(root);
+    } catch (error) { /* 观察失败不影响已处理的部分 */ }
+  }
+
+  // 新挂上来的 shadow root 也要被观察到(客户端大量使用组件)
+  try {
+    const original = Element.prototype.attachShadow;
+    Element.prototype.attachShadow = function (init) {
+      const root = original.call(this, init);
+      try { observe(root); schedule(root); } catch (error) { /* 忽略 */ }
+      return root;
+    };
+  } catch (error) { /* 忽略 */ }
+
+  observe(document.documentElement);
+  walk(document.body || document.documentElement, 0);
+
+  const controller = {
+    get on() { return state.on; },
+    off() { state.on = false; return "off"; },
+    on_() { state.on = true; state.error = ""; walk(document.body || document.documentElement, 0); return "on"; },
+    stats() { return { replaced: state.replaced, scanned: state.scanned, failed: state.failed, error: state.error, collected: collected.size }; },
+    /** 导出"没翻译到"的中文清单(按出现次数无从统计, 按长度排序)。 */
+    dump() {
+      const list = [...collected].sort();
+      const text = JSON.stringify(list, null, 2);
+      try { navigator.clipboard.writeText(text); } catch (error) { /* 忽略 */ }
+      return list;
+    },
+    clear() { collected.clear(); saveCollection(); return "cleared"; },
+    translate
+  };
+  return controller;
+}
+  const dict = {"护甲":"Giáp","攻击速度":"Tốc độ Đánh","格挡":"Chặn","暴击几率":"Tỉ Lệ Đánh Chí Mạng","暴击伤害":"Sát Thương Đánh Chí Mạng","能量":"Nội Năng","能量回复/5秒":"Hồi Nội Năng Mỗi 5 Giây","经验值":"Kinh Nghiệm","生命值":"Máu","生命回复/5秒":"Hồi Máu Mỗi 5 Giây","法术强度":"Sức Mạnh Phép Thuật","移动速度":"Tốc Độ Di Chuyển","法力":"Năng Lượng","法力回复/5秒":"Hồi Năng Lượng Mỗi 5 Giây","攻击力":"Sức mạnh Công kích","魔法抗性":"Kháng Phép","闪避":"Né Tránh","经验获取":"Kinh Nghiệm Nhận Được","生命回复":"Hồi Máu","生命偷取":"Hút Máu","法力回复":"Hồi Năng Lượng","法术吸血":"Hút Máu Phép","护甲于18级":"Giáp theo cấp","护甲穿透":"Xuyên Giáp","护甲穿透于18级":"Xuyên Giáp ở cấp 18","暴击几率于18级":"Tỉ Lệ Đánh Chí Mạng theo cấp","暴击伤害于18级":"Sát thương chí mạng theo cấp","闪避于18级":"Né Tránh theo cấp","能量于18级":"Nội năng theo cấp","能量回复于18级":"Hồi Nội năng theo cấp","金/10秒":"Vàng nhận được mỗi 10 giây","生命值于18级":"Máu theo cấp","生命回复于18级":"Hồi Máu theo cấp","法术强度于18级":"Sức Mạnh Phép Thuật theo cấp","法术穿透":"Xuyên Kháng Phép","法术穿透于18级":"Xuyên Kháng Phép theo cấp","移动速度于18级":"Tốc Độ Di Chuyển theo cấp","法力于18级":"Năng lượng ở cấp 18","法力回复于18级":"Hồi Năng Lượng theo cấp","攻击力于18级":"Sức mạnh Công kích ở cấp 18","魔法抗性于18级":"Kháng Phép theo cấp","死亡时间":"Thời Gian Chết","死亡时间于18级":"Thời Gian Chết theo cấp","攻击速度于18级":"Tốc Độ Đánh theo cấp","冷却缩减":"Giàm Thời Gian Hồi Chiêu","冷却缩减于18级":"Giảm Thời Gian Hồi Chiêu theo cấp","穿甲":"Sát lực","穿甲于18级":"Sát lực ở cấp 18","正在更新《英雄联盟》……":"Đang cập nhật Liên Minh Huyền Thoại…",";annie;安妮;黑暗之女;heianzhinv;huonv;火女;an;hazn;hn":";annie",";kayle;kaier;凯尔;tianshi;天使;审判;ke;ts;shenpan;spts":";kayle",";xerath;zelasi;泽拉斯;tesila;特斯拉;yuanguwuling;远古巫灵;zls;tsl;ygwl":";xerath",";shyvana;龙女;longnv;xiwana;希瓦娜;龙血武姬;longxuewuji;ln;xwn;lxwj":";shyvana",";ahri;ali;阿狸;huli;狐狸;九尾妖狐;jiuweiyaohu;hl;jwyh":";ahri",";graves;格雷福斯;geleifusi;法外狂徒;fawaikuangtu;nanqiang;男枪;nq;glfs;fwkt":";graves",";fizz;feizi;chaoxihailing;菲兹;潮汐海灵;xiaoyuren;小鱼人;fz;cxhl;xyr":";fizz",";volibear;gouxiong;狗熊;wolibeier;沃利贝尔;不灭狂雷;bumiekuanglei;gx;wlbe;bmkl":";volibear",";rengar;shizigou;狮子狗;leienjiaer;雷恩加尔;aozhizhuiliezhe;傲之追猎者;szg;leje;azzlz":";rengar",";master yi;yidashi;易大师;jiansheng;剑圣;wuji;无极;yds;js;wjjs;yi":";master yi",";varus;weilusi;韦鲁斯;chengjiezhijian;惩戒之箭;wls;cjzj":";varus",";nautilus;taitan;泰坦;nuotilesi;诺提勒斯;shenhai;深海;ntls;sstt;tt":";nautilus",";viktor;weiketuo;维克托;jixiexianqu;机械先驱;三只手;sanzhishou;szs;wkt;jxxq;aoshuxianqu;asxq;奥术先驱":";viktor",";sejuani;zhunv;zhumei;猪女;猪妹;sezhuangni;瑟庄妮;beidizhinu;北地之怒;szn;zn;zm;bdzn":";sejuani",";fiora;剑姬;jianji;feiaona;菲奥娜;wushuang;无双;fan;fon;jj;wsjj":";fiora",";ziggs;zhadanren;炸弹人;吉格斯;jigesi;guicai;鬼才;baopo;爆破;jgs;bpgc;gc;zdr":";ziggs",";lulu;璐璐;露露;仙灵女巫;xianlingnvwu;ll;xlnw":";lulu",";draven;德莱文;delaiwen;文森特;wensente;rongyaoxingxingguan;荣耀行刑官;dlw;wst;ryxxg":";draven",";alistar;niutou;牛头;alisita;阿利斯塔;nt;alst":";alistar",";hecarim;hekalimu;赫卡里姆;renma;人马;zhanzhengzhiying;战争之影;hklm;rm;zzzy":";hecarim",";kha'zix;tanglang;螳螂;kazike;卡兹克;xukong;虚空;tl;kzk;xk":";kha'zix",";darius;delaiesi;德莱厄斯;nuoshou;诺手;dles;ns;诺克萨斯之手;nuokesasizhishou;nksszs":";darius",";jayce;jiesi;杰斯;weilaishouhuzhe;未来守护者;js;wlshz":";jayce",";lissandra;bingnv;冰女;lisangzhuo;丽桑卓;bingshuangnvwu;冰霜女巫;bn;lsz;bsnw":";lissandra",";ryze;faker;liulang;流浪;瑞兹;ruizi;fuwenfashi;符文法师;guangtou;光头;rz;ll;fwfs;gt":";ryze",";diana;daianna;黛安娜;jiaoyue;皎月女神;戴安娜;dan;jyns;jy":";diana",";quinn;kuiyin;奎因;niaoren;鸟人;demaxiyazhiyi;德玛西亚之翼;ky;dmxyzy":";quinn",";syndra;qiunv;球女;xindela;辛德拉;anheiyuanshou;暗黑元首;qn;xdl;ahys":";syndra",";aurelion sol;龙王;奥瑞利安;索尔;zhuxing;longwang;铸星;aoruilian;arla;lw;zxlw":";aurelion sol",";sion;saien;赛恩;wanglingzhanshen;亡灵战神;se;wlzs":";sion",";凯隐;kaiyin;kayn;暗裔魔镰;anyimolian;yingliuzhilian;影流之镰;ky;ayml;ylzl":";kayn",";zoe;zuoyi;佐伊;muguangxingling;暮光星灵;zy;mgxl;":";zoe",";zyra;jiela;婕拉;jingjizhixing;荆棘之兴;jl;jjzx":";zyra",";kai'sa;kasha;xukong;虚空;卡莎;ks;xkzn":";kai'sa",";Seraphine;salefenni;geji;slfn;xlgj;gj;萨勒芬妮;星籁;歌姬;酸辣粉;suanlafen":";Seraphine",";qiyana;qyn;ysnh;yuansunvhuang;奇亚娜;元素女皇;圈子妈;quanzima":";qiyana",";sivir;xiweier;希维尔;lunzima;轮子妈;zhanzhengnvshen;战争女神;xwe;lzm;zzns":";sivir",";gnar;naer;纳尔;mishizhiya;迷失之牙;ne;mszy":";gnar",";zac;zhake;扎克;shenghuamoren;生化魔人;zk;shmr":";zac",";yasuo;kuaile;fengnan;快乐;风男;亚索;jianhao;剑豪;jifeng;疾风;ys;jfjh;klfn":";yasuo;daxua",";soraka;naima;奶妈;索拉卡;suolaka;slk;nm;星妈;xingma;xm":";soraka",";vel'koz;大眼;dayan;weikezi;维克兹;xukong;虚空;dy;wkz;xkzy":";vel'koz",";taliyah;taliya;塔利亚;塔莉垭;yanque;岩雀;tly;yq":";taliyah",";camille;青钢影;卡蜜尔;qinggangying;kamier;qgy;kme":";camille",";akshan;阿克尚;影哨;the Rogue Sentinel;aks;akeshang;yingshao;ys":";akshan",";teemo;timo;提莫;tibaiwan;提百万;xunjiechihou;迅捷斥候;tm;xjch":";teemo",";tristana;xiaopao;小炮;paoniang;炮娘;崔丝塔娜;cuisitana;mailinpaoshou;麦林炮手;xp;cstn;mlps":";tristana",";warwick;langren;狼人;wolike;沃里克;祖安怒兽;zuan;wlk;lr;zans":";warwick",";olaf;aolafu;奥拉夫;kuangzhanshi;狂战士;alf;kzs":";olaf",";nunu;努努;xueren;雪人;xueyuanshuangzi;雪原双子;xr;xysz;nn":";nunu",";belveth;beierweisi;xukongnvhuang;brws;xknh;Void Empress;卑尔维斯;虚空;女皇;虚空女皇;nvhuang;nh":";belveth",";braum;bulong;布隆;fuleierzhuode;弗雷尔卓德;bl;flezd":";braum",";jhin;烬;戏命师;jin;wangyuan;望远;ximingshi;xms;wyj":";jhin",";kindred;qianjue;千珏;yonglieshuangzi;永猎双子;qj;ylsz":";kindred",";miss fortune;nvqiang;女枪;mf;eyunxiaojie;厄运小姐;haoyunjie;好运姐;shangjin;赏金;nq;eyxj;sj;hyj":";miss fortune",";ashe;aishe;爱射;aixi;艾希;hanbing;寒冰;as;ax;hb":";ashe",";zeli;zeri;zuanhuahuo;zahh;泽丽;zl;祖安花火":";zeri",";jinx;jinkesi;金克丝;baozou;luoli;暴走;萝莉;jks;bzll;powder;baobao;bb;爆爆":";jinx",";tahm kench;hama;蛤蟆;tamu;塔姆;hm;tm;河流之王;hlzw;heliuzhiwang":";tahm kench",";tryndamere;manwang;蛮王;taidamier;泰达米尔;mw;tdme":";tryndamere",";briar;the Restrained Hunger;贝蕾亚;狂厄蔷薇;bly;keqw;beileiya;kuangeqiangwei":";briar",";viego;Ruined King;佛耶戈;破败之王;v哥;foyege;fyg;pobaizhiwang;pbzw;破败王;pobaiwang;pbw":";viego",";saina;senna;赛娜;dihunshengqiang;涤魂圣枪;sn;dhsq":";senna",";lucian;aobama;奥巴马;luxian;卢锡安;shengqiangyouxia;圣枪游侠;abm;lxa;sqyx":";lucian",";zed;jie;劫;yingliuzhizhu;影流之主;ylzz":";zed",";jax;jiakesi;贾克斯;wuqidashi;武器大师;jks;wqds;武器":";jax",";kled;克烈;暴怒骑士;kelie;baonuqishi;kl;bnqs":";kled",";ekko;aike;艾克;时间刺客;shijiancike;ak;sjck":";ekko",";morgana;moganna;莫甘娜;duoluotianshi;堕落天使;mgn;dlts":";morgana",";vi;wei;蔚;pichengzhifaguan;皮城执法官;pczfg;violet;蔚奥莱;weiaolai;wal;楚雨荨;chuyuxun;cyx":";vi",";zilean;shiguang;laotou;时光;老头;jilan;基兰;sg;jl":";zilean",";aatrox;yatuokesi;亚托克斯;jianmo;剑魔;anyi;暗裔;ytks;jm;ayjm":";aatrox",";nami;namei;娜美;huanchaojiaoji;唤潮鲛姬;nm;hcjj":";nami",";azir;shahuang;沙皇;azier;阿兹尔;shamohuangdi;沙漠皇帝;sh;aze;smhd":";azir",";singed;lianjin;炼金;xinjide;辛吉德;lj;xjd":";singed",";evelynn;guafu;寡妇;yifulin;伊芙琳;tongkuzhiyong;痛苦之拥;gf;yfl;tkzy":";evelynn",";twitch;laoshu;老鼠;tuqi;图奇;wenyizhiyuan;瘟疫之源;ls;tq;wyzy":";twitch",";galio;jialiao;加里奥;zhengyijuxiang;正义巨像;jla;jlo;zyjx":";galio",";karthus;sige;死歌;kaersasi;卡尔萨斯;sg;kess":";karthus",";cho'gath;kejiasi;科加斯;dachongzi;大虫子;xukong;虚空恐惧;kjs;dcz;xkkj":";cho'gath",";amumu;阿木木;munaiyi;木乃伊;amm;mny":";amumu",";rammus;longgui;wangba;龙龟;王八;lamosi;拉莫斯;lms;lg;wb":";rammus",";anivia;bingniao;冰鸟;fenghuang;凤凰;ainiweiya;艾尼维亚;bn;fh;anwy":";anivia",";shaco;xiaochou;小丑;sake;萨科;xc;sk":";shaco",";youmi;yuumi;maomi;cat;mfmm;魔法猫咪;猫咪;魔法;悠米;ym;mm":";yuumi",";dr. mundo;mengduo;蒙多;zuan;祖安狂人;md;zakr":";dr. mundo",";samira;沙漠玫瑰;莎弥拉;shamila;desert rose;samila;shamomeigui;萨米拉;sml;smmg":";samira",";sona;qinnv;琴女;suona;娑娜;qinsexiannv;琴瑟仙女;sn;qn;qsxn":";sona",";kassadin;kasading;卡萨丁;xukong;虚空行者;xkxz;xukongxingzhe;ksd":";kassadin",";irelia;daomei;刀妹;airuiliya;艾瑞丽娅;daofengwuzhe;刀锋舞者;dm;arly;dfwz;女刀;nd;nvdao":";irelia",";twisted fate;tf;kapai;卡牌大师;cuisite;崔斯特;kp;kpds;kapaidashi;cst":";twisted fate",";janna;998;fengnv;风女;jiana;迦娜;fengbaozhinu;风暴之怒;fn;jn;fbzn":";janna",";gangplank;chuanzhang;船长;pulangke;普朗克;haiyangzhizai;海洋之灾;cz;plk;hyzz":";gangplank",";thresh;chuishi;锤石;hunsuodianyuzhang;魂锁典狱长;cs;hsdyz":";thresh",";corki;feiji;飞机;kuqi;库奇;yingyongtoudanshou;英勇投弹手;fj;kq;yytds":";corki",";illaoi;eluoyi;俄洛伊;haishoujisi;海兽祭司;chushouma;触手妈;大妈;dama;ely;hsjs;csm;dm":";illaoi",";rek'sai;leikesai;雷克塞;挖掘机;wajueji;xukongdundishou;虚空;lks;wjj;xkdds":";rek'sai",";ivern;艾翁;翠神;aiweng;cuishen;xiaoju;小菊;aw;cs;xj;xiaoshu;xs;小树":";ivern",";kalista;huabanxie;滑板鞋;kalisita;卡莉丝塔;fuchouzhimao;复仇之矛;hbx;klst;fczm":";kalista",";karma;shanzima;扇子妈;kaerma;卡尔玛;tianqizhe;天启者;kem;szm;tqz":";karma",";bard;bade;巴德;yinyoushiren;吟游诗人;xingjieyoushen;星界游神;bd;yysr;xjys":";bard",";taric;baoshi;宝石;talike;塔里克;waluolanzhidun;瓦洛兰之盾;tlk;bs;wllzd":";taric",";veigar;weijia;维迦;xieexiaofashi;邪恶小法师;wj;xiaofashi;小法师;xfs;xexfs;小法":";veigar",";trundle;jumo;巨魔;telangdeer;特朗德尔;tlde;jm":";trundle",";rakan;洛;幻翎;luo;huanling;fenghuangchuanqi;凤凰传奇;hl;fhcq":";rakan",";xayah;霞;逆羽;xia;niyu;fenghuangchuanqi;凤凰传奇;fhcq;ny":";xayah",";xin zhao;zhaoxin;赵信;xinye;信爷;zx;xy;debangzongguan;德邦总管;dbzg":";xin zhao",";swain;wuya;乌鸦;siweiyin;斯维因;nuokesasitongling;诺克萨斯统领;wy;swy;nksstl":";swain",";caitlyn;nvjing;女警;kaitelin;凯特琳;picheng;皮城;nj;ktl;pcnj;cupcake;xiaodangao;xdg;小蛋糕":";caitlyn",";ornn;奥恩;山隐之焰;aoen;shanyinzhiyan;ae;syzy;yang;羊":";ornn",";解脱者;sailasi;sls;jtz;jietuozhe;sylas;Unshackled;塞拉斯":";sylas",";nikou;neeko;wanhua;whtl;nk;妮蔻;万花通灵":";neeko",";efeiliusi;aphelios;the Weapon of Faith;canyuezhisu;厄斐琉斯;残月之肃;无E烦;wuefan;wuyifan;月男;yuenan;efls;cyzs;yn;wyf":";aphelios",";rell;ruier;芮尔;铁女;Iron Maiden;镕铁少女;re;rongtieshaonv;rtsn;tienv;tn;mamei;mm;马妹":";rell",";blitzcrank;jiqiren;机器人;bulici;布里茨;jqr;blc;zhengqi;蒸汽;zqjqr":";blitzcrank",";malphite;shitouren;石头人;mofeite;墨菲特;rongyanjushou;熔岩巨兽;str;mft;ryjs;ry":";malphite",";katarina;katelinna;卡特琳娜;buxiangzhiren;不祥之刃;卡特;kate;ktln;kt;bxzr":";katarina",";pyke;paike;派克;xuegangguiying;血港鬼影;pk;xggy":";pyke",";nocturne;mengyan;梦魇;moteng;魔腾;my;mt;夜曲;yequ;yq":";nocturne",";maokai;茂凯;dashu;大树;niuqushujing;扭曲树精;mk;ds;nqsj":";maokai",";renekton;eyu;鳄鱼;leikedun;雷克顿;huangmotufu;荒漠屠夫;lkd;hmtf":";renekton",";jarvan iv;huangzi;皇子;jiawensishi;嘉文四世;hz;jwss;dmxyhz;demaxiyahuangzi;德玛西亚皇子":";jarvan iv",";urgot;pangxie;螃蟹;ejiate;厄加特;wuweizhanche;无畏战车;ejt;dpx;px;大螃蟹;wwzc":";urgot",";elise;zhizhu;蜘蛛;yilisi;伊莉丝;zznh;女皇;yls":";elise",";orianna;fatiao;发条;aolianna;奥莉安娜;ft;alan;魔灵;ftml":";orianna",";wukong;悟空;houzi;猴子;qitiandasheng;齐天大圣;孙悟空;swk;wk;hz;qtds;sunwukong":";wukong;ngộ không",";brand;huonan;火男;bulande;布兰德;fuchouyanhun;复仇焰魂;bld;hn;fcyh":";brand",";lee sin;xiazi;盲僧;瞎子;mangseng;liqing;李青;xz;ms;lq":";lee sin",";vayne;uzi;weien;薇恩;anyelieshou;暗夜猎手;we;ayls":";vayne",";rumble;lanbo;兰博;jixiegongdi;机械公敌;lb;jxgd":";rumble",";cassiopeia;shenv;蛇女;kaxiaopeiya;卡西奥佩娅;moshezhiyong;魔蛇之拥;sn;kxopy;mszy":";cassiopeia",";leblanc;yaoji;妖姬;lefulan;乐芙兰;yj;lfl;诡术妖姬;guishu;gsyj":";leblanc",";vex;gloomist;薇古丝;愁云使者;vgs;cysz;wgs;weigusi;veigusi;chouyunshizhe;aybb;aoyebobi;熬夜波比":";vex",";skarner;xiezi;蝎子;sikana;斯卡纳;shanggulingzhu;上古领主;xz;skn;sglz":";skarner",";heimerdinger;datou;大头;dafamingjia;大发明家;heimodingge;黑默丁格;dt;dmmj;hmdg;famingjia;fmj;发明家":";heimerdinger",";nasus;goutou;狗头;neisesi;内瑟斯;shamosishen;沙漠死神;nss;gt;smss":";nasus",";nidalee;naidali;奶大力;baonv;豹女;naideli;奈德丽;kuangyenvlieshou;狂野女猎手;ndl;bn;kynls":";nidalee",";udyr;wudier;乌迪尔;shoulingxingzhe;兽灵行者;ud;wde;slxz;xiaoyan;xy;萧炎;野区萧炎;yequxiaoyan;yqxy":";udyr",";yone;永恩;封魔剑魂;yongen;fengmojianhun;fmjh;ye":";yone",";poppy;bobi;波比;圣锤之毅;shengchuizhiyi;bb;sczy":";poppy",";gragas;jiutong;酒桶;gulajiasi;古拉加斯;gljs;jt":";gragas",";ambessa;anbeisa;tiexielangmu;tiexuelangmu;txlm;abs;安蓓萨;铁血狼母;狼母;langmu;lm":";ambessa",";vladimir;xixuegui;吸血鬼;fulajimier;弗拉基米尔;xinghongshougezhe;猩红收割者;xxg;fljme;xhsgz":";vladimir",";pantheon;pansen;潘森;sibada;斯巴达;buquzhiqiang;不屈之枪;ps;bqzq":";pantheon",";mel;jingyingliuguang;meier;梅尔;me;镜影流光;jylg;流光镜影;liuguangjingying;lgjy":";mel",";yunana;芸阿娜;不破之誓;the Unbroken Faith;yan;yunara;bupozhishi;bpzs":";yunara",";locke;灰烬驱魔人;洛克;the Ashen Exorcist;hjqmr;huijinqumoren;luoke;lk":";locke",";ezreal;ez;yize;伊泽;tanxianjia;探险家;yz;txj;yizeruier;伊泽瑞尔;yzre":";ezreal",";mordekaiser;tienan;铁男;modekaisa;莫德凯撒;tiekaiminghun;铁铠冥魂;mdks;jsds;jinshudashi;金属大师;modeganqing;莫得感情;tn;mdgq;tkmh":";mordekaiser",";yorick;yuelike;约里克;juemu;掘墓;muhunren;牧魂人;ylk;jm;mhr":";yorick",";akali;阿卡丽;liqunzhici;离群之刺;akl;lqzc":";akali",";kennen;kainan;凯南;dianhaozi;电耗子;kuangbaozhixin;狂暴之心;kn;kbzx":";kennen",";garen;gailun;盖伦;德玛西亚之力;demaxiyazhili;gl;dmxyzl":";garen",";seti;sett;the Boss;瑟提;st;腕豪;wh;wanhao;男拳;nanquan;nq":";sett",";莉莉娅;liliya;hxbl;hanxiubeilei;lillia;含羞;蓓蕾;妮马;蔻马;nima;kouma;鹿女;lunv;梦鹿;menglu;beilei;lly":";lillia",";gwen;gewen;the Hallowed Seamstress;灵罗娃娃;格温;gw;llww;lingluowawa;剪子妈;jianzima;jzm;剪妹;jianmei;jm;一剪没;yijianmei;yjm;滚;gun":";gwen",";lienata;lnt;lianjinnanjue;ljnj;renata;chemtech;baroness;烈娜塔;炼金男爵;glsk;gelasike;戈拉斯克;glasc":";renata glasc",";leona;nvtan;rinv;女坦;日女;leiouna;蕾欧娜;shuguangnvshen;曙光女神;lon;rn;nt;sgns":";leona",";阿萝拉;aluola;aurora;双界灵兔;shuangjielingtu;sjlt;all;兔女;tunv;tn;tuzi;tz;兔子":";aurora",";nila;nilah;the Joy Unbound;尼菈;nl;不羁之悦;bujizhiyue;bjzy":";nilah",";k'sante;kuisangti;kst;nazumangrongyao;nzmry;奎桑提;纳祖芒荣耀":";k'sante",";fiddlesticks;daocaoren;稻草人;feidetike;费德提克;yuangukongju;远古恐惧;dcr;fdtk;ygkj":";fiddlesticks",";malzahar;mazha;蚂蚱;maerzhaha;玛尔扎哈;xukongxingzhe;虚空先知;mezh;mz;xkxz":";malzahar",";simode;smolder;youlong;long;chiyan;chulong;chiyanchulong;炽;龙;炽炎雏龙;斯莫德;smd;cycl;yl;幼龙;xiaolongren;xlr;小龙人;小火龙;xiaohuolong;xhl;mabaolong;mbl;妈宝龙":";smolder",";milio;the gentle flame;mingzhu;miliou;mlo;mz;米利欧;明烛":";milio",";zaahen;The Unsundered;不落魔锋;亚恒;yaheng;buluomofeng;yh;blmf":";zaahen",";talon;nandao;男刀;tailong;泰隆;daofengzhiying;刀锋之影;tl;nd;df":";talon",";hwei;彗;hui;yihuashi;the Visionary;huajia;画家;异画师;yhs;hj;maobiren;mbr;毛笔人":";hwei",";riven;ruiwen;锐雯;fangzhuzhiren;放逐之刃;rw;fzzr":";riven",";naafiri;the Hound of a Hundred Bites;纳亚菲利;百裂冥犬;nayafeili;nyfl;bailiemingquan;blmq;gou;狗;dog":";naafiri",";kog'maw;dazui;大嘴;kegemo;克格莫;shenyuanjukou;深渊巨口;kgm;dz;shenyuanjukou;syjk":";kog'maw",";shen;慎;muguangzhiyan;暮光之眼;yaozi;腰子;mgzy;yz":";shen",";lux;lakesi;拉克丝;guanghuinvlang;光辉女郎;lks;ghnl":";lux","见习刺客":"Du Côn","初级刺客":"Thợ Săn","中级刺客":"Sát Nhân","高级刺客":"Thần Chết","杀戮之影":"Kẻ Đồ Sát","杀戮宗师":"Kẻ Hành Quyết","死神":"Vua Tử Thần","见习战士":"Quyền Thủ","初级战士":"Võ Biền","中级战士":"Chiến Binh","高级战士":"Cựu Binh","征服之刃":"Kẻ Hủy Diệt","征服宗师":"Kẻ Hiếu Chiến","战神":"Chiến Tướng","见习法师":"Tập Sự","初级法师":"Thầy Pháp","中级法师":"Thầy Nguyện","高级法师":"Phù Thủy","织法之杖":"Ma Đạo Sĩ","织法宗师":"Pháp Sư","法神":"Đại Pháp Sư","见习射手":"Học Việc","初级射手":"Truy Tung","中级射手":"Trinh Sát","高级射手":"Biệt Kích","鹰隼之眼":"Thám Tử","射击宗师":"Xạ Thủ","狙神":"Xạ Thủ","见习辅助":"Phụ Tá","初级辅助":"Hộ Vệ","中级辅助":"Lính Canh","高级辅助":"Cảnh Binh","庇护之光":"Vệ Binh","庇护宗师":"Hộ Pháp","守护之神":"Giám Sát","见习坦克":"Tay Mơ","初级坦克":"Đấu Sĩ","中级坦克":"Đấu Sư","高级坦克":"Hành Pháp","无畏之盾":"Tàn Bạo","无畏宗师":"Khổng Nhân","巨神":"Dũng Sĩ","登录失败，请重试。":"Sai tên tài khoản hoặc mật khẩu. Vui lòng nhập lại.","一个意料之外的错误发生了":"Gặp lỗi không xác định","所有角色定位":"Mọi vị trí","刺客":"Sát Thủ","战士":"Đấu sĩ","法师":"Pháp Sư","射手":"Xạ thủ","辅助":"Hỗ Trợ","坦克":"Đỡ Đòn","错误代码":"Mã lỗi","我们无法加载这个页面。如果你的互联网连接没问题的话，请稍等几分钟然后重试。":"Chúng tôi không thể tải trang này. Nếu mạng của bạn vẫn ổn, hãy thử đợi một vài phút và thử lại.","重试":"Thử Lại","{{feature}}目前已被禁用":"{{feature}} hiện đang tạm khóa","这个功能目前已被禁用":"Tính năng này hiện đang tạm khóa","暂未实装":"Hiện chưa có","创建房间":"TẠO PHÒNG","退出":"Rời trận","对水晶之痕的简短描述。":"Vài lời về Crystal Scar","和随机选择英雄的队友一起，去摧毁敌人的水晶枢纽。":"Chiến đấu trong một đội gồm năm tướng được chọn ngẫu nhiên để bảo vệ cây cầu và chiếm lấy Nexus đối phương.","正义之地最古老最威严的战场当属召唤师峡谷。几百年间无数对立的召唤师们在这片战场上延续着战斗，这片战场也因此而得名。有三条不同的道路穿越整个战场。与友军一起攻击敌人最脆弱的地方，摧毁他们的基地！":"Chiến trường công lí cổ xưa và thiêng liêng nhất được biết đến với cái tên Summoner's Rift. Rift tọa lạc trên một khu rừng xa xôi, nằm giữa Freljord, con sông Serpentine và đỉnh Ironspike.","对扭曲丛林的简短描述。":"Vài lời miêu tả về bản đồ Khu Rừng Quỷ Dị","水晶之痕":"Crystal Scar","水晶\n之痕":"CƯỚP\nCỜ","已被禁用，并在维修中。我们对此带来的不便深表歉意。":"đã tạm khóa lại để bảo trì. Mong các bạn thông cảm cho sự cố này.","嚎哭深渊":"Vực Gió Hú","嚎哭\n深渊":"VỰC\nGIÓ HÚ","召唤师峡谷":"Summoner's Rift","召唤师\n峡谷":"SUMMONER'S RIFT","扭曲丛林":"Khu Rừng Quỷ Dị","扭曲\n丛林":"KHU RỪNG\nQUỶ DỊ","创建自定义游戏":"Tạo trận","这个模式目前已被禁用":"Chế độ này đang tạm khóa","加入自定义游戏":"Tham gia trận","匹配模式":"Đấu Thường","排位赛":"Xếp Hạng","新手教程":"Đấu Luyện","人机":"Đấu với Máy","极地大乱斗":"ARAM","全随机（极地大乱斗）1v1":"Tất cả Ngẫu nhiên (ARAM) 1 đấu 1","全随机（极地大乱斗）2v2":"Tất cả Ngẫu nhiên (ARAM) 2 đấu 2","全随机（极地大乱斗）3v3":"Tất cả Ngẫu nhiên (ARAM) 3 đấu 3","全随机（极地大乱斗）5v5":"Tất cả Ngẫu nhiên (ARAM) 5 đấu 5","全随机（极地大乱斗）6v6":"Tất cả Ngẫu nhiên (ARAM) 6 đấu 6","全随机人机对战（极地大乱斗）5v5":"Tất cả Ngẫu nhiên, Đánh với Máy (ARAM) 5 đấu 5","统治战场5v5":"Cướp Cờ 5v5","极地大乱斗5v5":"ARAM 5v5","经典模式5v5":"Thường 5v5","经典模式3v3":"Thường 3v3","全随机（大乱斗）":"Tất Cả Ngẫu Nhiên (ARAM)","内部服务器错误，请稍后重试":"Máy chủ hiện đang gặp lỗi, xin hãy thử lại sau","你已经与新闻服务断开了连接。请手动重新连接。":"Bạn đã bị mất kết nối với dịch vụ. Vui lòng tự kết nối thủ công.","经常使用":"Chơi Thường Xuyên","确认":"OK","是":"Có","否":"Không","接受":"ĐỒNG Ý","拒绝":"TỪ CHỐI","最终用户许可协议":"THỎA THUẬN NGƯỜI DÙNG","使用条款":"ĐIỀU KHOẢN SỬ DỤNG","取消":"Hủy bỏ","授予邀请":"Cho phép người chơi này mời người chơi khác","移出玩家":"Đá khỏi phòng","提升为队长":"Nhượng quyền chủ phòng cho người chơi này","撤回邀请":"Thu hồi quyền mời của người chơi này","通过拖动来邀请玩家。":"Kéo để mời.","寻找对局":"TÌM TRẬN","阻塞":"Khóa","邀请":"Mời Bạn","添加":"Thêm","邀请玩家":"Mời người chơi","发送邀请":"Gửi lời mời","输入玩家名称":"Nhập tên người chơi","已邀请":"Đã được mời","你真的想移出{{summonerName}}吗？":"Bạn có thực sự muốn đá người chơi {{summonerName}} ra khỏi phòng?","你已被移出了组房间":"Bạn đã bị đá ra khỏi phòng chờ.","与你的好友一起玩，你就会获得组队奖励！更多好友组队意味着更多战利品，所以快去组队吧！":"Bằng cách chơi cùng bạn bè, bạn sẽ nhận được Thưởng Nhóm! Càng nhiều bạn bè, bạn sẽ càng được thưởng nhiều, lập đội thôi nào!","组队奖励":"THƯỞNG THEO NHÓM","与你的好友一起玩来获得蓝色精萃奖励！更多好友组队意味着更多战利品！":"Nhận thêm IP bằng cách chơi cùng bạn bè. Càng nhiều bạn, càng được thưởng nhiều!","快组队吧！":"LẬP ĐỘI!","待定":"Đang đợi","已推荐":"Gợi ý","<span class='click-instruction'>点击以添加{{pointsAssignedOnClick}}点。</span><span class='click-instruction'>按住SHIFT键点击以添加1点。</span>":"<span class='click-instruction'>Nhấp chuột để cộng {{pointsAssignedOnClick}} điểm.</span><span class='click-instruction'>Shift + nhấp chuột để cộng một điểm.</span>","<span class='click-instruction'>点击以添加1点。</span>":"\t\n<span class='click-instruction'>Nhấp chuột để cộng một điểm.</span>","下个点数":"Điểm Tiếp Theo","无法在服务器上创建一个天赋页。也许是因为连接问题。":"Tạo bảng bổ trợ trên máy chủ thất bại. Có thể có lỗi kết nối.","添加新的天赋页":"Tạo bảng bổ trợ mới","天赋页{{number}}":"Bảng bổ trợ {{number}}","你确定想要删除该页吗？":"Bạn có chắc là muốn xóa trang này?","删除天赋页":"Xóa bảng bổ trợ","编辑天赋页名称":"Đổi tên bảng bổ trợ","可用点数：{{number}}":"Điểm hiện có: {{number}}","重置此天赋页的点数":"Hồi điểm trong bảng này","重置此天赋树的点数":"Hồi điểm trong nhánh này","点击这里来保存你对天赋页的所有改动。":"Nhấn để lưu mọi thay đổi bảng bổ trợ","由于连接失败，无法保存天赋页面。":"Không thể lưu bảng bổ trợ do lỗi kết nối.","保存":"LƯU","你的天赋有尚未保存的改动。你想要保存吗？":"Bạn còn các thay đổi bảng bổ trợ chưa lưu. Bạn có muốn lưu lại không?","需要在<span class='mastery-type'>{{type}}</span>至少分配{{ranks}}点":"Yêu cầu {{ranks}} điểm trong <span class='mastery-type'>{{type}}</span>","需要在{{prereq}}至少分配{{ranks}}点":"Yêu cầu {{ranks}} điểm ở {{prereq}}","剩余{{pointsLeft}}点数":"Còn {{pointsLeft}} điểm","诡诈":"KHÉO LÉO","凶猛":"CUỒNG BẠO","坚决":"KIÊN ĐỊNH","诡诈系":"Khéo Léo","凶猛系":"Cuồng Bạo","坚决系":"Kiên Định","房间":"Tổ Đội","藏品":"Bộ Sưu Tập","冠军杯赛":"Clash","电竞":"Giải đấu","主页":"Trang chủ","经典模式":"Cổ Điển","战利品/圣堂":"Báu Vật","新闻":"Tin tức","云顶之弈":"ĐTCL","幸运商店":"Cửa Hàng Cá Nhân","生涯":"Hồ sơ","商城":"Cửa hàng","海斗第3季":"Hỗn Loạn Mùa 3","更多信息":"THEM THÔNG TIN","检测到必要更新":"Phát hiện yêu cầu cập nhật","你的网络连接出问题了。如果你目前还没有连接上互联网，请先连接互联网。如果你已经连上互联网了但无法连接上《英雄联盟》，请查阅我们的<a href=\"https://support-leagueoflegends.riotgames.com/hc/articles/201752664\" target='_blank'>客服信息</a>来看看是否有可行的解决方案。":"Đã có lỗi xảy ra với đường truyền của bạn. Vui lòng kiểm tra và kết nối với internet nếu thiết bị của bạn đang ngoại tuyến. Nếu bạn đã kết nối mà không thể vào Liên Minh Huyền Thoại, vui lòng ghé <a href=\"https://support-leagueoflegends.riotgames.com/hc/articles/201752664\" target='_blank'>trang hỗ trợ</a> của chúng tôi để tìm giải pháp phù hợp.","好的":"Đồng ý","我们复原了一个较旧版本的《英雄联盟》。现在我们将尝试把它更新为最新版本。":"Chúng tôi đã khôi phục lại phiên bản cũ của Liên Minh Huyền Thoại. Giờ chúng tôi sẽ tiếp tục cập nhật lên phiên bản mới nhất.","{{megabytes}} MB / {{kilobytes_per_second}} KB/秒":"{{megabytes}} MB / {{kilobytes_per_second}} KBps","在你安装目录下的文件权限正在阻止《英雄联盟》的安装。请按“OK”键，然后我们将尝试唤起你的操作系统的权限管理器。":"Hệ thống cái đặt trong máy tính bạn đang ngăn League cài đặt game. Làm ơn nhấn 'Hiểu' và chúng tôi sẽ thử thúc đẩy hệ thống cho phép cài đặt.","在连接至服务器时出问题了。请检查你的网络连接并重启补丁器。如果你的网络连接没有问题，请联系客服进行处理。":" Đã có lỗi xảy ra khi kết nối tới máy chủ. Vui lòng kiểm tra lại đường truyền mạng và khởi động lại trình cập nhật. Nếu nguyên nhân không phải do kết nối internet của bạn, vui lòng làm theo các bước khắc phục sự cố kết nối tại <a href=\"https://support-leagueoflegends.riotgames.com/hc/articles/201752664\" target='_blank'>trang hỗ trợ</a> của chúng tôi.","补丁器无法下载内容至你的硬盘。请检查下你的电脑，至少需要8GB的空闲容量和写入硬盘的必要权限才能安装《英雄联盟》。你可以联系我们的客服来获取更多有关这个错误的帮助。*注意*：点击“是”将关闭客户端。":"Không thể tải bản cập nhật về ổ cứng của bạn. Lỗi này thường xảy ra khi ổ đĩa của bạn không còn đủ dung lượng trống để tải xuống. Vui lòng đảm bảo máy tính của bạn có ít nhất 8 GB dung lượng trống trên ổ đĩa cài đặt LMHT và bạn có đủ quyền để ghi dữ liệu vào ổ cứng đó. Để được hỗ trợ thêm với lỗi này, vui lòng xem các bước khắc phục sự cố <a href=\"https://support-leagueoflegends.riotgames.com/hc/articles/202969434\" target='_blank'>tại đây</a>. Lưu ý: Client sẽ đóng khi bạn nhấn vào \"OK\".","我们的服务器出故障了，并且在阻止你下载补丁内容。我们正在给服务器另一次机会。你可以<a href=\"http://lol.qq.com/act/a20150326dqpd/\" target='_blank'>点此</a>查看我们的服务器状态。":"Có gì đó xảy ra với máy chủ khiến bạn không thể vá lỗi. Chúng tôi đang thử lại. Trong lúc đó, bạn có thể kiểm tra tình trạng dịch vụ tại <a href=\"http://status.leagueoflegends.com\" target='_blank'>đây</a>.","《英雄联盟》无法更新，因为你没有足够的硬盘空间。请至少释放{{Bytes}}空间然后重试。":"Không thể cập nhật Liên Minh do không đủ ổ trống. Vui lòng dọn bớt ít nhất {{Bytes}} và thử lại.","补丁更新失败，并且我们不确定原因是什么。请重启客户端并重试补丁更新。":"Vá lỗi thất bại vì nguyên nhân chưa rõ. Vui lòng khởi động lại client để thử vá lỗi lại.","预计用时 {{number}}分钟":"Ước tính {{number}} phút","好":"Đồng ý","文件无法写入硬盘。请检查你是否有足够的磁盘空间和必要的许可。":"Không thể ghi tệp tin vào ổ đĩa. Vui lòng kiểm tra xem bạn có đủ vùng trống và được cấp các quyền cần thiết không.","已修复档案：{{number}}":"Tệp đã sửa: {{number}}","已扫描的文件：{{number}}":"Số file đã kiểm tra: {{number}}","联盟客户端":"CLIENT Liên Minh Huyền Thoại","游戏客户端":"CLIENT","我们的服务器发生了些状况，导致你无法从服务器中获得更新文件。我们正在对服务器进行停机维护。在维护时，你可以在这里查看我们的服务器状态。":"Có lỗi xảy ra về phần máy chủ của chúng tôi khiến bạn không thể cập nhật. Chúng tôi sẽ tìm cách khắc phục sớm. Vui lòng ấn vào đây để theo dõi tình trạng máy chủ.","这个错误也许由以下现网内部事故导致：":"Những sự cố sau có thể gây ra lỗi:","我们已经将这个安装程序恢复至一个较早的《英雄联盟》版本、现在我们将尝试将它更新至最新版本。":"Chúng tôi đã khôi phục cài đặt về một phiên bản Liên Minh Huyền Thoại cũ hơn. Giờ chúng tôi sẽ thử cập nhật lên phiên bản mới nhất.","正在应用版本补丁":"Đang cài đặt phiên bản","正在下载文件":"Đang tải tập tin","正在提取所需的版本数据":"Kiến tạo dữ liệu cần thiết để cập nhật.","正在安装":"Đang cài đặt","正在下载":"Đang tải","正在修复":"ĐANG SỬA","正在扫描":"ĐANG KIỂM TRA","修复":"Sửa chữa","抱歉！我们在你的安装过程中检测到一些数据损坏。你想要修复受损的文件么？":"Chúng tôi tìm thấy có vài dữ liệu bị hỏng trong bộ cài đặt của bạn. Bạn có muốn sửa các dữ liệu này?","更新已完成下载。你必须重启客户端才能让更新生效。":"Cập nhật đã được tải về. Vui lòng khởi động lại game trước khi các cập nhật được áp dụng.","现在还不行":"Chưa phải lúc này","重新启动":"Khởi động lại","第{{current_step}}步（共{{total_steps}}步）":"Bước {{current_step}} trên tổng số {{total_steps}}","更新失败，而我们不确定是什么原因。点击我们的客服页面{{support page}}来查找可能的解决方法。":"Cập nhật thất bại. Vui lòng truy cập {{support page}} để tham khảo biện pháp khắc phục.","正在更新……":"Đang cập nhât…","在更新《英雄联盟》时出现了一个问题。我们正在复原《英雄联盟》的备份版本，并会在你重新启动后再次尝试":"Đã có lỗi cập nhật. Chúng tôi sẽ khôi phục lại phiên bản LMHT cũ và thử lại sau khi bạn khởi động lại.","游戏仍在进行中…":"Trận đấu hiện đang diễn ra","全随机":"Tât Cả Ngẫu nhiên","跳过等待，直接开始下一局游戏。":"Bỏ qua chờ thông tin trận đấu","开始游戏":"Bắt đầu trận","可用":"Trực tuyến","剩余1日":"Còn 1 ngày","剩余{{days}}天":"Còn lại {{days} ngày","金币加成":"TĂNG IP","网吧特权加成":"Tăng điểm Trung thành","下一个奖励的进度":"PHẦN THƯỞNG KẾ TIẾP VÀO","下一次重随的进度":"CƠ HỘI KẾ TIÉP","没有激活加成":"Không có Tăng điểm nào hiện tại","剩余1胜":"Còn 1 trận thắng","剩余{{wins}}胜场":"Còn lại {{wins} trận thắng","双倍经验卡":"TĂNG KINH NGHIỆM","记分板":"BẢNG ĐIỂM","下一个":"Kế tiếp","失败":"THẤT BẠI","第二名":"THỨ 2","第1名":"Đầu tiên","蓝色精萃":"THL","全员战斗加成蓝色精萃已获得":"THL KHÍCH LỆ CHIẾN ĐẤU NHẬN ĐƯỢC","蓝色精萃加成":"TĂNG THL","当天首次胜利":"TRẬN THẮNG ĐẦU TIÊN TRONG NGÀY","蓝色精萃获取":"THL NHẬN ĐƯỢC","特权加成蓝色精萃已获取":"THL KHÍCH LỆ TRUNG THÀNH NHẬN ĐƯỢC","统治战场蓝色精萃加成":"THƯỞNG THL CƯỚP CỜ","小队奖励蓝色精萃加成已获得":"THƯỞNG THL TỔ ĐỘI NHẬN ĐƯỢC","排队加成已获取":"PHẦN THƯỞNG NHẬN ĐƯỢC","逃兵":"BỎ CUỘC","等级":"CẤP ĐỘ","此负场不作记录":"KHÔNG TÍNH THUA","加成点数":"Điểm tăng thêm","点数获取":"Điểm kiếm được","总计：":"Tổng:","胜利":"CHIẾN THẮNG","点数":"ĐIỂM","总经验":"TỔNG KINH NGHIỆM","特权加成经验已获取":"TĂNG KINH NGHIỆM TRUNG THÀNH NHẬN ĐƯỢC","经验已获取":"KINH NGHIỆM NHẬN ĐƯỢC","还需{{points}}点即可到达{{level}}级":"{{points}} điểm để đạt cấp độ {{level}}","重新连接":"Kết nối lại","游戏已经结束。你现在将返回主页。":"Trận đấu đã kết thúc. Bạn sẽ được chuyển về trang chính.","您中途退出游戏，\n请重新连接。":"Bạn đã rời khỏi một trận đấu. Hãy kết nối lại.","添加好友":"Thêm Bạn","首页":"TRANG CHỦ","再玩一次":"CHƠI LẠI","审核用的举报已经发送。感谢您的反馈。":"Tố cáo đã được gửi để xem xét. Cảm ơn bạn.","你已经用完了所有可用的奖励。":"Bạn đã sử dụng hết số lần vinh danh.","确定":"OK","北":"Bắc","队伍2":"ĐỘI 2","南":"Nam","队伍1":"ĐỘI 1","查看高级详情":"XEM THÔNG TIN CHI TIẾT","附加评论":"Nhận xét Thêm","给敌方放水":"Hỗ trợ cho Đối thủ","在这里输出评论":"Điền nhận xét tại đây","不当的用户名":"Tên không hợp lệ","故意送人头":"Cố tình chết","挂机":"Rời trận / AFK","消极态度":"Thái độ tiêu cực","不与团队进行沟通":"Không giao tiếp với đồng đội","攻击性的语言":"Ngôn từ không chuẩn mực","举报":"TỐ CÁO","举报玩家":"Tố cáo người chơi","滥发信息":"Spam tin nhắn","无法举报这个玩家。请稍后再试。":"Không thể báo cáo người chơi này. Vui lòng thử lại sau.","玩家水平过低":"Người chơi không có kĩ năng","口头谩骂":"Ngôn ngữ Lăng mạ","态度友好":"Thân thiện","乐于助人":"Tốt bụng","可敬的对手":"Đối thủ đáng kính","无法称赞这个玩家。请稍后再试。":"Không thể vinh danh người chơi này. Vui lòng thử lại sau.","团队合作":"Đồng đội","助攻":"Hỗ trợ","英雄击杀":"Hạ gục","死亡":"Chết","金币获取":"Vàng kiếm được","小兵击杀":"Lính tiêu diệt","该局总分":"Điểm Chơi","召唤师等级：":"Cấp người chơi","加成":"Tăng điểm","你确定要从英雄选择阶段离开吗？":"Bạn có chắc muốn rời quá trình chọn tướng?","一位玩家秒退了；你已经回到了房间。":"Moột người chơi đã thoát trận, bạn đã được chuyển về sảnh chờ.","敌方队伍":"Đội đối phương","你有{{rerolls}}个可用的英雄重随机会。":"Bạn còn {{rerolls}} lần đổ xí ngầu.","这个召唤师技能已被禁用。":"Phép này bị vô hiệu.","等级需求：{{level}}":"BỊ KHÓA ĐẾN CẤP  {{level}}","{{actor}}正在和其他人交换":"{{actor}} đang trao đổi với người khác.","这个交换已被取消。":"Trao đổi đã bị từ chối.","交换已被拒绝。":"Giao dịch này đã bị từ chối.","还不能发出交换请求。请重试。":"Không thể yêu cầu trao đổi. Vui lòng thử lại","{{actor}}想要用{{entity1}}交换{{entity2}}。":"Người chơi {{actor}} muốn trao đổi {{entity1}} lấy {{entity2}}.","用{{entity1}}交换{{entity2}}。":"Đổi {{entity1}} lấy {{entity2}}.","正在等待{{actor}}回应你的交换请求……":"Đang đợi người chơi {{actor}} đồng ý trao đổi với bạn.","己方队伍":"Đội của bạn","接受！":"CHƠI LUÔN!","{{summonerName}}在英雄选择时离开。你已重新回到房间。":"{{summonerName}} đã rời trận trong quá trình chọn tướng. Bạn đã được đưa trở lại sảnh chờ.","一名玩家在英雄选择时离开。你已重新回到房间。":"Một người chơi đã rời trận trong quá trình chọn tướng. Bạn đã được đưa trở lại hàng chờ.","对局已找到":"TÌM THẤY TRẬN","准备战斗":"CHUẨN BỊ VÀO TRẬN","对局已接受":"CHẤP NHẬN TRẬN ĐẤU","对局已拒绝":"TỪ CHỐI TRẬN ĐẤU","正在等待其他玩家":"CHỜ NGƯỜI CHƠI KHÁC","符文页{{number}}":"Trang Ngọc Bổ Trợ số {{number}}","选择全部":"Chọn Tất cả","都不选择":"Bỏ chọn Tất cả","选择玩家来解除聊天黑名单，然后点击保存。":"Chọn người chơi bạn muốn bỏ chặn, rồi nhấn vào lưu.","按字母顺序排列":"Theo thứ tự bảng chữ cái","开启语言过滤器":"Kích hoạt tính năng lọc ngôn ngữ","启动链接警告":"Hiển thị các cảnh báo đường dẫn","在线状态":"Trạng thái trực tuyến","好友列表的排列顺序：":"Phân loại danh sách bạn bè theo tiêu chí:","启动菜单动画":"Hiển thị các hoạt cảnh trình đơn","启动警告弹窗":"Hiển thị các thông báo hiện lên","聊天黑名单":"Danh sách chặn","聊天&好友":"Chat & Bạn bè","恢复默认设置":"Cài đặt Mặc định","你确定要将所有选项重置为默认设置吗？":"Bạn có chắc chắn muốn thiết lập lại các tùy chọn của mình về các thiết lập mặc định?","综合":"Tổng quát","键位绑定":"Gán phím tắt","选项":"Tùy chọn","全部恢复默认设置":"Khôi phục tất cả về mặc định","声音":"Âm thanh","如果你的《英雄联盟》出了什么毛病，就点击下方的修复按钮来搞定它吧！警告：这个操作会耗费很长一段时间。":"Nếu có điều gì không ổn với client của bạn, bấm vào nút Sửa chữa phía dưới để sửa lỗi! Chú ý: việc này sẽ tốn khá nhiều thời gian.","你真的想要修复吗？它会耗费很长一段时间！":"Bạn có thực sự muốn sửa chữa? Việc này sẽ tốn khá nhiều thời gian","英雄选择界面的音乐音量":"Âm lượng khi chọn tướng","启动英雄选择界面的音乐":"Hiển thị âm thanh khi chọn tướng","启动登陆音乐":"Hiển thị âm thanh khi đăng nhập","启动音效":"Hiển thị các hiệu ứng âm thanh","音效音量":"Âm lượng các hiệu ứng âm thành","关闭登录动画":"Tắt hiệu ứng","关闭登录音效":"Tắt nhạc","选择":"Chọn","传说之证 边框":"Khung Hàng Hiệu","排位边框":"Khung Xếp Hạng","展示往届排位旗帜":"Hiện Cờ Hiệu Hạng Cũ","无法保存。请稍后重试。":"Không thể lưu. Xin thử lại sau.","已选择":"Đã chọn","当前不可用。":"Hiện không khả dụng.","进行排位赛以解锁！":"Chơi xếp hạng để mở khóa!","保存中":"Đang lưu","选择一个召唤师图标":"Chọn biểu tượng anh hùng","召唤师图标&边框选择器":"Bộ chọn Biểu tượng & Khung","无法保存你的选择。":"Không thể lưu lựa chọn.","屏障":"Lá Chắn","为你的英雄套上护盾，吸收115-455（取决于英雄等级）点伤害，持续2秒。":"Tạo lớp bảo hộ tạm thời giúp chặn 115-455 sát thương (dựa trên cấp của tướng) khỏi tướng của bạn trong 2 giây.","洞察":"Thiên Lý Nhãn","将地图上任意一块区域暴露给你的队伍，持续5秒。":"Soi sáng một khu vực nhỏ trên bản đồ của bạn cho đồng đội cùng thấy trong 5 giây (sử dụng được ở bất cứ đâu).","清晰术":"Minh Mẫn","为你的英雄回复40%的最大法力值。也会为友军回复他们40%的最大法力值":"Hồi lại 40% năng lượng tối đa của bạn. Các đồng minh xung quanh cũng được hồi lại 40% năng lượng tối đa của họ.","净化":"Thanh Tẩy","移除身上的所有限制效果和召唤师技能的减益效果，并且若在接下来的3秒里再次被施加限制效果时，新效果的持续时间会减少65%。":"Loại bỏ các trạng thái vô hiệu hóa và bùa hại từ phép bổ trợ trên tướng của bạn đồng thời giảm thời gian hiệu lực của các trạng thái vô hiệu hóa mới bồi thêm vào đi 65% trong 3 giây kế tiếp.","虚弱":"Kiệt Sức","虚弱目标敌方英雄，降低目标英雄30%的移动速度和攻击速度，以及10护甲与魔法抗性，并且他们所造成的伤害减少40%，持续2.5秒。":"Buộc một tướng đối phương rơi vào trạng thái kiệt quệ, giảm Tốc độ Di chuyển và Tốc độ Tấn Công gây ra của mục tiêu đi 40% trong 2.5 giây, giảm giáp và kháng phép đi 10, và giảm Sát thương gây ra đi 40% trong thời gian hiệu lực.","闪现":"Tốc Biến","使英雄朝着你的指针所停的区域瞬间传送一小段距离。":"Dịch chuyển tướng của bạn đi một khoảng cách nhỏ hướng đến vị trí con trỏ.","卫戍部队":"Kiên Cố","友方防御塔：提供巨量回复，持续8秒。敌方防御塔：降低伤害输出，持续8秒":"Trụ Đồng minh: Tăng mạnh tốc độ hồi phục và Tốc độ Đánh trong 8 giây. Trụ Đối phương: Giảm sát thương gây ra đi 80% trong 8 giây.","幽灵疾步":"Tốc Hành","你的英雄在移动时会无视单位的碰撞体积，移动速度增加27%，持续10秒。":"Bạn có thể chạy xuyên vật thể và được tăng 27% tốc độ di chuyển trong 10 giây.","治疗术":"Hồi Máu","为你和目标友军英雄回复95-345（取决于英雄等级）生命值，并为你和目标友军英雄提供30%移动速度加成，持续1秒。若目标近期已受到过其它治疗术的影响，则治疗术对目标产生的治疗效果减半。":"Hồi 90-345 Máu (dựa trên cấp tướng) và tăng 30% tốc độ di chuyển trong 1 giây cho bạn và các tướng đồng minh được ảnh hưởng. Số máu hồi phục giảm một nửa đối với các đơn vị vừa chịu ảnh hưởng của phép Hồi Máu.","引燃":"Thiêu Đốt","引燃是对单体敌方目标施放的持续性伤害技能，在5秒的持续时间里造成70-410（取决于英雄等级）真实伤害，获得目标的视野，并减少目标所受的治疗和回复效果。":"Thiêu Đốt tướng địch, gây 70-410 sát thương chuẩn (dựa trên cấp tướng) trong 5 giây, cho bạn tầm nhìn với mục tiêu, và giảm hiệu ứng hồi máu của hắn trong thời gian tác dụng.","标记":"Ngọc Đỏ","沿直线扔出一个雪球。如果雪球命中了一个敌人，那么这个敌人会被【标记】，并且你的英雄接下来可以快速突进到被【标记】的目标旁边。":"Ném một quả bóng tuyết theo đường thẳng vào kẻ địch. Nếu trúng, hắn bị đánh dấu và bạn có thể nhanh chóng di chuyển đến mục tiêu bị đánh dấu.","魄罗投掷":"Ném Poro","把一个魄罗投向你的敌人。如果它命中了一名敌人，那么你接下来就可以快速位移到被命中的敌人旁边。":"Ném Poro vào kẻ địch. Nếu trúng, sau đó bạn có thể nhanh chóng di chuyển đến mục tiêu. ","重生":"Hồi Sinh","立刻在本队的召唤师平台上复活你的英雄，并暂时提升英雄的移动速度。":"Ngay lập tức hồi sinh tướng của bạn tại căn cứ và tăng tốc độ di chuyển trong thời gian ngắn.","惩戒":"Trừng Phạt","对目标史诗野怪、大型野怪或敌方小兵造成390-1000（取决于英雄等级）点真实伤害。":"Gây 390-1000 sát thương chuẩn (dựa trên cấp tướng) lên quái to hoặc khủng hoặc lính địch.","传送":"Dịch Chuyển","在引导3.5秒后，将英雄传送到目标友方建筑物、小兵或守卫旁边。":"Sau khi niệm trong 3.5 giây, dịch chuyển tướng của bạn đến vị trí của lính, trụ, hoặc mắt của đồng minh.","护驾！":"Tới chỗ nhà vua!","快速位移到魄罗之王旁边。":"Di chuyển nhanh đến bên Vua Poro.","立刻领取":"LẬP TỨC","免费":"MIỄN PHÍ","设置数量":"Chọn Số Lượng","你没有足够的代币。":"Bạn không có đủ kỉ vật","输入至少{{minQuantity}}个。":"Nhập ít nhất: {{minQuantity}}","你只能以{{minQuantity}}的倍数来购买。":"Bạn chỉ có thể mua nhiều nhất: {{minQuantity}}","愚人节快乐，乐子人们！来庆祝一下吧！ ":"Chúc Mừng Ngày Cá Tháng Tư! Hãy ăn mừng nào!","愚人节大军需要增援，而你就是那个完美的呆萌士兵！":"Đội Quân Cá Tháng Tư cần viện trợ, và bạn chính là người lính hoàn hảo của sự vô tri!","冲啊！我的无-羽-伦比的派对礼品就给你拿去用来对抗混乱大军吧。":"Chiến thôi nào! Xin gửi bạn những món quà dự tiệc tuyệt vời để chống lại các thế lực hỗn loạn.","在非排位的【召唤师峡谷】，【极地大乱斗】和【人机对战】里找我。我们在黎明时兜风！":"Tìm tôi ở chế độ đấu thường SR, ARAM và Đấu Với Máy. Chúng ta sẽ ra trận lúc bình minh!","咕噜噜……(“你不玩吗？我可为你准备了很多愚人节惊喜……”)":"Purr... (\"Chơi đi chứ? Ta có rất nhiều điều bất ngờ ngày Cá Tháng Tư cho ngươi đó...\")","喵呜！ (“捏哈哈！有本事来抓我呀！”)":"Meow! (\"Nyah-hah! Thử bắt ta đi xem nào!\")","咪嗷呜！ (“混乱就是我的地盘！一场喵灾在等待！”)":"Mrrow! (\"Sự hỗn loạn là lãnh địa của ta! Một tai ương đang chờ đón!\")","企鹅 盖伦":"Pengu Garen","盒子猫 萨科":"Shaco Mèo Tom"};
+  const patterns = [];
+  try {
+    window.__tr = createTextReplacer({ dict, patterns, collect: true });
+  } catch (error) {
+    /* 最坏情况: 什么都没发生, 客户端保持原样 */
+  }
+})();

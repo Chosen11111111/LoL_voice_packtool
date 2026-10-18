@@ -1,0 +1,222 @@
+/* 自动生成, 请勿手改 —— 由 scripts/build-text-plugin.ts 从 runtime.mjs + en_us/dict.json 生成 */
+/* 作用: 把英雄联盟**客户端界面**的中文替换成目标语言。只改客户端页面里的文字, */
+/*       不涉及任何文件, 也不涉及局内游戏(局内是另一个进程, 本插件碰不到)。 */
+(() => {
+/**
+ * 客户端界面文字替换核心(运行在英雄联盟客户端页面里)。
+ *
+ * 设计约束:
+ * - 只用浏览器标准接口(MutationObserver / requestAnimationFrame / localStorage / clipboard),
+ *   不依赖任何加载器的私有 API, 所以换成别的加载器也能用。
+ * - 整个能力集中在这一个自包含函数里(不引用外部变量), 打包时直接把它转成字符串塞进插件,
+ *   因此这里改成任何东西都不需要改打包脚本。
+ * - 任何异常都必须自我禁用: 最坏情况是"没翻译", 绝不能把客户端界面搞卡死。
+ */
+
+/** 含中日韩文字才算"需要翻译"的原文。 */
+const CJK = /[\u3400-\u9fff\u3000-\u303f\uff00-\uffef]/;
+
+/** 这些标签里的文字绝不动。 */
+const SKIP_TAGS = ["SCRIPT", "STYLE", "NOSCRIPT", "TEXTAREA", "CODE", "PRE", "SVG", "CANVAS", "IFRAME", "TITLE", "HEAD"];
+
+/** 默认不动的区域: 输入框、可编辑区(聊天框、昵称编辑等)。 */
+const DEFAULT_SKIP_SELECTORS = ["[contenteditable='true']", "[contenteditable='']", "input", "textarea", "select"];
+
+/**
+ * 把一段文字翻译成目标语言。
+ * 返回 null 表示"没有对应译文, 保持原样"。
+ * 前后空白原样保留, 只有中间的主体参与查表 —— 界面文字常带缩进和换行。
+ */
+function translate(text, dict, patterns) {
+  if (typeof text !== "string" || text.length === 0) return null;
+  const leading = text.match(/^\s*/)[0];
+  const trailing = text.match(/\s*$/)[0];
+  const core = text.slice(leading.length, text.length - trailing.length);
+  if (!core || !CJK.test(core)) return null;
+  const direct = Object.prototype.hasOwnProperty.call(dict, core) ? dict[core] : undefined;
+  if (typeof direct === "string" && direct.length > 0) return leading + direct + trailing;
+  if (patterns) {
+    for (let i = 0; i < patterns.length; i += 1) {
+      const [re, to] = patterns[i];
+      if (re.test(core)) return leading + core.replace(re, to) + trailing;
+    }
+  }
+  return null;
+}
+
+/** 是否值得记录进"待翻译清单"(含中文、长度适中、还没有译文)。 */
+function isCollectable(text, dict, maxLength) {
+  if (typeof text !== "string") return false;
+  const core = text.trim();
+  if (!core || core.length > maxLength) return false;
+  if (!CJK.test(core)) return false;
+  return !Object.prototype.hasOwnProperty.call(dict, core);
+}
+
+/**
+ * 安装文字替换器。返回一个控制器(可 off/on/dump/stats), 出任何问题都自动禁用自己。
+ * options: { dict, patterns, collect, maxLength, skipSelectors, storageKey, debug }
+ */
+function createTextReplacer(options) {
+  const opts = options || {};
+  const dict = opts.dict || {};
+  const patterns = opts.patterns || [];
+  const collect = opts.collect !== false;
+  const maxLength = typeof opts.maxLength === "number" ? opts.maxLength : 40;
+  const skipSelectors = opts.skipSelectors || ["[contenteditable='true']", "input", "textarea"];
+  const storageKey = opts.storageKey || "__tr_collected";
+  const SKIP_TAGS = ["SCRIPT", "STYLE", "NOSCRIPT", "TEXTAREA", "CODE", "PRE", "SVG", "CANVAS", "IFRAME", "TITLE", "HEAD"];
+  const CJK = /[\u3400-\u9fff\u3000-\u303f\uff00-\uffef]/;
+  const state = { on: true, replaced: 0, scanned: 0, failed: 0, error: "" };
+  const written = new WeakMap();
+  const pending = new Set();
+  const collected = new Set();
+  let scheduled = false;
+
+  try {
+    const saved = window.localStorage.getItem(storageKey);
+    if (saved) for (const item of JSON.parse(saved)) collected.add(item);
+  } catch (error) { /* 存储不可用不影响替换 */ }
+
+  function saveCollection() {
+    try { window.localStorage.setItem(storageKey, JSON.stringify([...collected])); } catch (error) { /* 忽略 */ }
+  }
+
+  function shouldSkip(element) {
+    let node = element;
+    let depth = 0;
+    while (node && node.nodeType === 1 && depth < 40) {
+      const tag = node.tagName;
+      if (tag && SKIP_TAGS.indexOf(tag) >= 0) return true;
+      if (tag === "BODY" || tag === "HTML") return false;
+      for (let i = 0; i < skipSelectors.length; i += 1) {
+        try { if (node.matches && node.matches(skipSelectors[i])) return true; } catch (error) { /* 选择器不合法就忽略 */ }
+      }
+      node = node.parentElement;
+      depth += 1;
+    }
+    return false;
+  }
+
+  function handleTextNode(node) {
+    const value = node.nodeValue;
+    if (typeof value !== "string" || value.length === 0) return;
+    if (written.get(node) === value) return;            // 是我们自己刚写的, 不要再动
+    state.scanned += 1;
+    const parent = node.parentElement;
+    if (parent && shouldSkip(parent)) return;
+    const result = translate(value, dict, patterns);
+    if (result !== null) {
+      if (result === value) return;
+      written.set(node, result);
+      try { node.nodeValue = result; state.replaced += 1; } catch (error) { state.failed += 1; }
+      return;
+    }
+    if (collect) {
+      const core = value.trim();
+      if (core.length > 0 && core.length <= maxLength && CJK.test(core) && !collected.has(core)) {
+        collected.add(core);
+        saveCollection();
+      }
+    }
+  }
+
+  /** 手动深度优先遍历(不用 TreeWalker, 因为要能递归进 shadow root, 也好测试)。 */
+  function walk(root, depth) {
+    if (!state.on || !root || depth > 60) return;
+    const children = root.childNodes;
+    if (children) {
+      for (let i = 0; i < children.length; i += 1) {
+        const child = children[i];
+        if (child.nodeType === 3) handleTextNode(child);
+        else if (child.nodeType === 1) {
+          if (child.shadowRoot) { observe(child.shadowRoot); walk(child.shadowRoot, depth + 1); }
+          walk(child, depth + 1);
+        }
+      }
+    }
+    if (root.shadowRoot && root.nodeType === 1) { observe(root.shadowRoot); walk(root.shadowRoot, depth + 1); }
+  }
+
+  function flush() {
+    scheduled = false;
+    if (!state.on) return;
+    if (state.error) return;
+    const queue = [...pending];
+    pending.clear();
+    try {
+      for (const node of queue) {
+        if (!node.isConnected) continue;
+        if (node.nodeType === 3) handleTextNode(node);
+        else walk(node, 0);
+      }
+    } catch (error) {
+      state.error = String((error && error.message) || error);
+      state.on = false;                                  // 自我禁用, 绝不影响客户端
+      try { console.error("[text-replacer] 出错已自动停用:", error); } catch (e) { /* 忽略 */ }
+    }
+  }
+
+  function schedule(node) {
+    if (!state.on || state.error) return;
+    pending.add(node);
+    if (pending.size > 4000) pending.clear();            // 极端情况下宁可漏也不卡
+    if (scheduled) return;
+    scheduled = true;
+    try { window.requestAnimationFrame(flush); } catch (error) { flush(); }
+  }
+
+  const observed = new WeakSet();
+  const observer = new MutationObserver((records) => {
+    for (const record of records) {
+      if (record.type === "characterData") schedule(record.target);
+      else for (const node of record.addedNodes) schedule(node);
+    }
+  });
+
+  function observe(root) {
+    if (!root || observed.has(root)) return;
+    try {
+      observer.observe(root, { childList: true, subtree: true, characterData: true });
+      observed.add(root);
+    } catch (error) { /* 观察失败不影响已处理的部分 */ }
+  }
+
+  // 新挂上来的 shadow root 也要被观察到(客户端大量使用组件)
+  try {
+    const original = Element.prototype.attachShadow;
+    Element.prototype.attachShadow = function (init) {
+      const root = original.call(this, init);
+      try { observe(root); schedule(root); } catch (error) { /* 忽略 */ }
+      return root;
+    };
+  } catch (error) { /* 忽略 */ }
+
+  observe(document.documentElement);
+  walk(document.body || document.documentElement, 0);
+
+  const controller = {
+    get on() { return state.on; },
+    off() { state.on = false; return "off"; },
+    on_() { state.on = true; state.error = ""; walk(document.body || document.documentElement, 0); return "on"; },
+    stats() { return { replaced: state.replaced, scanned: state.scanned, failed: state.failed, error: state.error, collected: collected.size }; },
+    /** 导出"没翻译到"的中文清单(按出现次数无从统计, 按长度排序)。 */
+    dump() {
+      const list = [...collected].sort();
+      const text = JSON.stringify(list, null, 2);
+      try { navigator.clipboard.writeText(text); } catch (error) { /* 忽略 */ }
+      return list;
+    },
+    clear() { collected.clear(); saveCollection(); return "cleared"; },
+    translate
+  };
+  return controller;
+}
+  const dict = {"护甲":"Armor","攻击速度":"Attack Speed","格挡":"Block","暴击几率":"Critical Strike Chance","暴击伤害":"Critical Strike Damage","能量":"Energy","能量回复/5秒":"Energy Regen / 5 sec.","经验值":"Experience","生命值":"Health","生命回复/5秒":"Health Regen / 5 sec.","法术强度":"Ability Power","移动速度":"Movement Speed","法力":"Mana","法力回复/5秒":"Mana Regen / 5 sec.","攻击力":"Attack Damage","魔法抗性":"Magic Resist","闪避":"Dodge","经验获取":"Experience Gained","生命回复":"Health Regen","生命偷取":"Life Steal","法力回复":"Mana Regen","法术吸血":"Spell Vamp","护甲于18级":"Armor at level 18","护甲穿透":"Armor Penetration","护甲穿透于18级":"Armor Penetration at level 18","暴击几率于18级":"Critical Strike Chance at level 18","暴击伤害于18级":"Critical Strike Damage at level 18","闪避于18级":"Dodge at level 18","能量于18级":"Energy at level 18","能量回复于18级":"Energy Regen at level 18","金/10秒":"Gold / 10 sec.","生命值于18级":"Health at level 18","生命回复于18级":"Health Regen at level 18","法术强度于18级":"Ability Power at level 18","法术穿透":"Magic Penetration","法术穿透于18级":"Magic Penetration at level 18","移动速度于18级":"Movement Speed at level 18","法力于18级":"Mana at level 18","法力回复于18级":"Mana Regen at level 18","攻击力于18级":"Attack Damage at level 18","魔法抗性于18级":"Magic Resist at level 18","死亡时间":"Time Spent Dead","死亡时间于18级":"Time Spent Dead at level 18","攻击速度于18级":"Attack Speed at level 18","冷却缩减":"Cooldown Reduction","冷却缩减于18级":"Cooldown Reduction at level 18","穿甲":"Lethality","穿甲于18级":"Lethality at level 18","正在更新《英雄联盟》……":"Updating League of Legends...",";annie;安妮;黑暗之女;heianzhinv;huonv;火女;an;hazn;hn":";annie",";kayle;kaier;凯尔;tianshi;天使;审判;ke;ts;shenpan;spts":";kayle",";xerath;zelasi;泽拉斯;tesila;特斯拉;yuanguwuling;远古巫灵;zls;tsl;ygwl":";xerath",";shyvana;龙女;longnv;xiwana;希瓦娜;龙血武姬;longxuewuji;ln;xwn;lxwj":";shyvana",";ahri;ali;阿狸;huli;狐狸;九尾妖狐;jiuweiyaohu;hl;jwyh":";ahri",";graves;格雷福斯;geleifusi;法外狂徒;fawaikuangtu;nanqiang;男枪;nq;glfs;fwkt":";graves",";fizz;feizi;chaoxihailing;菲兹;潮汐海灵;xiaoyuren;小鱼人;fz;cxhl;xyr":";fizz",";volibear;gouxiong;狗熊;wolibeier;沃利贝尔;不灭狂雷;bumiekuanglei;gx;wlbe;bmkl":";volibear",";rengar;shizigou;狮子狗;leienjiaer;雷恩加尔;aozhizhuiliezhe;傲之追猎者;szg;leje;azzlz":";rengar",";master yi;yidashi;易大师;jiansheng;剑圣;wuji;无极;yds;js;wjjs;yi":";master yi",";varus;weilusi;韦鲁斯;chengjiezhijian;惩戒之箭;wls;cjzj":";varus",";nautilus;taitan;泰坦;nuotilesi;诺提勒斯;shenhai;深海;ntls;sstt;tt":";nautilus",";viktor;weiketuo;维克托;jixiexianqu;机械先驱;三只手;sanzhishou;szs;wkt;jxxq;aoshuxianqu;asxq;奥术先驱":";viktor",";sejuani;zhunv;zhumei;猪女;猪妹;sezhuangni;瑟庄妮;beidizhinu;北地之怒;szn;zn;zm;bdzn":";sejuani",";fiora;剑姬;jianji;feiaona;菲奥娜;wushuang;无双;fan;fon;jj;wsjj":";fiora",";ziggs;zhadanren;炸弹人;吉格斯;jigesi;guicai;鬼才;baopo;爆破;jgs;bpgc;gc;zdr":";ziggs",";lulu;璐璐;露露;仙灵女巫;xianlingnvwu;ll;xlnw":";lulu",";draven;德莱文;delaiwen;文森特;wensente;rongyaoxingxingguan;荣耀行刑官;dlw;wst;ryxxg":";draven",";alistar;niutou;牛头;alisita;阿利斯塔;nt;alst":";alistar",";hecarim;hekalimu;赫卡里姆;renma;人马;zhanzhengzhiying;战争之影;hklm;rm;zzzy":";hecarim",";kha'zix;tanglang;螳螂;kazike;卡兹克;xukong;虚空;tl;kzk;xk":";kha'zix",";darius;delaiesi;德莱厄斯;nuoshou;诺手;dles;ns;诺克萨斯之手;nuokesasizhishou;nksszs":";darius",";jayce;jiesi;杰斯;weilaishouhuzhe;未来守护者;js;wlshz":";jayce",";lissandra;bingnv;冰女;lisangzhuo;丽桑卓;bingshuangnvwu;冰霜女巫;bn;lsz;bsnw":";lissandra",";ryze;faker;liulang;流浪;瑞兹;ruizi;fuwenfashi;符文法师;guangtou;光头;rz;ll;fwfs;gt":";ryze",";diana;daianna;黛安娜;jiaoyue;皎月女神;戴安娜;dan;jyns;jy":";diana",";quinn;kuiyin;奎因;niaoren;鸟人;demaxiyazhiyi;德玛西亚之翼;ky;dmxyzy":";quinn",";syndra;qiunv;球女;xindela;辛德拉;anheiyuanshou;暗黑元首;qn;xdl;ahys":";syndra",";aurelion sol;龙王;奥瑞利安;索尔;zhuxing;longwang;铸星;aoruilian;arla;lw;zxlw":";aurelion sol",";sion;saien;赛恩;wanglingzhanshen;亡灵战神;se;wlzs":";sion",";凯隐;kaiyin;kayn;暗裔魔镰;anyimolian;yingliuzhilian;影流之镰;ky;ayml;ylzl":";kayn",";zoe;zuoyi;佐伊;muguangxingling;暮光星灵;zy;mgxl;":";zoe",";zyra;jiela;婕拉;jingjizhixing;荆棘之兴;jl;jjzx":";zyra",";kai'sa;kasha;xukong;虚空;卡莎;ks;xkzn":";kai'sa",";Seraphine;salefenni;geji;slfn;xlgj;gj;萨勒芬妮;星籁;歌姬;酸辣粉;suanlafen":";Seraphine",";qiyana;qyn;ysnh;yuansunvhuang;奇亚娜;元素女皇;圈子妈;quanzima":";qiyana",";sivir;xiweier;希维尔;lunzima;轮子妈;zhanzhengnvshen;战争女神;xwe;lzm;zzns":";sivir",";gnar;naer;纳尔;mishizhiya;迷失之牙;ne;mszy":";gnar",";zac;zhake;扎克;shenghuamoren;生化魔人;zk;shmr":";zac",";yasuo;kuaile;fengnan;快乐;风男;亚索;jianhao;剑豪;jifeng;疾风;ys;jfjh;klfn":";yasuo",";soraka;naima;奶妈;索拉卡;suolaka;slk;nm;星妈;xingma;xm":";soraka",";vel'koz;大眼;dayan;weikezi;维克兹;xukong;虚空;dy;wkz;xkzy":";vel'koz",";taliyah;taliya;塔利亚;塔莉垭;yanque;岩雀;tly;yq":";taliyah",";camille;青钢影;卡蜜尔;qinggangying;kamier;qgy;kme":";camille",";akshan;阿克尚;影哨;the Rogue Sentinel;aks;akeshang;yingshao;ys":";akshan",";teemo;timo;提莫;tibaiwan;提百万;xunjiechihou;迅捷斥候;tm;xjch":";teemo",";tristana;xiaopao;小炮;paoniang;炮娘;崔丝塔娜;cuisitana;mailinpaoshou;麦林炮手;xp;cstn;mlps":";tristana",";warwick;langren;狼人;wolike;沃里克;祖安怒兽;zuan;wlk;lr;zans":";warwick",";olaf;aolafu;奥拉夫;kuangzhanshi;狂战士;alf;kzs":";olaf",";nunu;努努;xueren;雪人;xueyuanshuangzi;雪原双子;xr;xysz;nn":";nunu",";belveth;beierweisi;xukongnvhuang;brws;xknh;Void Empress;卑尔维斯;虚空;女皇;虚空女皇;nvhuang;nh":";belveth",";braum;bulong;布隆;fuleierzhuode;弗雷尔卓德;bl;flezd":";braum",";jhin;烬;戏命师;jin;wangyuan;望远;ximingshi;xms;wyj":";jhin",";kindred;qianjue;千珏;yonglieshuangzi;永猎双子;qj;ylsz":";kindred",";miss fortune;nvqiang;女枪;mf;eyunxiaojie;厄运小姐;haoyunjie;好运姐;shangjin;赏金;nq;eyxj;sj;hyj":";miss fortune",";ashe;aishe;爱射;aixi;艾希;hanbing;寒冰;as;ax;hb":";ashe",";zeli;zeri;zuanhuahuo;zahh;泽丽;zl;祖安花火":";zeri",";jinx;jinkesi;金克丝;baozou;luoli;暴走;萝莉;jks;bzll;powder;baobao;bb;爆爆":";jinx",";tahm kench;hama;蛤蟆;tamu;塔姆;hm;tm;河流之王;hlzw;heliuzhiwang":";tahm kench",";tryndamere;manwang;蛮王;taidamier;泰达米尔;mw;tdme":";tryndamere",";briar;the Restrained Hunger;贝蕾亚;狂厄蔷薇;bly;keqw;beileiya;kuangeqiangwei":";briar",";viego;Ruined King;佛耶戈;破败之王;v哥;foyege;fyg;pobaizhiwang;pbzw;破败王;pobaiwang;pbw":";viego",";saina;senna;赛娜;dihunshengqiang;涤魂圣枪;sn;dhsq":";senna",";lucian;aobama;奥巴马;luxian;卢锡安;shengqiangyouxia;圣枪游侠;abm;lxa;sqyx":";lucian",";zed;jie;劫;yingliuzhizhu;影流之主;ylzz":";zed",";jax;jiakesi;贾克斯;wuqidashi;武器大师;jks;wqds;武器":";jax",";kled;克烈;暴怒骑士;kelie;baonuqishi;kl;bnqs":";kled",";ekko;aike;艾克;时间刺客;shijiancike;ak;sjck":";ekko",";morgana;moganna;莫甘娜;duoluotianshi;堕落天使;mgn;dlts":";morgana",";vi;wei;蔚;pichengzhifaguan;皮城执法官;pczfg;violet;蔚奥莱;weiaolai;wal;楚雨荨;chuyuxun;cyx":";vi",";zilean;shiguang;laotou;时光;老头;jilan;基兰;sg;jl":";zilean",";aatrox;yatuokesi;亚托克斯;jianmo;剑魔;anyi;暗裔;ytks;jm;ayjm":";aatrox",";nami;namei;娜美;huanchaojiaoji;唤潮鲛姬;nm;hcjj":";nami",";azir;shahuang;沙皇;azier;阿兹尔;shamohuangdi;沙漠皇帝;sh;aze;smhd":";azir",";singed;lianjin;炼金;xinjide;辛吉德;lj;xjd":";singed",";evelynn;guafu;寡妇;yifulin;伊芙琳;tongkuzhiyong;痛苦之拥;gf;yfl;tkzy":";evelynn",";twitch;laoshu;老鼠;tuqi;图奇;wenyizhiyuan;瘟疫之源;ls;tq;wyzy":";twitch",";galio;jialiao;加里奥;zhengyijuxiang;正义巨像;jla;jlo;zyjx":";galio",";karthus;sige;死歌;kaersasi;卡尔萨斯;sg;kess":";karthus",";cho'gath;kejiasi;科加斯;dachongzi;大虫子;xukong;虚空恐惧;kjs;dcz;xkkj":";cho'gath",";amumu;阿木木;munaiyi;木乃伊;amm;mny":";amumu",";rammus;longgui;wangba;龙龟;王八;lamosi;拉莫斯;lms;lg;wb":";rammus",";anivia;bingniao;冰鸟;fenghuang;凤凰;ainiweiya;艾尼维亚;bn;fh;anwy":";anivia",";shaco;xiaochou;小丑;sake;萨科;xc;sk":";shaco",";youmi;yuumi;maomi;cat;mfmm;魔法猫咪;猫咪;魔法;悠米;ym;mm":";yuumi",";dr. mundo;mengduo;蒙多;zuan;祖安狂人;md;zakr":";dr. mundo",";samira;沙漠玫瑰;莎弥拉;shamila;desert rose;samila;shamomeigui;萨米拉;sml;smmg":";samira",";sona;qinnv;琴女;suona;娑娜;qinsexiannv;琴瑟仙女;sn;qn;qsxn":";sona",";kassadin;kasading;卡萨丁;xukong;虚空行者;xkxz;xukongxingzhe;ksd":";kassadin",";irelia;daomei;刀妹;airuiliya;艾瑞丽娅;daofengwuzhe;刀锋舞者;dm;arly;dfwz;女刀;nd;nvdao":";irelia",";twisted fate;tf;kapai;卡牌大师;cuisite;崔斯特;kp;kpds;kapaidashi;cst":";twisted fate",";janna;998;fengnv;风女;jiana;迦娜;fengbaozhinu;风暴之怒;fn;jn;fbzn":";janna",";gangplank;chuanzhang;船长;pulangke;普朗克;haiyangzhizai;海洋之灾;cz;plk;hyzz":";gangplank",";thresh;chuishi;锤石;hunsuodianyuzhang;魂锁典狱长;cs;hsdyz":";thresh",";corki;feiji;飞机;kuqi;库奇;yingyongtoudanshou;英勇投弹手;fj;kq;yytds":";corki",";illaoi;eluoyi;俄洛伊;haishoujisi;海兽祭司;chushouma;触手妈;大妈;dama;ely;hsjs;csm;dm":";illaoi",";rek'sai;leikesai;雷克塞;挖掘机;wajueji;xukongdundishou;虚空;lks;wjj;xkdds":";rek'sai",";ivern;艾翁;翠神;aiweng;cuishen;xiaoju;小菊;aw;cs;xj;xiaoshu;xs;小树":";ivern",";kalista;huabanxie;滑板鞋;kalisita;卡莉丝塔;fuchouzhimao;复仇之矛;hbx;klst;fczm":";kalista",";karma;shanzima;扇子妈;kaerma;卡尔玛;tianqizhe;天启者;kem;szm;tqz":";karma",";bard;bade;巴德;yinyoushiren;吟游诗人;xingjieyoushen;星界游神;bd;yysr;xjys":";bard",";taric;baoshi;宝石;talike;塔里克;waluolanzhidun;瓦洛兰之盾;tlk;bs;wllzd":";taric",";veigar;weijia;维迦;xieexiaofashi;邪恶小法师;wj;xiaofashi;小法师;xfs;xexfs;小法":";veigar",";trundle;jumo;巨魔;telangdeer;特朗德尔;tlde;jm":";trundle",";rakan;洛;幻翎;luo;huanling;fenghuangchuanqi;凤凰传奇;hl;fhcq":";rakan",";xayah;霞;逆羽;xia;niyu;fenghuangchuanqi;凤凰传奇;fhcq;ny":";xayah",";xin zhao;zhaoxin;赵信;xinye;信爷;zx;xy;debangzongguan;德邦总管;dbzg":";xin zhao",";swain;wuya;乌鸦;siweiyin;斯维因;nuokesasitongling;诺克萨斯统领;wy;swy;nksstl":";swain",";caitlyn;nvjing;女警;kaitelin;凯特琳;picheng;皮城;nj;ktl;pcnj;cupcake;xiaodangao;xdg;小蛋糕":";caitlyn",";ornn;奥恩;山隐之焰;aoen;shanyinzhiyan;ae;syzy;yang;羊":";ornn",";解脱者;sailasi;sls;jtz;jietuozhe;sylas;Unshackled;塞拉斯":";sylas",";nikou;neeko;wanhua;whtl;nk;妮蔻;万花通灵":";neeko",";efeiliusi;aphelios;the Weapon of Faith;canyuezhisu;厄斐琉斯;残月之肃;无E烦;wuefan;wuyifan;月男;yuenan;efls;cyzs;yn;wyf":";aphelios",";rell;ruier;芮尔;铁女;Iron Maiden;镕铁少女;re;rongtieshaonv;rtsn;tienv;tn;mamei;mm;马妹":";rell",";blitzcrank;jiqiren;机器人;bulici;布里茨;jqr;blc;zhengqi;蒸汽;zqjqr":";blitzcrank",";malphite;shitouren;石头人;mofeite;墨菲特;rongyanjushou;熔岩巨兽;str;mft;ryjs;ry":";malphite",";katarina;katelinna;卡特琳娜;buxiangzhiren;不祥之刃;卡特;kate;ktln;kt;bxzr":";katarina",";pyke;paike;派克;xuegangguiying;血港鬼影;pk;xggy":";pyke",";nocturne;mengyan;梦魇;moteng;魔腾;my;mt;夜曲;yequ;yq":";nocturne",";maokai;茂凯;dashu;大树;niuqushujing;扭曲树精;mk;ds;nqsj":";maokai",";renekton;eyu;鳄鱼;leikedun;雷克顿;huangmotufu;荒漠屠夫;lkd;hmtf":";renekton",";jarvan iv;huangzi;皇子;jiawensishi;嘉文四世;hz;jwss;dmxyhz;demaxiyahuangzi;德玛西亚皇子":";jarvan iv",";urgot;pangxie;螃蟹;ejiate;厄加特;wuweizhanche;无畏战车;ejt;dpx;px;大螃蟹;wwzc":";urgot",";elise;zhizhu;蜘蛛;yilisi;伊莉丝;zznh;女皇;yls":";elise",";orianna;fatiao;发条;aolianna;奥莉安娜;ft;alan;魔灵;ftml":";orianna",";wukong;悟空;houzi;猴子;qitiandasheng;齐天大圣;孙悟空;swk;wk;hz;qtds;sunwukong":";wukong",";brand;huonan;火男;bulande;布兰德;fuchouyanhun;复仇焰魂;bld;hn;fcyh":";brand",";lee sin;xiazi;盲僧;瞎子;mangseng;liqing;李青;xz;ms;lq":";lee sin",";vayne;uzi;weien;薇恩;anyelieshou;暗夜猎手;we;ayls":";vayne",";rumble;lanbo;兰博;jixiegongdi;机械公敌;lb;jxgd":";rumble",";cassiopeia;shenv;蛇女;kaxiaopeiya;卡西奥佩娅;moshezhiyong;魔蛇之拥;sn;kxopy;mszy":";cassiopeia",";leblanc;yaoji;妖姬;lefulan;乐芙兰;yj;lfl;诡术妖姬;guishu;gsyj":";leblanc",";vex;gloomist;薇古丝;愁云使者;vgs;cysz;wgs;weigusi;veigusi;chouyunshizhe;aybb;aoyebobi;熬夜波比":";vex",";skarner;xiezi;蝎子;sikana;斯卡纳;shanggulingzhu;上古领主;xz;skn;sglz":";skarner",";heimerdinger;datou;大头;dafamingjia;大发明家;heimodingge;黑默丁格;dt;dmmj;hmdg;famingjia;fmj;发明家":";heimerdinger",";nasus;goutou;狗头;neisesi;内瑟斯;shamosishen;沙漠死神;nss;gt;smss":";nasus",";nidalee;naidali;奶大力;baonv;豹女;naideli;奈德丽;kuangyenvlieshou;狂野女猎手;ndl;bn;kynls":";nidalee",";udyr;wudier;乌迪尔;shoulingxingzhe;兽灵行者;ud;wde;slxz;xiaoyan;xy;萧炎;野区萧炎;yequxiaoyan;yqxy":";udyr",";yone;永恩;封魔剑魂;yongen;fengmojianhun;fmjh;ye":";yone",";poppy;bobi;波比;圣锤之毅;shengchuizhiyi;bb;sczy":";poppy",";gragas;jiutong;酒桶;gulajiasi;古拉加斯;gljs;jt":";gragas",";ambessa;anbeisa;tiexielangmu;tiexuelangmu;txlm;abs;安蓓萨;铁血狼母;狼母;langmu;lm":";ambessa",";vladimir;xixuegui;吸血鬼;fulajimier;弗拉基米尔;xinghongshougezhe;猩红收割者;xxg;fljme;xhsgz":";vladimir",";pantheon;pansen;潘森;sibada;斯巴达;buquzhiqiang;不屈之枪;ps;bqzq":";pantheon",";mel;jingyingliuguang;meier;梅尔;me;镜影流光;jylg;流光镜影;liuguangjingying;lgjy":";mel",";yunana;芸阿娜;不破之誓;the Unbroken Faith;yan;yunara;bupozhishi;bpzs":";yunara",";locke;灰烬驱魔人;洛克;the Ashen Exorcist;hjqmr;huijinqumoren;luoke;lk":";locke",";ezreal;ez;yize;伊泽;tanxianjia;探险家;yz;txj;yizeruier;伊泽瑞尔;yzre":";ezreal",";mordekaiser;tienan;铁男;modekaisa;莫德凯撒;tiekaiminghun;铁铠冥魂;mdks;jsds;jinshudashi;金属大师;modeganqing;莫得感情;tn;mdgq;tkmh":";mordekaiser",";yorick;yuelike;约里克;juemu;掘墓;muhunren;牧魂人;ylk;jm;mhr":";yorick",";akali;阿卡丽;liqunzhici;离群之刺;akl;lqzc":";akali",";kennen;kainan;凯南;dianhaozi;电耗子;kuangbaozhixin;狂暴之心;kn;kbzx":";kennen",";garen;gailun;盖伦;德玛西亚之力;demaxiyazhili;gl;dmxyzl":";garen",";seti;sett;the Boss;瑟提;st;腕豪;wh;wanhao;男拳;nanquan;nq":";sett",";莉莉娅;liliya;hxbl;hanxiubeilei;lillia;含羞;蓓蕾;妮马;蔻马;nima;kouma;鹿女;lunv;梦鹿;menglu;beilei;lly":";lillia",";gwen;gewen;the Hallowed Seamstress;灵罗娃娃;格温;gw;llww;lingluowawa;剪子妈;jianzima;jzm;剪妹;jianmei;jm;一剪没;yijianmei;yjm;滚;gun":";gwen",";lienata;lnt;lianjinnanjue;ljnj;renata;chemtech;baroness;烈娜塔;炼金男爵;glsk;gelasike;戈拉斯克;glasc":";renata glasc",";leona;nvtan;rinv;女坦;日女;leiouna;蕾欧娜;shuguangnvshen;曙光女神;lon;rn;nt;sgns":";leona",";阿萝拉;aluola;aurora;双界灵兔;shuangjielingtu;sjlt;all;兔女;tunv;tn;tuzi;tz;兔子":";aurora",";nila;nilah;the Joy Unbound;尼菈;nl;不羁之悦;bujizhiyue;bjzy":";nilah",";k'sante;kuisangti;kst;nazumangrongyao;nzmry;奎桑提;纳祖芒荣耀":";k'sante",";fiddlesticks;daocaoren;稻草人;feidetike;费德提克;yuangukongju;远古恐惧;dcr;fdtk;ygkj":";fiddlesticks",";malzahar;mazha;蚂蚱;maerzhaha;玛尔扎哈;xukongxingzhe;虚空先知;mezh;mz;xkxz":";malzahar",";simode;smolder;youlong;long;chiyan;chulong;chiyanchulong;炽;龙;炽炎雏龙;斯莫德;smd;cycl;yl;幼龙;xiaolongren;xlr;小龙人;小火龙;xiaohuolong;xhl;mabaolong;mbl;妈宝龙":";smolder",";milio;the gentle flame;mingzhu;miliou;mlo;mz;米利欧;明烛":";milio",";zaahen;The Unsundered;不落魔锋;亚恒;yaheng;buluomofeng;yh;blmf":";zaahen",";talon;nandao;男刀;tailong;泰隆;daofengzhiying;刀锋之影;tl;nd;df":";talon",";hwei;彗;hui;yihuashi;the Visionary;huajia;画家;异画师;yhs;hj;maobiren;mbr;毛笔人":";hwei",";riven;ruiwen;锐雯;fangzhuzhiren;放逐之刃;rw;fzzr":";riven",";naafiri;the Hound of a Hundred Bites;纳亚菲利;百裂冥犬;nayafeili;nyfl;bailiemingquan;blmq;gou;狗;dog":";naafiri",";kog'maw;dazui;大嘴;kegemo;克格莫;shenyuanjukou;深渊巨口;kgm;dz;shenyuanjukou;syjk":";kog'maw",";shen;慎;muguangzhiyan;暮光之眼;yaozi;腰子;mgzy;yz":";shen",";lux;lakesi;拉克丝;guanghuinvlang;光辉女郎;lks;ghnl":";lux","见习刺客":"Rogue","初级刺客":"Prowler","中级刺客":"Cutthroat","高级刺客":"Reaper","杀戮之影":"Slayer","杀戮宗师":"Executioner","死神":"Deathmaster","见习战士":"Scrapper","初级战士":"Brawler","中级战士":"Warrior","高级战士":"Veteran","征服之刃":"Destroyer","征服宗师":"Warmonger","战神":"Warlord","见习法师":"Initiate","初级法师":"Conjurer","中级法师":"Invoker","高级法师":"Magus","织法之杖":"Warlock","织法宗师":"Sorcerer","法神":"Archmage","见习射手":"Tracker","初级射手":"Strider","中级射手":"Scout","高级射手":"Ranger","鹰隼之眼":"Pathfinder","射击宗师":"Sharpshooter","狙神":"Sniper","见习辅助":"Aide","初级辅助":"Protector","中级辅助":"Keeper","高级辅助":"Defender","庇护之光":"Guardian","庇护宗师":"Sentinel","守护之神":"Warden","见习坦克":"Grunt","初级坦克":"Bruiser","中级坦克":"Bulwark","高级坦克":"Enforcer","无畏之盾":"Brute","无畏宗师":"Colossus","巨神":"Juggernaut","登录失败，请重试。":"Invalid username/password combination. Please try again.","一个意料之外的错误发生了":"An unexpected error has occurred","所有角色定位":"All Roles","刺客":"Assassin","战士":"Fighter","法师":"Mage","射手":"Marksman","辅助":"Support","坦克":"Tank","错误代码":"Error code","我们无法加载这个页面。如果你的互联网连接没问题的话，请稍等几分钟然后重试。":"We weren't able to load this page. If your internet connection is otherwise ok, wait a few minutes and try again.","重试":"Retry","{{feature}}目前已被禁用":"{{feature}} is currently disabled","这个功能目前已被禁用":"This feature is currently disabled","暂未实装":"Not yet implemented","创建房间":"CREATE LOBBY","退出":"QUIT","对水晶之痕的简短描述。":"A brief description of Crystal Scar.","和随机选择英雄的队友一起，去摧毁敌人的水晶枢纽。":"Fight as a team of five randomly selected champions to siege the bridge and capture the enemy Nexus.","正义之地最古老最威严的战场当属召唤师峡谷。几百年间无数对立的召唤师们在这片战场上延续着战斗，这片战场也因此而得名。有三条不同的道路穿越整个战场。与友军一起攻击敌人最脆弱的地方，摧毁他们的基地！":"The oldest and most venerated Field of Justice is known as Summoner's Rift. The Rift is located in a remote forest between Frejlord, the Serpentine River, and the Ironspike Mountains.","对扭曲丛林的简短描述。":"A brief description of Twisted Treeline.","水晶之痕":"Crystal Scar","水晶\n之痕":"CRYSTAL\nSCAR","已被禁用，并在维修中。我们对此带来的不便深表歉意。":"has been disabled for maintenance. We apologize for any inconvenience.","嚎哭深渊":"Howling Abyss","嚎哭\n深渊":"HOWLING\nABYSS","召唤师峡谷":"Summoner's Rift","召唤师\n峡谷":"SUMMONER'S\nRIFT","扭曲丛林":"Twisted Treeline","扭曲\n丛林":"TWISTED\nTREELINE","创建自定义游戏":"Create Custom","这个模式目前已被禁用":"This mode is currently disabled","加入自定义游戏":"Join Custom","匹配模式":"Normal","排位赛":"Ranked","新手教程":"Tutorial","人机":"Co-op vs. AI","极地大乱斗":"ARAM","全随机（极地大乱斗）1v1":"All Random (ARAM) 1 vs 1","全随机（极地大乱斗）2v2":"All Random (ARAM) 2 vs 2","全随机（极地大乱斗）3v3":"All Random (ARAM) 3 vs 3","全随机（极地大乱斗）5v5":"All Random (ARAM) 5 vs 5","全随机（极地大乱斗）6v6":"All Random (ARAM) 6 vs 6","全随机人机对战（极地大乱斗）5v5":"All Random vs AI (ARAM) 5 vs 5","统治战场5v5":"Dominion 5 V 5","极地大乱斗5v5":"ARAM 5 V 5","经典模式5v5":"Classic 5 V 5","经典模式3v3":"Classic 3 V 3","全随机（大乱斗）":"ALL RANDOM (ARAM)","内部服务器错误，请稍后重试":"Internal server error, please try again later","你已经与新闻服务断开了连接。请手动重新连接。":"You’ve been disconnected from the news service. Please reconnect manually.","经常使用":"Frequently Played","确认":"Ok","是":"Yes","否":"No","接受":"ACCEPT","拒绝":"REJECT","最终用户许可协议":"END USER LICENSE AGREEMENT","使用条款":"TERMS OF USE","取消":"Cancel","授予邀请":"Grant Invites","移出玩家":"Kick","提升为队长":"Promote to Captain","撤回邀请":"Revoke Invites","通过拖动来邀请玩家。":"Drag to invite.","寻找对局":"FIND MATCH","阻塞":"Blocked","邀请":"Invite","添加":"Add","邀请玩家":"Invite Players","发送邀请":"Send Invites","输入玩家名称":"Enter player name","已邀请":"Invited","你真的想移出{{summonerName}}吗？":"Do you really want to kick {{summonerName}}?","你已被移出了组房间":"You were kicked from the game lobby.","与你的好友一起玩，你就会获得组队奖励！更多好友组队意味着更多战利品，所以快去组队吧！":"By playing with friends, you earn Party Rewards! More friends means more loot, so team up!","组队奖励":"PARTY REWARDS","与你的好友一起玩来获得蓝色精萃奖励！更多好友组队意味着更多战利品！":"Earn IP rewards by playing with friends. More friends means more loot!","快组队吧！":"TEAM UP!","待定":"Pending","已推荐":"Suggested","<span class='click-instruction'>点击以添加{{pointsAssignedOnClick}}点。</span><span class='click-instruction'>按住SHIFT键点击以添加1点。</span>":"<span class='click-instruction'>Click to add {{pointsAssignedOnClick}} points.</span><span class='click-instruction'>Shift-click to add one point.</span>","<span class='click-instruction'>点击以添加1点。</span>":"<span class='click-instruction'>Click to add one point.</span>","下个点数":"Next Point","无法在服务器上创建一个天赋页。也许是因为连接问题。":"Failed to create a mastery page on server. It may be a connection issue.","添加新的天赋页":"Add new page","天赋页{{number}}":"Mastery Page {{number}}","你确定想要删除该页吗？":"Are you sure that you want to delete this page?","删除天赋页":"Delete page","编辑天赋页名称":"Edit page name","可用点数：{{number}}":"Points Available: {{number}}","重置此天赋页的点数":"Reset points in this page","重置此天赋树的点数":"Reset points in this tree","点击这里来保存你对天赋页的所有改动。":"Click to save all changes to your mastery pages.","由于连接失败，无法保存天赋页面。":"Failed to save mastery pages due to network failure.","保存":"SAVE","你的天赋有尚未保存的改动。你想要保存吗？":"You have unsaved changes to your masteries. Do you want to save?","需要在<span class='mastery-type'>{{type}}</span>至少分配{{ranks}}点":"Requires {{ranks}} points in <span class='mastery-type'>{{type}}</span>","需要在{{prereq}}至少分配{{ranks}}点":"Requires {{ranks}} ranks in {{prereq}}","剩余{{pointsLeft}}点数":"{{pointsLeft}} pts left","诡诈":"CUNNING","凶猛":"FEROCITY","坚决":"RESOLVE","诡诈系":"Cunning","凶猛系":"Ferocity","坚决系":"Resolve","房间":"Party","藏品":"Collection","冠军杯赛":"Clash","电竞":"Esports","主页":"Home","经典模式":"Classic","战利品/圣堂":"Loot","新闻":"News","云顶之弈":"TFT","幸运商店":"Your Shop","生涯":"Profile","商城":"Store","海斗第3季":"Mayhem Set 3","更多信息":"MORE INFORMATION","检测到必要更新":"Required Update Detected","你的网络连接出问题了。如果你目前还没有连接上互联网，请先连接互联网。如果你已经连上互联网了但无法连接上《英雄联盟》，请查阅我们的<a href=\"https://support-leagueoflegends.riotgames.com/hc/articles/201752664\" target='_blank'>客服信息</a>来看看是否有可行的解决方案。":"There is a problem with your connection. If you are not currently connected to the internet, please do so. If you are already on-line but cannot connect to League of Legends, check our <a href=\"https://support-leagueoflegends.riotgames.com/hc/articles/201752664\" target='_blank'>support page</a> to find possible solutions.","好的":"Okay","我们复原了一个较旧版本的《英雄联盟》。现在我们将尝试把它更新为最新版本。":"We have restored an older version of League of Legends. Now, we'll try to patch it up to the latest version.","{{megabytes}} MB / {{kilobytes_per_second}} KB/秒":"{{megabytes}} MB @ {{kilobytes_per_second}} KBps","在你安装目录下的文件权限正在阻止《英雄联盟》的安装。请按“OK”键，然后我们将尝试唤起你的操作系统的权限管理器。":"The file permissions in your installation directory are preventing League from installing. Please press 'Okay' and we will attempt prompt your operating system's permissions' manager.","在连接至服务器时出问题了。请检查你的网络连接并重启补丁器。如果你的网络连接没有问题，请联系客服进行处理。":" There is a problem connecting to the server. Please check your internet connection and restart the patcher. If your internet connectivity isn't the issue, please follow the connection troubleshooting steps on our <a href=\"https://support-leagueoflegends.riotgames.com/hc/articles/201752664\" target='_blank'>support page</a> to find possible solutions.","补丁器无法下载内容至你的硬盘。请检查下你的电脑，至少需要8GB的空闲容量和写入硬盘的必要权限才能安装《英雄联盟》。你可以联系我们的客服来获取更多有关这个错误的帮助。*注意*：点击“是”将关闭客户端。":"A patch was unable to download to your hard drive. This error is usually caused by not having enough room on your disk for the download. Please ensure that your computer has at least 8 GB of free space on the drive where League is installed and that you have the necessary permissions to write to the drive. For more help with this error, see the troubleshooting steps <a href=\"https://support-leagueoflegends.riotgames.com/hc/articles/202969434\" target='_blank'>here</a>. Note: Clicking \"Okay\" will close the client.","我们的服务器出故障了，并且在阻止你下载补丁内容。我们正在给服务器另一次机会。你可以<a href=\"http://lol.qq.com/act/a20150326dqpd/\" target='_blank'>点此</a>查看我们的服务器状态。":"Something's up with our servers and it's preventing you from patching. We're giving it another shot. In the meantime, you can check the status of our servers <a href=\"http://status.leagueoflegends.com\" target='_blank'>here</a>.","《英雄联盟》无法更新，因为你没有足够的硬盘空间。请至少释放{{Bytes}}空间然后重试。":"League can't update because you don't have enough disk space. Please free up at least {{Bytes}} of space and try again.","补丁更新失败，并且我们不确定原因是什么。请重启客户端并重试补丁更新。":"Patching failed and we're not sure why. Please restart the client to try patching again.","预计用时 {{number}}分钟":"ETA {{number}} mins","好":"Okay","文件无法写入硬盘。请检查你是否有足够的磁盘空间和必要的许可。":"Failed to write file to disk. Please check that you have enough free space and that you have the necessary permissions.","已修复档案：{{number}}":"Files repaired: {{number}}","已扫描的文件：{{number}}":"Files scanned: {{number}}","联盟客户端":"LEAGUE CLIENT","游戏客户端":"GAME CLIENT","我们的服务器发生了些状况，导致你无法从服务器中获得更新文件。我们正在对服务器进行停机维护。在维护时，你可以在这里查看我们的服务器状态。":"Something's up with our servers, and it's preventing you from patching. We're giving it another shot. In the meantime, check the status of our servers here","这个错误也许由以下现网内部事故导致：":"These live incidents may have caused the error:","我们已经将这个安装程序恢复至一个较早的《英雄联盟》版本、现在我们将尝试将它更新至最新版本。":"We have restored this installation to an older version of League of Legends. Now we'll try to patch it up to the latest version.","正在应用版本补丁":"Applying Patches","正在下载文件":"Dowloading Files","正在提取所需的版本数据":"Fetching Required Patch Data","正在安装":"INSTALLING","正在下载":"DOWNLOADING","正在修复":"REPAIRING","正在扫描":"SCANNING","修复":"Repair","抱歉！我们在你的安装过程中检测到一些数据损坏。你想要修复受损的文件么？":"Sorry! We've detected some possible data corruption in your installation. Would you like to repair the affected files?","更新已完成下载。你必须重启客户端才能让更新生效。":"An update has finished downloading. You must restart League of Legends before the update can be applied.","现在还不行":"Not Now","重新启动":"Restart","第{{current_step}}步（共{{total_steps}}步）":"Step {{current_step}} of {{total_steps}}","更新失败，而我们不确定是什么原因。点击我们的客服页面{{support page}}来查找可能的解决方法。":"Patching failed, but we're not sure why. Check our support page {{support page}} to find possible solutions.","正在更新……":"Updating...","在更新《英雄联盟》时出现了一个问题。我们正在复原《英雄联盟》的备份版本，并会在你重新启动后再次尝试":"There was a problem updating League of Legends. We'll restore a backup version of League and try again after you restart","游戏仍在进行中…":"Game is still in progress...","全随机":"ALL RANDOM","跳过等待，直接开始下一局游戏。":"Skip waiting for stats","开始游戏":"Start Game","可用":"Available","剩余1日":"1 day left","剩余{{days}}天":"{{days}} days left","金币加成":"IP BOOST","网吧特权加成":"Loyalty Boost","下一个奖励的进度":"NEXT BONUS IN","下一次重随的进度":"NEXT REROLL","没有激活加成":"No active boosts","剩余1胜":"1 win left","剩余{{wins}}胜场":"{{wins}} wins left","双倍经验卡":"XP BOOST","记分板":"SCOREBOARD","下一个":"Next","失败":"DEFEAT","第二名":"2ND PLACE","第1名":"1st","蓝色精萃":"BE","全员战斗加成蓝色精萃已获得":"BATTLE BOOST BE EARNED","蓝色精萃加成":"BE BOOST","当天首次胜利":"FIRST WIN OF THE DAY","蓝色精萃获取":"BE GAINED","特权加成蓝色精萃已获取":"LOYALTY BOOST BE EARNED","统治战场蓝色精萃加成":"ODIN BONUS BE","小队奖励蓝色精萃加成已获得":"PARTY REWARDS BONUS BE EARNED","排队加成已获取":"QUEUE BONUS EARNED","逃兵":"LEAVER","等级":"LEVEL","此负场不作记录":"LOSS PREVENTED","加成点数":"Bonus Points","点数获取":"Points Earned","总计：":"Total:","胜利":"VICTORY","点数":"POINTS","总经验":"XP TOTAL","特权加成经验已获取":"LOYALTY BOOST XP EARNED","经验已获取":"XP GAINED","还需{{points}}点即可到达{{level}}级":"{{points}} points to reach level {{level}}","重新连接":"Reconnect","游戏已经结束。你现在将返回主页。":"The game has ended. You will now be returned to the home page.","您中途退出游戏，\n请重新连接。":"You have left a game in progress. Please reconnect to the game.","添加好友":"Add friend","首页":"HOME","再玩一次":"PLAY AGAIN","审核用的举报已经发送。感谢您的反馈。":"A report has been sent for review. Thank you.","你已经用完了所有可用的奖励。":"You have used up all available kudos.","确定":"OK","北":"North","队伍2":"TEAM 2","南":"South","队伍1":"TEAM 1","查看高级详情":"VIEW ADVANCED DETAILS","附加评论":"Additional Comments","给敌方放水":"Assisting Enemy","在这里输出评论":"Enter comment here","不当的用户名":"Inappropriate Name","故意送人头":"Intentional Feeding","挂机":"Leaving / AFK","消极态度":"Negative Attitude","不与团队进行沟通":"No Communication With Team","攻击性的语言":"Offensive Language","举报":"REPORT","举报玩家":"Report player","滥发信息":"Spamming","无法举报这个玩家。请稍后再试。":"Could not report this player. Please try again later.","玩家水平过低":"Unskilled Player","口头谩骂":"Verbal Abuse","态度友好":"Friendly","乐于助人":"Helpful","可敬的对手":"Honorable Opponent","无法称赞这个玩家。请稍后再试。":"Could not give kudos to this player. Please try again later.","团队合作":"Teamwork","助攻":"Assists","英雄击杀":"Champions Killed","死亡":"Deaths","金币获取":"Gold Earned","小兵击杀":"Minions Killed","该局总分":"Run Score","召唤师等级：":"Summoner level:","加成":"BOOST","你确定要从英雄选择阶段离开吗？":"Are you sure you want to leave champion select?","一位玩家秒退了；你已经回到了房间。":"A player has dodged the game; you have been returned to the lobby.","敌方队伍":"ENEMY TEAM","你有{{rerolls}}个可用的英雄重随机会。":"You have {{rerolls}} champion rerolls available.","这个召唤师技能已被禁用。":"This spell has been disabled.","等级需求：{{level}}":"LOCKED UNTIL LVL {{level}}","{{actor}}正在和其他人交换":"{{actor}} is swapping with someone else.","这个交换已被取消。":"This swap has been canceled.","交换已被拒绝。":"This swap has been declined.","还不能发出交换请求。请重试。":"The swap could not be requested. Please try again.","{{actor}}想要用{{entity1}}交换{{entity2}}。":"{{actor}} wants to swap {{entity1}} for {{entity2}}.","用{{entity1}}交换{{entity2}}。":"Swap {{entity1}} for {{entity2}}.","正在等待{{actor}}回应你的交换请求……":"Waiting for {{actor}} to respond to your swap request...","己方队伍":"YOUR TEAM","接受！":"Accept!","{{summonerName}}在英雄选择时离开。你已重新回到房间。":"{{summonerName}} left during champion selection. You have been returned to the lobby.","一名玩家在英雄选择时离开。你已重新回到房间。":"A player has left during champion selection. You have been returned to the queue.","对局已找到":"MATCH FOUND","准备战斗":"PREPARE FOR BATTLE","对局已接受":"MATCH ACCEPTED","对局已拒绝":"MATCH DECLINED","正在等待其他玩家":"WAITING FOR OTHER PLAYERS","符文页{{number}}":"Rune Page {{number}}","选择全部":"Select All","都不选择":"Select None","选择玩家来解除聊天黑名单，然后点击保存。":"Select the players to unblock, then hit save.","按字母顺序排列":"Alphabetically","开启语言过滤器":"Enable language filter","启动链接警告":"Enable link warnings","在线状态":"Online status","好友列表的排列顺序：":"Sort friends list by:","启动菜单动画":"Enable menu animations","启动警告弹窗":"Enable notification popups","聊天黑名单":"Block List","聊天&好友":"Chat & Friends","恢复默认设置":"Restore Defaults","你确定要将所有选项重置为默认设置吗？":"Are you sure you want to reset all of your options to the default settings?","综合":"General","键位绑定":"Key Bindings","选项":"Options","全部恢复默认设置":"Restore all to default","声音":"Sounds","如果你的《英雄联盟》出了什么毛病，就点击下方的修复按钮来搞定它吧！警告：这个操作会耗费很长一段时间。":"If there is something wrong with League of Legends, click the repair button below to fix it! Warning: this will take a long time.","你真的想要修复吗？它会耗费很长一段时间！":"Do you really want to repair? It will take a long time!","英雄选择界面的音乐音量":"Champion selection music volume","启动英雄选择界面的音乐":"Enable champion selection music","启动登陆音乐":"Enable login music","启动音效":"Enable SFX","音效音量":"SFX Volume","关闭登录动画":"Disable Login Animations","关闭登录音效":"Disable Login Music","选择":"Select","传说之证 边框":"Prestige Border","排位边框":"Ranked Border","展示往届排位旗帜":"Show Past Ranked Banner","无法保存。请稍后重试。":"Unable to save. Please try again later","已选择":"Selected","当前不可用。":"Currently unavailable.","进行排位赛以解锁！":"Play ranked to unlock!","保存中":"Saving","选择一个召唤师图标":"Choose a Summoner Icon","召唤师图标&边框选择器":"Summoner Icon & Border Selector","无法保存你的选择。":"Failed to save selection.","屏障":"Barrier","为你的英雄套上护盾，吸收115-455（取决于英雄等级）点伤害，持续2秒。":"Shields your champion for 115-455 (depending on champion level) for 2 seconds.","洞察":"Clairvoyance","将地图上任意一块区域暴露给你的队伍，持续5秒。":"Reveals a small area of the map for your team for 5 seconds.","清晰术":"Clarity","为你的英雄回复40%的最大法力值。也会为友军回复他们40%的最大法力值":"Restores 40% of your champion's maximum Mana. Also restores allies for 40% of their maximum Mana.","净化":"Cleanse","移除身上的所有限制效果和召唤师技能的减益效果，并且若在接下来的3秒里再次被施加限制效果时，新效果的持续时间会减少65%。":"Removes all disables and summoner spell debuffs affecting your champion and lowers the duration of incoming disables by 65% for 3 seconds.","虚弱":"Exhaust","虚弱目标敌方英雄，降低目标英雄30%的移动速度和攻击速度，以及10护甲与魔法抗性，并且他们所造成的伤害减少40%，持续2.5秒。":"Exhausts target enemy champion, reducing their Movement Speed and Attack Speed by 30%, their Armor and Magic Resist by 10, and their damage dealt by 40% for 2.5 seconds.","闪现":"Flash","使英雄朝着你的指针所停的区域瞬间传送一小段距离。":"Teleports your champion a short distance toward your cursor's location.","卫戍部队":"Garrision","友方防御塔：提供巨量回复，持续8秒。敌方防御塔：降低伤害输出，持续8秒":"Allied Turret: Grants massive regeneration for 8 seconds. Enemy Turret: Reduces damage dealt by 80% for 8 seconds.","幽灵疾步":"Ghost","你的英雄在移动时会无视单位的碰撞体积，移动速度增加27%，持续10秒。":"Your champion can move through units and has 27% increased Movement Speed for 10 seconds.","治疗术":"Heal","为你和目标友军英雄回复95-345（取决于英雄等级）生命值，并为你和目标友军英雄提供30%移动速度加成，持续1秒。若目标近期已受到过其它治疗术的影响，则治疗术对目标产生的治疗效果减半。":"Restores 90-345 Health (depending on champion level) and grants 30% Movement Speed for 1 second to you and target allied champion. This healing is halved for units recently affected by Summoner Heal.","引燃":"Ignite","引燃是对单体敌方目标施放的持续性伤害技能，在5秒的持续时间里造成70-410（取决于英雄等级）真实伤害，获得目标的视野，并减少目标所受的治疗和回复效果。":"Ignites target enemy champion, dealing 70-410 true damage (depending on champion level) over 5 seconds, grants you vision of the target, and reduces healing effects on them for the duration.","标记":"Mark","沿直线扔出一个雪球。如果雪球命中了一个敌人，那么这个敌人会被【标记】，并且你的英雄接下来可以快速突进到被【标记】的目标旁边。":"Throw a snowball in a straight line at your enemies. If it hits an enemy, they become marked and your champion can quickly travel to the marked target as a follow up.","魄罗投掷":"Poro Toss","把一个魄罗投向你的敌人。如果它命中了一名敌人，那么你接下来就可以快速位移到被命中的敌人旁边。":"Throw a Poro at your enemies. If it hits, you can quickly travel to your target as a follow up.","重生":"Revive","立刻在本队的召唤师平台上复活你的英雄，并暂时提升英雄的移动速度。":"Instantly revives your champion at your team's Summoner Platform and increases their Movement Speed for a short duration.","惩戒":"Smite","对目标史诗野怪、大型野怪或敌方小兵造成390-1000（取决于英雄等级）点真实伤害。":"Deals 390-1000 true damage (depending on champion level) to target epic or large monster or enemy minion.","传送":"Teleport","在引导3.5秒后，将英雄传送到目标友方建筑物、小兵或守卫旁边。":"After channeling for 3.5 seconds, teleports your champion to target allied structure, minion, or ward.","护驾！":"To the King!","快速位移到魄罗之王旁边。":"Quickly travel to the Poro King's side.","立刻领取":"INSTANT","免费":"FREE","设置数量":"Set Quantity","你没有足够的代币。":"You don't have enough tokens","输入至少{{minQuantity}}个。":"Enter at least {{minQuantity}}","你只能以{{minQuantity}}的倍数来购买。":"You can only buy mutliples of {{minQuantity}}","愚人节快乐，乐子人们！来庆祝一下吧！ ":"Happy April Fools', merrymaker! Let us celebrate!","愚人节大军需要增援，而你就是那个完美的呆萌士兵！":"The April Fools' Army needs reinforcement, and you are the perfect soldier of silliness!","冲啊！我的无-羽-伦比的派对礼品就给你拿去用来对抗混乱大军吧。":"To battle! My pengu-licious party favors are yours to wield against the forces of mayhem.","在非排位的【召唤师峡谷】，【极地大乱斗】和【人机对战】里找我。我们在黎明时兜风！":"Find me in unranked SR, ARAM, and Co-Op vs. AI. We ride at dawn!","咕噜噜……(“你不玩吗？我可为你准备了很多愚人节惊喜……”)":"Purr... (\"Won't you play? I have many April Fools' surprises fur you...\")","喵呜！ (“捏哈哈！有本事来抓我呀！”)":"Meow! (\"Nyah-hah! Cat-ch me if you can!\")","咪嗷呜！ (“混乱就是我的地盘！一场喵灾在等待！”)":"Mrrow! (\"Mayhem is my domain! A cat-astrophe awaits!\")","企鹅 盖伦":"Pengu Garen","盒子猫 萨科":"Cat-in-the-Box Shaco"};
+  const patterns = [];
+  try {
+    window.__tr = createTextReplacer({ dict, patterns, collect: true });
+  } catch (error) {
+    /* 最坏情况: 什么都没发生, 客户端保持原样 */
+  }
+})();
