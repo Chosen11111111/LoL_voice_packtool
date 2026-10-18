@@ -62,7 +62,9 @@ function createTextReplacer(options) {
   const dict = opts.dict || {};
   const patterns = opts.patterns || [];
   const collect = opts.collect !== false;
-  const maxLength = typeof opts.maxLength === "number" ? opts.maxLength : 40;
+  // 收集上限: 太短的没意义, 太长的多半是聊天/公告。原来定 40, 但客户端的提示与说明
+  // 经常超过 40 字, 那样就永远收不到、也就永远补不上 —— 放宽到 80。
+  const maxLength = typeof opts.maxLength === "number" ? opts.maxLength : 80;
   const skipSelectors = opts.skipSelectors || ["[contenteditable='true']", "input", "textarea"];
   const storageKey = opts.storageKey || "__tr_collected";
   const SKIP_TAGS = ["SCRIPT", "STYLE", "NOSCRIPT", "TEXTAREA", "CODE", "PRE", "SVG", "CANVAS", "IFRAME", "TITLE", "HEAD"];
@@ -98,6 +100,19 @@ function createTextReplacer(options) {
   function reportCollection() {
     if (reported) return;
     reported = true;
+    // 先跟上一次交上去的清单合并, 只增不减 —— 客户端每次重启内存都会重置,
+    // 不合并的话新会话会把之前攒的整份覆盖掉(实测被覆盖成更少的条数)。
+    try {
+      if (window.DataStore && typeof window.DataStore.get === "function") {
+        const old = window.DataStore.get(STORE_KEY, "");
+        if (typeof old === "string" && old) {
+          const parsed = JSON.parse(old);
+          if (Array.isArray(parsed.collected)) {
+            for (const item of parsed.collected) if (typeof item === "string") collected.add(item);
+          }
+        }
+      }
+    } catch (error) { /* 拿不到就算了 */ }
     const payload = JSON.stringify({ collected: [...collected], replaced: state.replaced, scanned: state.scanned });
     let stored = false;
     try {
