@@ -530,11 +530,31 @@
       box.checked = false;
       box.disabled = true;
       box.title = "只有语音包选了英语 / 日语 / 韩语时, 才能替换客户端界面文字";
+      const cardOff = $("cardStatusClientText");
+      if (cardOff) cardOff.classList.remove("active");
+      const tagOff = $("tagStatusClientText");
+      if (tagOff) tagOff.textContent = "原版";
+      const badgeOff = $("statusClientText");
+      if (badgeOff) badgeOff.textContent = "未开启";
       return;
     }
     box.disabled = false;
-    box.checked = Boolean(textPackState.active && textPackState.staged === locale);
+    // 勾选是"这次要不要一起开"的选项, 由用户掌握; 真实状态看下面那张状态卡
     box.title = (textPackState.message || "") + " · 只改客户端界面文字，不动局内文字";
+    const on = Boolean(textPackState.active && textPackState.staged === locale);
+
+    // 状态卡(与另外三格同款): 开了就点亮, 并写清目标语言与是否需要重启客户端
+    const names = { en_us: "英文", ja_jp: "日文", ko_kr: "韩文" };
+    const card = $("cardStatusClientText");
+    if (card) card.classList.toggle("active", on);
+    const tag = $("tagStatusClientText");
+    if (tag) tag.textContent = on ? "已开启" : "原版";
+    const badge = $("statusClientText");
+    if (badge) {
+      if (!on) badge.textContent = "未开启";
+      else badge.textContent = "【当前为：" + (names[locale] || locale) + "】" +
+        (textPackState.clientRunning ? "（需重启客户端）" : "");
+    }
   }
 
   async function callTextPack(action, locale) {
@@ -560,25 +580,11 @@
     await callTextPack("stage", target);
   }
 
-  // 勾选/取消只在这里接一次
-  (function wireTextPack() {
+  /** 这次点"开启语音包"要不要一起开客户端界面文字(和另外三个勾选项一样, 只是个选项)。 */
+  function clientTextSelected() {
     const box = $("modClientText");
-    if (!box) return;
-    box.addEventListener("change", async () => {
-      const target = textPackLocale();
-      if (!target) {
-        box.checked = false;
-        return;
-      }
-      if (box.checked) {
-        await callTextPack("stage", target);
-        await callTextPack("activate", target);   // 需要管理员权限, 会弹一次系统授权
-      } else {
-        await callTextPack("deactivate", target);
-        await callTextPack("unstage", target);
-      }
-    });
-  })();
+    return Boolean(box && box.checked && !box.disabled);
+  }
 
 /* ------------------------------------------------ 任务执行 */
 
@@ -782,10 +788,21 @@
   $("packDownloadCode").value = PACK_DOWNLOAD.code;
   $("btnPackDownload").onclick = () => $("packDownloadModal").classList.remove("hidden");
   // 品牌图是个按钮: 点击打开品牌链接(链接未配置/被拦时不报错, 只记一条日志)
-  $("btnBrand").onclick = () => {
+  $("btnBrand").onclick = async () => {
     if (!BRAND_LINK) {
       log("品牌链接还没配置(见 app.js 的 BRAND_LINK)");
       return;
+    }
+    // 外壳不处理"新窗口"请求, 直接 window.open 点了没反应; 交给后端用系统浏览器打开。
+    try {
+      const result = await api("/api/open-url", { method: "POST", body: JSON.stringify({ url: BRAND_LINK }) });
+      if (result && result.ok) {
+        log("已用系统浏览器打开：" + BRAND_LINK);
+        return;
+      }
+      log((result && result.message) || "打开失败");
+    } catch (error) {
+      console.warn("走后端打开失败, 退回 window.open", error);
     }
     try {
       window.open(BRAND_LINK, "_blank", "noopener");
@@ -912,7 +929,8 @@
         method: "POST",
         // restartClient: 客户端正在运行时, 切换完自动帮用户重启一次(客户端占着文件句柄, 重启后才生效)。
         // 后端只会在"客户端在运行 + 勾了需要重启的项"时才真的重启, 纯选人语音不会重启。
-        body: JSON.stringify({ locale, modules, restartClient: true })
+        // clientText: 勾了"客户端界面文字"就一起装注入器(需要一次授权), 后端会先装好再重启客户端
+        body: JSON.stringify({ locale, modules, restartClient: true, clientText: clientTextSelected() })
       })
     ).then((result) => {
       // 只有真的成功了才算"本次会话已开启选人语音"

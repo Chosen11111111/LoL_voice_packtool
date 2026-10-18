@@ -325,6 +325,18 @@ export function buildRouter(): Router {
         message: "英雄联盟未启动：选人语音需要客户端运行，请先启动客户端并登录到大厅"
       };
     }
+    // 客户端界面文字不是游戏模块: 它要装/卸注入器(各需要一次管理员授权), 所以在任务开始前
+    // 先做掉 —— 这样任务后面那次"重启客户端"正好能让注入生效。
+    const wantClientText = body.clientText === true;
+    const textPackBefore = await getTextPackState();
+    if (wantClientText && !textPackBefore.active) {
+      const staged = await stageTextPack(locale.toLowerCase());
+      if (staged.ok) await runElevated("install");
+    } else if (!wantClientText && textPackBefore.staged) {
+      await runElevated("uninstall");
+      await unstageTextPack();
+    }
+
     const task = startApplyTask({
       locale,
       modules,
@@ -340,6 +352,25 @@ export function buildRouter(): Router {
     return { ok: true };
   });
 
+  /**
+   * 用系统默认浏览器打开链接。
+   * 为什么不让页面直接 window.open: 外壳(WebView2)没有处理"新窗口"请求, 点了没有任何反应。
+   * 只接受 http/https, 免得这个接口被拿去做别的事。
+   */
+  router.post("/api/open-url", async (context) => {
+    const body = asRecord(context.body);
+    const url = String(body.url ?? "").trim();
+    if (!/^https?:\/\/[^\s]+$/i.test(url)) return { ok: false, message: "只支持 http/https 链接" };
+    try {
+      const { spawn } = await import("node:child_process");
+      // 用 rundll32 而不是 cmd /c start: 它是图形程序, 不会闪出一个黑色控制台窗口。
+      spawn("rundll32", ["url.dll,FileProtocolHandler", url], { windowsHide: true, detached: true, stdio: "ignore" }).unref();
+      return { ok: true, message: "已用系统浏览器打开" };
+    } catch (error) {
+      return { ok: false, message: "打开失败: " + String((error as Error).message).slice(0, 120) };
+    }
+  });
+
   /** 记住"托盘的说明已经看过"。 */
   router.post("/api/ui/hide-tray-tip", async () => {
     await saveConfig({ ui: { hideTrayTip: true } });
@@ -353,6 +384,14 @@ export function buildRouter(): Router {
   });
 
   router.post("/api/restore", async (context) => {
+    // "恢复原版"要把它也还原: 先取消激活(删注册表项, 需要管理员), 再删掉我们放进去的文件。
+    // 顺序不能反 —— 先删文件的话注册表还指着不存在的 core.dll, 客户端会启动不了。
+    const textPack = await getTextPackState();
+    if (textPack.staged) {
+      await runElevated("uninstall");
+      await unstageTextPack();
+      logger.info("恢复原版: 客户端界面文字已还原");
+    }
     const body = asRecord(context.body);
     const task = startRestoreTask({
       modules: asModules(body.modules),

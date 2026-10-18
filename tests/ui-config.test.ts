@@ -277,8 +277,14 @@ test("品牌图是一个按钮: 点击会打开品牌链接", async () => {
   const page = await openWindow({ defaultLocale: "ja_JP", ui: config }, {}, false, { last_applied: null });
   await page.settle();
   page.el("btnBrand").onclick!();
-  assert.equal((page as any).opened.length, 1, "点一下应打开一次链接");
-  assert.equal((page as any).opened[0], "https://chosen1.lol", "品牌链接指向 chosen1.lol");
+  await page.settle();
+  // 现在优先请后端用系统浏览器打开(外壳不处理"新窗口"请求, 直接 window.open 点了没反应)
+  const call = (page as any).requests.find((item: any) => String(item.url).includes("/api/open-url"));
+  assert.ok(call, "点一下应向 /api/open-url 发一次请求");
+  assert.ok(String(call.options.body).includes("https://chosen1.lol"), "品牌链接指向 chosen1.lol");
+  // 后端失败时才退回 window.open; 走通那条路就不该再开一个
+  const opened = (page as any).opened;
+  if (opened.length) assert.equal(opened[0], "https://chosen1.lol", "退回 window.open 时也指向 chosen1.lol");
 });
 
 test("开启语音包: 没点过『不再提醒』时先弹提示, 点确定才真的开启", async () => {

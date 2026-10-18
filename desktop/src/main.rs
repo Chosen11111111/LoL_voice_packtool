@@ -161,6 +161,19 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .with_inner_size(LogicalSize::new(800.0, 600.0))
         .with_min_inner_size(LogicalSize::new(680.0, 520.0))
         .build(&event_loop)?;
+
+    // 让窗口出现在屏幕正中。建窗口时不给位置的话, Windows 会自己随便放一个地方
+    // (通常在左上角或者层叠偏移处), 用户看到的就是"启动后跑到一边去了"。
+    // 用 current_monitor: 多显示器时按窗口当前所在的那块屏算, 而不是死板地对主屏。
+    if let Some(monitor) = window.current_monitor() {
+        let screen_size = monitor.size();
+        let screen_pos = monitor.position();
+        let win_size = window.outer_size();
+        let x = screen_pos.x + (screen_size.width as i32 - win_size.width as i32) / 2;
+        let y = screen_pos.y + (screen_size.height as i32 - win_size.height as i32) / 2;
+        let _ = window.set_outer_position(PhysicalPosition::new(x, y));
+    }
+
     if let Some(icon) = window_icon_path
         .as_deref()
         .or(icon_path.as_deref())
