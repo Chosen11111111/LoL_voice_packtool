@@ -1,0 +1,14 @@
+本目录包含第三方组件, 分发本软件时必须一并保留本文件与 LICENSE-pengu.txt。
+
+1) Pengu Loader —— core.dll (455 KB)
+   许可: MIT (见 LICENSE-pengu.txt)
+   用途: 把一段 JS 注入到英雄联盟**客户端**的页面里, 用于客户端界面文字翻译。
+   未做任何修改; 不使用其启动器(Pengu Loader.exe / ModernWpf 等)。
+
+2) CEF / Chromium —— core.dll 内链接的部分
+   Chromium Embedded Framework 为 BSD-3-Clause 许可, Chromium 亦为 BSD-3-Clause 及其它开源许可。
+   Pengu Loader 仓库中的 CEF 部分未附带 LICENSE 文件, 因此在此声明:
+   本项目再分发 core.dll 时同时受 CEF/Chromium 的 BSD-3-Clause 条款约束, 需保留其版权声明。
+   详见 https://bitbucket.org/chromiumembedded/cef 与 https://www.chromium.org/ 的许可说明。
+
+范围声明: 上述组件只作用于**英雄联盟客户端界面**, 与局内游戏无关。
