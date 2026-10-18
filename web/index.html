@@ -145,6 +145,25 @@
     </div>
   </section>
 
+  <!-- 第五排：客户端文字(只改客户端界面, 与局内文字无关) -->
+  <section class="row-card glass textpack-section">
+    <div class="row-head">
+      <span class="row-label">客户端文字</span>
+      <span class="textpack-scope">只改客户端界面 · 不动局内</span>
+    </div>
+    <div class="textpack-row">
+      <label class="textpack-toggle">
+        <input type="checkbox" id="chkTextPack" />
+        <span>把客户端界面文字换成</span>
+      </label>
+      <select class="select textpack-select" id="selTextPackLang"></select>
+      <button type="button" class="btn glass" id="btnTextPackActivate" hidden>授权开启</button>
+      <button type="button" class="btn glass" id="btnTextPackRemove" hidden>移除</button>
+      <span class="textpack-state" id="textPackState">读取中…</span>
+    </div>
+    <p class="textpack-note" id="textPackNote"></p>
+  </section>
+
   <!-- 第四排：恢复按钮和开启按钮 -->
   <section class="action-row">
     <button type="button" class="btn action-btn restore-btn glass" id="btnRestore">恢复原版</button>

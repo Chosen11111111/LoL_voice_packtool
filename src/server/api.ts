@@ -8,6 +8,7 @@ import { saveConfig, loadConfig, appRoot, configPath, type ConfigPatch } from ".
 import { resolveVoiceRoot } from "../core/paths.ts";
 import { lobbyLive } from "../modules/lobbyLive.ts";
 import { isDirectory, listNames } from "../core/fsx.ts";
+import { getState as getTextPackState, runElevated, stage as stageTextPack, unstage as unstageTextPack } from "../textpack/deploy.ts";
 import { isClientRunning } from "../core/win/processes.ts";
 import type { ModuleId } from "../core/types.ts";
 import { invalidateConfigCache } from "../core/config.ts";
@@ -209,6 +210,31 @@ export function buildRouter(): Router {
     const suppress = body.suppressed !== false;
     const result = await setClientOriginalVoice(suppress);
     return { ok: result.ok, ...result.state, message: result.message };
+  });
+
+  /**
+   * 客户端界面文字翻译(只改客户端, 不动局内)。
+   * GET  看状态; POST 分四步: stage 复制文件 / activate 提权激活 / deactivate 取消激活 / unstage 移除文件。
+   */
+  router.get("/api/textpack", async () => ({ ok: true, state: await getTextPackState() }));
+
+  router.post("/api/textpack", async (context) => {
+    const body = asRecord(context.body);
+    const action = String(body.action ?? "");
+    const locale = String(body.locale ?? "en_us");
+    if (action === "stage") {
+      const result = await stageTextPack(locale);
+      return { ok: result.ok, message: result.message, state: await getTextPackState() };
+    }
+    if (action === "activate" || action === "deactivate") {
+      const result = await runElevated(action === "activate" ? "install" : "uninstall");
+      return { ok: result.ok, message: result.message, state: await getTextPackState() };
+    }
+    if (action === "unstage") {
+      const result = await unstageTextPack();
+      return { ok: result.ok, message: result.message, state: await getTextPackState() };
+    }
+    return { ok: false, message: "未知操作: " + action, state: await getTextPackState() };
   });
 
   /** 窗口把播放结果回报过来: 成功会记录, 失败会留下浏览器的原始错误码。 */

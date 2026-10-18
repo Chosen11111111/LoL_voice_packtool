@@ -503,8 +503,70 @@
     const logButton = $("btnOpenLog");
     if (logButton) logButton.classList.toggle("hidden", releaseMode);
     await loadClientVoice();
+    await loadTextPack();
     // 状态刷新后同步监听器: 开启语音包(含选人语音)就启动, 还原就停止, 重启后自动恢复
     void syncLobbyLive();
+  }
+
+  /* ------------------------------------------------ 客户端文字 */
+
+  const TEXT_PACK_LABELS = {
+    en_us: "英文", ko_kr: "韩文", ja_jp: "日文", zh_tw: "繁体中文", es_es: "西班牙语",
+    fr_fr: "法语", de_de: "德语", pt_br: "葡萄牙语", ru_ru: "俄语", tr_tr: "土耳其语",
+    vi_vn: "越南语", th_th: "泰语", it_it: "意大利语", pl_pl: "波兰语", id_id: "印尼语"
+  };
+
+  const TEXT_PACK_NOTE = "只替换客户端界面文字（主页/组队/选人/商店/设置等），不动局内文字。属于第三方注入方式，客户端大版本更新后可能失效；不需要时点“移除”即可完全卸掉。" +
+    "首次开启需要授权一次（会弹系统提示），因为要写一个注册表项。";
+
+  /** 把后端状态画到界面上。 */
+  function renderTextPack(state) {
+    const box = $("chkTextPack");
+    const sel = $("selTextPackLang");
+    const act = $("btnTextPackActivate");
+    const rm = $("btnTextPackRemove");
+    const label = $("textPackState");
+    const note = $("textPackNote");
+    if (!box || !state) return;
+    if (sel && sel.dataset.ready !== "1") {
+      const list = state.supported || [];
+      sel.innerHTML = list.map((code) => '<option value="' + code + '">' + (TEXT_PACK_LABELS[code] || code) + "</option>").join("");
+      sel.dataset.ready = "1";
+      if (list.indexOf("en_us") >= 0) sel.value = "en_us";
+    }
+    if (state.staged && sel) sel.value = state.staged;
+    box.checked = Boolean(state.active);
+    if (label) label.textContent = state.message || "";
+    if (act) act.hidden = !(state.staged && !state.active);
+    if (rm) rm.hidden = !state.staged;
+    if (note) note.textContent = TEXT_PACK_NOTE;
+    if (box.dataset.wired !== "1") {
+      box.dataset.wired = "1";
+      box.addEventListener("change", async () => {
+        const locale = sel && sel.value ? sel.value : "en_us";
+        if (box.checked) await callTextPack("stage", locale);
+        else { await callTextPack("deactivate", locale); await callTextPack("unstage", locale); }
+      });
+      if (sel) sel.addEventListener("change", async () => { if (box.checked) await callTextPack("stage", sel.value); });
+      if (act) act.addEventListener("click", async () => { await callTextPack("activate", sel && sel.value ? sel.value : "en_us"); });
+      if (rm) rm.addEventListener("click", async () => { await callTextPack("deactivate", ""); await callTextPack("unstage", ""); });
+    }
+  }
+
+  async function callTextPack(action, locale) {
+    const payload = await api("/api/textpack", { method: "POST", body: JSON.stringify({ action, locale }) });
+    renderTextPack(payload.state);
+    if (payload.message) log(payload.message);
+    return payload;
+  }
+
+  async function loadTextPack() {
+    try {
+      const payload = await api("/api/textpack");
+      renderTextPack(payload.state);
+    } catch (error) {
+      console.warn("读取客户端文字状态失败", error);
+    }
   }
 
   /* ------------------------------------------------ 任务执行 */

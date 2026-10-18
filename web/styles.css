@@ -971,3 +971,13 @@ button, input, select {
 .win-btn--close:active { background-color: #c9362c; }
 .win-btn:focus-visible { outline: 2px solid var(--blue); outline-offset: -1px; }
 
+
+/* ---------------- 客户端文字(只改客户端界面, 与局内无关) ---------------- */
+.textpack-section { margin-top: 10px; }
+.textpack-scope { margin-left: auto; font-size: 12px; opacity: 0.6; }
+.textpack-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.textpack-toggle { display: inline-flex; align-items: center; gap: 8px; font-size: 13px; cursor: pointer; }
+.textpack-toggle input { width: 15px; height: 15px; accent-color: #2563eb; cursor: pointer; }
+.textpack-select { min-width: 120px; }
+.textpack-state { font-size: 12px; opacity: 0.8; }
+.textpack-note { margin: 8px 0 0; font-size: 12px; line-height: 1.55; opacity: 0.72; }
