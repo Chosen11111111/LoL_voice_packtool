@@ -39,6 +39,44 @@ export function debuggerValue(dir: string): string {
   return `rundll32 "${path.join(dir, "core.dll")}", #6000`;
 }
 
+/**
+ * 加载器的 datastore 文件是**异或混淆**过的(源码 core/src/renderer/v8_datastore.cc 里
+ * transform_data(): buffer[i] ^= key[i % len], key = "A5dgY6lz9fpG9kGNiH1mZ")。
+ * 我们要读它, 就得照抄这个异或 —— 只读不写, 免得不小心抹掉别的插件的数据。
+ */
+const DATASTORE_KEY = "A5dgY6lz9fpG9kGNiH1mZ";
+
+function transformData(buffer: Buffer): Buffer {
+  const out = Buffer.alloc(buffer.length);
+  for (let i = 0; i < buffer.length; i += 1) out[i] = buffer[i]! ^ DATASTORE_KEY.charCodeAt(i % DATASTORE_KEY.length);
+  return out;
+}
+
+/**
+ * 从加载器的 datastore 文件里把插件交上来的"没翻到"清单取回来。
+ * 文件形如 {"键": "值"}(异或混淆), 我们只取自己那把键。
+ */
+export async function syncCollectedFromLoader(): Promise<number> {
+  const file = path.join(loaderDir(), "datastore");
+  let raw: string;
+  try {
+    raw = transformData(await fs.readFile(file)).toString("utf8");
+  } catch {
+    return 0;
+  }
+  try {
+    const map = JSON.parse(raw) as Record<string, unknown>;
+    const value = map["text-replacer.collected"];
+    if (typeof value !== "string") return 0;
+    const parsed = JSON.parse(value) as { collected?: unknown };
+    if (!Array.isArray(parsed.collected)) return 0;
+    const list = parsed.collected.filter((item): item is string => typeof item === "string");
+    return list.length ? await mergeCollected(list) : 0;
+  } catch {
+    return 0;
+  }
+}
+
 export interface TextPackState {
   /** 可用的目标语言(来自 assets/textpack/<语言>/plugin/index.js)。 */
   supported: string[];
@@ -92,6 +130,7 @@ async function exists(file: string): Promise<boolean> {
 
 export async function getState(): Promise<TextPackState> {
   const dir = loaderDir();
+  await syncCollectedFromLoader().catch(() => 0);   // 顺手把插件交上来的清单收下来
   const supported = await supportedLocales();
   const registry = await readRegistry();
   let staged = "";

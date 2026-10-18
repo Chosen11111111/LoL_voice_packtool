@@ -82,17 +82,32 @@ export function createTextReplacer(options) {
     try { window.localStorage.setItem(storageKey, JSON.stringify([...collected])); } catch (error) { /* 忽略 */ }
   }
 
-  /** 把"看到但没翻到"的中文清单交给本机软件, 供之后补字典(每个页面只发一次)。 */
+  /**
+   * 把"看到但没翻到"的中文清单交出去, 供之后补字典。
+   *
+   * 首选加载器的 DataStore: 它由注入核心直接落盘成 <加载器目录>\datastore, 不经过网络,
+   * 因此不会被客户端页面的安全策略拦掉(实测跨域 fetch 会被拦, 那份清单就丢了)。
+   * 网络回传作为补充手段保留。
+   */
+  const STORE_KEY = "text-replacer.collected";
+
   function reportCollection() {
-    if (!REPORT_URL || reported) return;
+    if (reported) return;
     reported = true;
+    const payload = JSON.stringify({ collected: [...collected], replaced: state.replaced, scanned: state.scanned });
+    let stored = false;
     try {
-      fetch(REPORT_URL, {
-        method: "POST",
-        headers: { "Content-Type": "text/plain" },
-        body: JSON.stringify({ collected: [...collected], replaced: state.replaced, scanned: state.scanned })
-      }).catch(() => undefined);
-    } catch (error) { /* 本机软件没开就算了, 不影响客户端 */ }
+      if (window.DataStore && typeof window.DataStore.set === "function") {
+        window.DataStore.set(STORE_KEY, payload);
+        stored = true;
+      }
+    } catch (error) { /* 没有加载器接口就退回网络 */ }
+    try {
+      if (!stored && REPORT_URL) {
+        fetch(REPORT_URL, { method: "POST", headers: { "Content-Type": "text/plain" }, body: payload }).catch(() => undefined);
+      }
+    } catch (error) { /* 不影响客户端 */ }
+    return stored;
   }
 
   function shouldSkip(element) {
@@ -209,8 +224,8 @@ export function createTextReplacer(options) {
   walk(document.body || document.documentElement, 0);
   try {
     window.addEventListener("pagehide", reportCollection);
-    window.setTimeout(reportCollection, 15000);   // 界面稳定后上报一次, 之后有新词再报
-    window.setInterval(reportCollection, 120000);
+    window.setTimeout(reportCollection, 15000);   // 界面稳定后交一次
+    window.setInterval(() => { reported = false; reportCollection(); }, 120000);   // 之后每两分钟再交一次
   } catch (error) { /* 忽略 */ }
 
   const controller = {
