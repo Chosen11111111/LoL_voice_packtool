@@ -8,7 +8,7 @@ import { saveConfig, loadConfig, appRoot, configPath, type ConfigPatch } from ".
 import { resolveVoiceRoot } from "../core/paths.ts";
 import { lobbyLive } from "../modules/lobbyLive.ts";
 import { isDirectory, listNames } from "../core/fsx.ts";
-import { getState as getTextPackState, restartClient as restartClientForTextPack, runElevated, stage as stageTextPack, unstage as unstageTextPack } from "../textpack/deploy.ts";
+import { getState as getTextPackState, mergeCollected, restartClient as restartClientForTextPack, runElevated, stage as stageTextPack, unstage as unstageTextPack } from "../textpack/deploy.ts";
 import { isClientRunning } from "../core/win/processes.ts";
 import type { ModuleId } from "../core/types.ts";
 import { invalidateConfigCache } from "../core/config.ts";
@@ -217,6 +217,25 @@ export function buildRouter(): Router {
    * GET  看状态; POST 分四步: stage 复制文件 / activate 提权激活 / deactivate 取消激活 / unstage 移除文件。
    */
   router.get("/api/textpack", async () => ({ ok: true, state: await getTextPackState() }));
+
+  /**
+   * 客户端里的插件把"看到但没翻到"的中文报回来(用 text/plain 发, 避免跨域预检)。
+   * 这是把界面改彻底的关键: 攒够一份真实清单, 才能知道还差哪些词。
+   */
+  router.postRaw("/api/textpack/collect", async (context) => {
+    let text = "";
+    try {
+      if (context.rawFile) text = await readFile(context.rawFile, "utf8");
+      else if (typeof context.body === "string") text = context.body;
+    } catch { /* 忽略 */ }
+    const list: string[] = [];
+    try {
+      const parsed = JSON.parse(text) as { collected?: unknown };
+      if (Array.isArray(parsed.collected)) for (const item of parsed.collected) if (typeof item === "string") list.push(item);
+    } catch { /* 不是 JSON 就算了 */ }
+    const added = list.length ? await mergeCollected(list) : 0;
+    return { ok: true, received: list.length, added };
+  });
 
   router.post("/api/textpack", async (context) => {
     const body = asRecord(context.body);

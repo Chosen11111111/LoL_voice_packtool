@@ -74,8 +74,25 @@ export function createTextReplacer(options) {
     if (saved) for (const item of JSON.parse(saved)) collected.add(item);
   } catch (error) { /* 存储不可用不影响替换 */ }
 
+  /** 上报地址: 本机软件(端口固定)。用 text/plain 发, 避免浏览器跨域预检, 发出去就行, 不读回执。 */
+  const REPORT_URL = opts.reportUrl === null ? "" : (opts.reportUrl || "http://127.0.0.1:43110/api/textpack/collect");
+  let reported = false;
+
   function saveCollection() {
     try { window.localStorage.setItem(storageKey, JSON.stringify([...collected])); } catch (error) { /* 忽略 */ }
+  }
+
+  /** 把"看到但没翻到"的中文清单交给本机软件, 供之后补字典(每个页面只发一次)。 */
+  function reportCollection() {
+    if (!REPORT_URL || reported) return;
+    reported = true;
+    try {
+      fetch(REPORT_URL, {
+        method: "POST",
+        headers: { "Content-Type": "text/plain" },
+        body: JSON.stringify({ collected: [...collected], replaced: state.replaced, scanned: state.scanned })
+      }).catch(() => undefined);
+    } catch (error) { /* 本机软件没开就算了, 不影响客户端 */ }
   }
 
   function shouldSkip(element) {
@@ -190,6 +207,11 @@ export function createTextReplacer(options) {
 
   observe(document.documentElement);
   walk(document.body || document.documentElement, 0);
+  try {
+    window.addEventListener("pagehide", reportCollection);
+    window.setTimeout(reportCollection, 15000);   // 界面稳定后上报一次, 之后有新词再报
+    window.setInterval(reportCollection, 120000);
+  } catch (error) { /* 忽略 */ }
 
   const controller = {
     get on() { return state.on; },
@@ -197,6 +219,7 @@ export function createTextReplacer(options) {
     on_() { state.on = true; state.error = ""; walk(document.body || document.documentElement, 0); return "on"; },
     stats() { return { replaced: state.replaced, scanned: state.scanned, failed: state.failed, error: state.error, collected: collected.size }; },
     /** 导出"没翻译到"的中文清单(按出现次数无从统计, 按长度排序)。 */
+    report: reportCollection,
     dump() {
       const list = [...collected].sort();
       const text = JSON.stringify(list, null, 2);

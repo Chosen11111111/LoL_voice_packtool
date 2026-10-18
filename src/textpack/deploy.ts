@@ -210,6 +210,23 @@ export async function unstage(): Promise<{ ok: boolean; message: string }> {
   }
 }
 
+/** 插件在客户端里"看到但没翻到"的中文清单, 攒在这里供之后补字典。 */
+export async function mergeCollected(list: string[]): Promise<number> {
+  const file = path.join(loaderDir(), "collected.json");
+  const known = new Set<string>();
+  try {
+    const old = JSON.parse(await fs.readFile(file, "utf8")) as unknown;
+    if (Array.isArray(old)) for (const item of old) if (typeof item === "string") known.add(item);
+  } catch { /* 第一次没有这个文件 */ }
+  const before = known.size;
+  for (const item of list) if (item && item.length <= 200) known.add(item);
+  try {
+    await fs.mkdir(loaderDir(), { recursive: true });
+    await fs.writeFile(file, JSON.stringify([...known].sort(), null, 1), "utf8");
+  } catch { /* 写不进去也不影响客户端 */ }
+  return known.size - before;
+}
+
 /** 重启客户端: 注入只发生在客户端启动时, 所以运行中开启后必须重启一次。 */
 export async function restartClient(): Promise<{ ok: boolean; message: string }> {
   const result = await killClientUx();
