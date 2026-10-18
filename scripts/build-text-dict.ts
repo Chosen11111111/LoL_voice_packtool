@@ -14,26 +14,75 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 
-const CDN = "https://raw.communitydragon.org/latest/plugins/rcp-fe-lol-l10n/global";
+const PLUGINS_ROOT = "https://raw.communitydragon.org/latest/plugins";
+const CDN = PLUGINS_ROOT + "/rcp-fe-lol-l10n/global";
 const CACHE = path.join(import.meta.dirname, "..", ".tmp", "trans");
 const OUT = path.join(import.meta.dirname, "..", "assets", "textpack");
 /** 客户端界面里可能出现的中文 → 目标语言。zh_cn 是"原文", 其余是"译文"。 */
 const SOURCE = "zh_cn";
 const TARGETS = ["en_us", "ko_kr", "ja_jp", "zh_tw", "es_es", "fr_fr", "de_de", "pt_br", "ru_ru", "tr_tr", "vi_vn", "th_th", "it_it", "pl_pl", "id_id"];
 
-async function load(locale: string, download: boolean): Promise<Record<string, string> | null> {
-  const file = path.join(CACHE, locale + ".json");
+/** 列出 CommunityDragon 上的全部客户端插件名。 */
+async function listPlugins(): Promise<string[]> {
+  const file = path.join(CACHE, "plugins.txt");
+  try {
+    return (await fs.readFile(file, "utf8")).split("\n").filter(Boolean);
+  } catch {
+    /* 继续联网 */
+  }
+  const response = await fetch(PLUGINS_ROOT + "/");
+  const html = await response.text();
+  const names = [...html.matchAll(/href="([^"]+)\/"/g)].map((m) => m[1]!);
+  await fs.mkdir(CACHE, { recursive: true });
+  await fs.writeFile(file, names.join("\n"), "utf8");
+  return names;
+}
+
+/** 取某个插件某个语种的官方文字表(带磁盘缓存)。 */
+async function loadPlugin(plugin: string, locale: string, download: boolean): Promise<Record<string, string> | null> {
+  const file = path.join(CACHE, plugin + "." + locale + ".json");
   try {
     return JSON.parse(await fs.readFile(file, "utf8")) as Record<string, string>;
   } catch {
     if (!download) return null;
   }
-  const response = await fetch(CDN + "/" + locale + "/trans.json");
-  if (!response.ok) return null;
-  const text = await response.text();
-  await fs.mkdir(CACHE, { recursive: true });
-  await fs.writeFile(file, text, "utf8");
-  return JSON.parse(text) as Record<string, string>;
+  try {
+    const response = await fetch(PLUGINS_ROOT + "/" + plugin + "/global/" + locale + "/trans.json");
+    if (!response.ok) return null;
+    const text = await response.text();
+    if (!text.startsWith("{")) return null;
+    await fs.mkdir(CACHE, { recursive: true });
+    await fs.writeFile(file, text, "utf8");
+    return JSON.parse(text) as Record<string, string>;
+  } catch {
+    return null;
+  }
+}
+
+/** 全部插件合并成一个"键 -> 文字"表; 同一个键在多个插件里出现时, 先到先得。 */
+async function loadMerged(locale: string, download: boolean): Promise<Record<string, string>> {
+  const plugins = await listPlugins();
+  const merged: Record<string, string> = {};
+  const queue = [...plugins];
+  const worker = async () => {
+    while (queue.length) {
+      const plugin = queue.shift();
+      if (!plugin) return;
+      const table = await loadPlugin(plugin, locale, download);
+      if (!table) continue;
+      for (const [key, value] of Object.entries(table)) {
+        if (typeof value === "string" && merged[key] === undefined) merged[key] = value;
+      }
+    }
+  };
+  await Promise.all(Array.from({ length: 8 }, worker));
+  // 保留最初那份 l10n 表的兜底路径(老缓存仍然有效)
+  const legacy = path.join(CACHE, locale + ".json");
+  try {
+    const table = JSON.parse(await fs.readFile(legacy, "utf8")) as Record<string, string>;
+    for (const [key, value] of Object.entries(table)) if (merged[key] === undefined) merged[key] = value;
+  } catch { /* 没有就算了 */ }
+  return merged;
 }
 
 /** 含有中日韩文字的文字, 才算"需要被翻译"的原文。 */
@@ -42,15 +91,15 @@ function hasCjk(text: string): boolean {
 }
 
 const download = process.argv.includes("--download");
-const source = await load(SOURCE, download);
-if (!source) {
+const source = await loadMerged(SOURCE, download);
+if (Object.keys(source).length === 0) {
   console.error("读不到原文表 " + SOURCE + ", 先加 --download");
   process.exit(1);
 }
-console.log("原文表 " + SOURCE + ": " + Object.keys(source).length + " 条");
+console.log("原文表 " + SOURCE + ": " + Object.keys(source).length + " 条（已合并客户端全部插件）");
 
 for (const target of TARGETS) {
-  const translated = await load(target, download);
+  const translated = await loadMerged(target, download);
   if (!translated) {
     console.log("  " + target + ": 跳过(没有数据)");
     continue;
