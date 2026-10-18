@@ -525,6 +525,7 @@
     const sel = $("selTextPackLang");
     const act = $("btnTextPackActivate");
     const rm = $("btnTextPackRemove");
+    const again = $("btnTextPackRestart");
     const label = $("textPackState");
     const note = $("textPackNote");
     if (!box || !state) return;
@@ -539,7 +540,11 @@
     if (label) label.textContent = state.message || "";
     if (act) act.hidden = !(state.staged && !state.active);
     if (rm) rm.hidden = !state.staged;
-    if (note) note.textContent = TEXT_PACK_NOTE;
+    // 注入发生在客户端启动时: 客户端正在运行就必须重启一次才生效
+    if (again) again.hidden = !(state.active && state.clientRunning);
+    if (note) note.textContent = state.active && state.clientRunning
+      ? "客户端正在运行：文字翻译要等客户端重启后才会生效（点右边『重启客户端』）。" + TEXT_PACK_NOTE
+      : TEXT_PACK_NOTE;
     if (box.dataset.wired !== "1") {
       box.dataset.wired = "1";
       box.addEventListener("change", async () => {
@@ -550,6 +555,7 @@
       if (sel) sel.addEventListener("change", async () => { if (box.checked) await callTextPack("stage", sel.value); });
       if (act) act.addEventListener("click", async () => { await callTextPack("activate", sel && sel.value ? sel.value : "en_us"); });
       if (rm) rm.addEventListener("click", async () => { await callTextPack("deactivate", ""); await callTextPack("unstage", ""); });
+      if (again) again.addEventListener("click", async () => { await callTextPack("restart", ""); });
     }
   }
 

@@ -17,6 +17,7 @@ import { spawn } from "node:child_process";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { isClientRunning, killClientUx } from "../core/win/processes.ts";
 
 /** 装到用户目录, 而不是软件目录 —— 软件可能装在只读位置。 */
 export function loaderDir(): string {
@@ -47,6 +48,8 @@ export interface TextPackState {
   registry: "set" | "missing" | "unknown";
   /** 装好且已激活。 */
   active: boolean;
+  /** 英雄联盟客户端此刻是否在运行 —— 注入发生在客户端启动时, 所以运行中必须重启一次才生效。 */
+  clientRunning: boolean;
   dir: string;
   message: string;
 }
@@ -97,12 +100,15 @@ export async function getState(): Promise<TextPackState> {
     staged = ((await fs.readFile(marker, "utf8").catch(() => "")) || "").trim();
   }
   const active = registry === "set" && staged !== "";
+  const clientRunning = await isClientRunning();
   const message = active
-    ? `已开启（目标语言 ${staged}）`
+    ? clientRunning
+      ? `已开启（目标语言 ${staged}）—— 客户端正在运行, 重启客户端后才会生效`
+      : `已开启（目标语言 ${staged}）—— 下次启动客户端时生效`
     : staged
       ? "已复制文件, 但还没激活（需要管理员权限写一次注册表）"
       : "未开启";
-  return { supported, staged, registry, active, dir, message };
+  return { supported, staged, registry, active, clientRunning, dir, message };
 }
 
 /** 配置文件: 关掉它会往客户端追加的那批 Chromium 开关(含 --no-sandbox), 也不要热键。 */
@@ -182,16 +188,29 @@ export async function unstage(): Promise<{ ok: boolean; message: string }> {
     for (const name of ["core.dll", "config", "locale.txt", "LICENSE-pengu.txt", "NOTICE.txt", "install.cmd", "uninstall.cmd"]) {
       await fs.rm(path.join(dir, name), { force: true });
     }
+    // 目录空了就一起删掉, 做到"一键卸干净"; 父目录(LoL_Voice)绝对不动, 那里还有界面内核的运行目录
+    const left = await fs.readdir(dir).catch(() => [] as string[]);
+    if (left.length === 0) await fs.rmdir(dir).catch(() => undefined);
     return { ok: true, message: "已移除本地文件" };
   } catch (error) {
     return { ok: false, message: `移除失败: ${String((error as Error).message).slice(0, 120)}` };
   }
 }
 
+/** 重启客户端: 注入只发生在客户端启动时, 所以运行中开启后必须重启一次。 */
+export async function restartClient(): Promise<{ ok: boolean; message: string }> {
+  const result = await killClientUx();
+  return { ok: result.ok, message: result.ok ? "已重启客户端（会重新登录一次）" : result.message };
+}
+
 /** 用 UAC 执行我们生成的那个脚本(会弹一次系统授权框)。 */
 export async function runElevated(script: "install" | "uninstall"): Promise<{ ok: boolean; message: string }> {
   const file = path.join(loaderDir(), script + ".cmd");
   if (!(await exists(file))) return { ok: false, message: "找不到脚本, 请先复制文件" };
+  // 取消激活时如果本来就没激活, 不必弹 UAC
+  if (script === "uninstall" && (await readRegistry()) === "missing") {
+    return { ok: true, message: "本来就没有激活, 不需要授权" };
+  }
   return new Promise((resolve) => {
     const child = spawn("powershell", ["-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", `Start-Process -FilePath '${file}' -Verb RunAs -Wait`], { windowsHide: true });
     child.on("error", (error) => resolve({ ok: false, message: String(error.message).slice(0, 120) }));

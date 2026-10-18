@@ -8,7 +8,7 @@ import { saveConfig, loadConfig, appRoot, configPath, type ConfigPatch } from ".
 import { resolveVoiceRoot } from "../core/paths.ts";
 import { lobbyLive } from "../modules/lobbyLive.ts";
 import { isDirectory, listNames } from "../core/fsx.ts";
-import { getState as getTextPackState, runElevated, stage as stageTextPack, unstage as unstageTextPack } from "../textpack/deploy.ts";
+import { getState as getTextPackState, restartClient as restartClientForTextPack, runElevated, stage as stageTextPack, unstage as unstageTextPack } from "../textpack/deploy.ts";
 import { isClientRunning } from "../core/win/processes.ts";
 import type { ModuleId } from "../core/types.ts";
 import { invalidateConfigCache } from "../core/config.ts";
@@ -232,6 +232,10 @@ export function buildRouter(): Router {
     }
     if (action === "unstage") {
       const result = await unstageTextPack();
+      return { ok: result.ok, message: result.message, state: await getTextPackState() };
+    }
+    if (action === "restart") {
+      const result = await restartClientForTextPack();
       return { ok: result.ok, message: result.message, state: await getTextPackState() };
     }
     return { ok: false, message: "未知操作: " + action, state: await getTextPackState() };
