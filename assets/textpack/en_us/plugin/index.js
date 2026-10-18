@@ -252,7 +252,16 @@ function createTextReplacer(options) {
     try {
       const style = document.createElement("style");
       style.id = STYLE_ID;
-      style.textContent = "#pengu-root, pengu-root { display: none !important; visibility: hidden !important; }";
+      style.textContent = [
+        "#pengu-root, pengu-root { display: none !important; visibility: hidden !important; }",
+        // 加载器把客户端的启动加载画面整个改造过, 逐条还原:
+        //   原本客户端自己的图标被 display:none 藏了 -> 放出来
+        //   原本多了一个 144px 的圆形企鹅头像(::before) -> 去掉
+        //   原本多了"Pengu-Powered"字样(:after) -> 去掉
+        "div[id^=index_loading_div] > img { display: block !important; }",
+        "div[id^=index_loading_div]::before { content: none !important; background-image: none !important; width: 0 !important; height: 0 !important; border-radius: 0 !important; }",
+        "div[id^=index_loading_div]::after { content: none !important; margin-top: 0 !important; }"
+      ].join("\n");
       (document.head || document.documentElement).appendChild(style);
     } catch (error) { /* 加不上就算了, 不影响翻译 */ }
   }
