@@ -202,6 +202,7 @@ export function createTextReplacer(options) {
 
   function schedule(node) {
     if (!state.on || state.error) return;
+    hideLoaderUi();                                   // 被框架清掉就补回来
     pending.add(node);
     if (pending.size > 4000) pending.clear();            // 极端情况下宁可漏也不卡
     if (scheduled) return;
@@ -235,6 +236,24 @@ export function createTextReplacer(options) {
     };
   } catch (error) { /* 忽略 */ }
 
+  /**
+   * 把加载器自己的界面藏起来: 它往 body 挂 <div id="pengu-root">, 里面是 <pengu-root>
+   * 自定义元素(带 shadow root), 企鹅图标、欢迎窗口、命令面板都在里面。
+   * 用户要的是"除了语言以外, 其它都和原版客户端一样", 所以整块隐藏(只加一层样式, 不改文件)。
+   */
+  function hideLoaderUi() {
+    if (opts.hideLoaderUi === false) return;
+    const STYLE_ID = "text-replacer-hide-loader-ui";
+    if (document.getElementById(STYLE_ID)) return;
+    try {
+      const style = document.createElement("style");
+      style.id = STYLE_ID;
+      style.textContent = "#pengu-root, pengu-root { display: none !important; visibility: hidden !important; }";
+      (document.head || document.documentElement).appendChild(style);
+    } catch (error) { /* 加不上就算了, 不影响翻译 */ }
+  }
+
+  hideLoaderUi();
   observe(document.documentElement);
   walk(document.body || document.documentElement, 0);
   try {

@@ -77,6 +77,16 @@ class FakeElement {
     this.childNodes.push(child);
     return child;
   }
+  /** 真 DOM 里叫 appendChild; 核心代码两种都会碰到。 */
+  appendChild(child: any) {
+    return this.append(child);
+  }
+  setAttribute(name: string, value: string) {
+    this.attrs[name] = value;
+  }
+  getAttribute(name: string) {
+    return this.attrs[name];
+  }
 }
 
 function installFakeDom() {
@@ -91,7 +101,13 @@ function installFakeDom() {
     requestAnimationFrame: (cb: () => void) => { cb(); return 1; },
     addEventListener: () => undefined
   };
-  globals.document = { body, documentElement: body, createElement: (t: string) => new FakeElement(t) };
+  globals.document = {
+    body,
+    documentElement: body,
+    head: new FakeElement("HEAD"),
+    createElement: (t: string) => new FakeElement(t),
+    getElementById: () => null
+  };
   globals.MutationObserver = class { observe() {} disconnect() {} };
   globals.Element = { prototype: { attachShadow() { return new FakeElement("SHADOW"); } } };
   // 注意: Node 24 自带只读的 navigator, 不能直接赋值; 核心逻辑里访问它是包在 try 里的
