@@ -163,18 +163,31 @@ export async function stage(locale: string): Promise<StageResult> {
   const core = path.join(assetDir(), "loader", "core.dll");
   if (!(await exists(source))) return { ok: false, dir, locale, message: `没有 ${locale} 的语言插件` };
   if (!(await exists(core))) return { ok: false, dir, locale, message: "软件包里的 core.dll 缺失" };
+  const locked: string[] = [];
+  /** 单个文件复制失败(最常见是被正在运行的客户端占用)时跳过, 不要整个流程失败。 */
+  async function put(from: string, to: string, label: string): Promise<void> {
+    try {
+      await fs.copyFile(from, to);
+    } catch (error) {
+      const code = String((error as NodeJS.ErrnoException).code ?? "");
+      if (code === "EBUSY" || code === "EPERM" || code === "EACCES") locked.push(label);
+      else throw error;
+    }
+  }
   try {
     await fs.mkdir(path.join(dir, "plugins", "text-replacer"), { recursive: true });
-    await fs.copyFile(core, path.join(dir, "core.dll"));
-    await fs.copyFile(path.join(assetDir(), "loader", "LICENSE-pengu.txt"), path.join(dir, "LICENSE-pengu.txt"));
-    await fs.copyFile(path.join(assetDir(), "loader", "NOTICE.txt"), path.join(dir, "NOTICE.txt"));
+    // 先放插件: 它才是"要更新的东西"; core.dll 只在客户端没开着时才可能被替换
+    await fs.writeFile(path.join(dir, "plugins", "text-replacer", "index.js"), await fs.readFile(source));
+    await put(core, path.join(dir, "core.dll"), "core.dll（客户端正在运行，已跳过）");
+    await put(path.join(assetDir(), "loader", "LICENSE-pengu.txt"), path.join(dir, "LICENSE-pengu.txt"), "许可声明");
+    await put(path.join(assetDir(), "loader", "NOTICE.txt"), path.join(dir, "NOTICE.txt"), "第三方声明");
     await fs.writeFile(path.join(dir, "config"), configText(), "utf8");
-    await fs.writeFile(path.join(dir, "plugins", "text-replacer", "index.js"), await fs.readFile(source), "utf8");
     await fs.writeFile(path.join(dir, "locale.txt"), locale + "\n", "utf8");
     const { install, uninstall } = scripts(dir);
     await fs.writeFile(path.join(dir, "install.cmd"), install, "utf8");
     await fs.writeFile(path.join(dir, "uninstall.cmd"), uninstall, "utf8");
-    return { ok: true, dir, locale, message: "文件已复制，接着需要管理员权限激活一次" };
+    const note = locked.length ? `（${locked.join("、")} 被占用，重启客户端后可再点一次）` : "";
+    return { ok: true, dir, locale, message: `文件已复制${note}，接着需要管理员权限激活一次` };
   } catch (error) {
     return { ok: false, dir, locale, message: `复制失败: ${String((error as Error).message).slice(0, 120)}` };
   }
