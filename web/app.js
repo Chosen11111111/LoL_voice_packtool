@@ -307,6 +307,7 @@
       }
     }
     renderLocaleRow();
+    void syncTextPackLocale();
   }
 
   function renderLocaleRow() {
@@ -508,55 +509,32 @@
     void syncLobbyLive();
   }
 
-  /* ------------------------------------------------ 客户端文字 */
+  /* ------------------------------------------------ 客户端界面文字(语言跟着语音包走) */
 
-  const TEXT_PACK_LABELS = {
-    en_us: "英文", ko_kr: "韩文", ja_jp: "日文", zh_tw: "繁体中文", es_es: "西班牙语",
-    fr_fr: "法语", de_de: "德语", pt_br: "葡萄牙语", ru_ru: "俄语", tr_tr: "土耳其语",
-    vi_vn: "越南语", th_th: "泰语", it_it: "意大利语", pl_pl: "波兰语", id_id: "印尼语"
-  };
+  /** 语音包代码 -> 文字包代码(en_US -> en_us); 选了没有文字包的语言就返回空。 */
+  function textPackLocale() {
+    const code = String(store.selected || "").toLowerCase();
+    return ["en_us", "ja_jp", "ko_kr"].indexOf(code) >= 0 ? code : "";
+  }
 
-  const TEXT_PACK_NOTE = "只替换客户端界面文字（主页/组队/选人/商店/设置等），不动局内文字。属于第三方注入方式，客户端大版本更新后可能失效；不需要时点“移除”即可完全卸掉。" +
-    "首次开启需要授权一次（会弹系统提示），因为要写一个注册表项。";
+  let textPackState = null;
 
-  /** 把后端状态画到界面上。 */
+  /** 状态画在勾选项上: 已开启就勾上; 语音包语言没有对应文字包时禁用并说明原因。 */
   function renderTextPack(state) {
-    const box = $("chkTextPack");
-    const sel = $("selTextPackLang");
-    const act = $("btnTextPackActivate");
-    const rm = $("btnTextPackRemove");
-    const again = $("btnTextPackRestart");
-    const label = $("textPackState");
-    const note = $("textPackNote");
-    if (!box || !state) return;
-    if (sel && sel.dataset.ready !== "1") {
-      const list = state.supported || [];
-      sel.innerHTML = list.map((code) => '<option value="' + code + '">' + (TEXT_PACK_LABELS[code] || code) + "</option>").join("");
-      sel.dataset.ready = "1";
-      if (list.indexOf("en_us") >= 0) sel.value = "en_us";
+    if (state) textPackState = state;
+    const box = $("modClientText");
+    if (!box || !textPackState) return;
+    const locale = textPackLocale();
+    const supported = textPackState.supported || [];
+    if (!locale || supported.indexOf(locale) < 0) {
+      box.checked = false;
+      box.disabled = true;
+      box.title = "只有语音包选了英语 / 日语 / 韩语时, 才能替换客户端界面文字";
+      return;
     }
-    if (state.staged && sel) sel.value = state.staged;
-    box.checked = Boolean(state.active);
-    if (label) label.textContent = state.message || "";
-    if (act) act.hidden = !(state.staged && !state.active);
-    if (rm) rm.hidden = !state.staged;
-    // 注入发生在客户端启动时: 客户端正在运行就必须重启一次才生效
-    if (again) again.hidden = !(state.active && state.clientRunning);
-    if (note) note.textContent = state.active && state.clientRunning
-      ? "客户端正在运行：文字翻译要等客户端重启后才会生效（点右边『重启客户端』）。" + TEXT_PACK_NOTE
-      : TEXT_PACK_NOTE;
-    if (box.dataset.wired !== "1") {
-      box.dataset.wired = "1";
-      box.addEventListener("change", async () => {
-        const locale = sel && sel.value ? sel.value : "en_us";
-        if (box.checked) await callTextPack("stage", locale);
-        else { await callTextPack("deactivate", locale); await callTextPack("unstage", locale); }
-      });
-      if (sel) sel.addEventListener("change", async () => { if (box.checked) await callTextPack("stage", sel.value); });
-      if (act) act.addEventListener("click", async () => { await callTextPack("activate", sel && sel.value ? sel.value : "en_us"); });
-      if (rm) rm.addEventListener("click", async () => { await callTextPack("deactivate", ""); await callTextPack("unstage", ""); });
-      if (again) again.addEventListener("click", async () => { await callTextPack("restart", ""); });
-    }
+    box.disabled = false;
+    box.checked = Boolean(textPackState.active && textPackState.staged === locale);
+    box.title = (textPackState.message || "") + " · 只改客户端界面文字，不动局内文字";
   }
 
   async function callTextPack(action, locale) {
@@ -568,14 +546,41 @@
 
   async function loadTextPack() {
     try {
-      const payload = await api("/api/textpack");
-      renderTextPack(payload.state);
+      renderTextPack((await api("/api/textpack")).state);
     } catch (error) {
       console.warn("读取客户端文字状态失败", error);
     }
   }
 
-  /* ------------------------------------------------ 任务执行 */
+  /** 语音包换了语言时, 已开启的文字包跟着换过去(需要重启客户端才生效)。 */
+  async function syncTextPackLocale() {
+    if (!textPackState || !textPackState.active) return;
+    const target = textPackLocale();
+    if (!target || target === textPackState.staged) return;
+    await callTextPack("stage", target);
+  }
+
+  // 勾选/取消只在这里接一次
+  (function wireTextPack() {
+    const box = $("modClientText");
+    if (!box) return;
+    box.addEventListener("change", async () => {
+      const target = textPackLocale();
+      if (!target) {
+        box.checked = false;
+        return;
+      }
+      if (box.checked) {
+        await callTextPack("stage", target);
+        await callTextPack("activate", target);   // 需要管理员权限, 会弹一次系统授权
+      } else {
+        await callTextPack("deactivate", target);
+        await callTextPack("unstage", target);
+      }
+    });
+  })();
+
+/* ------------------------------------------------ 任务执行 */
 
   async function waitTask(id) {
     setBusy(true);

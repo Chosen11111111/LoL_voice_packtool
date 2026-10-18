@@ -106,6 +106,13 @@
         <span class="check-text">对局前选人语音</span>
       </label>
 
+      <!-- 客户端界面文字: 语言跟着上面选的语音包走; 只改客户端, 不动局内 -->
+      <label class="check-pill">
+        <input type="checkbox" id="modClientText" />
+        <span class="check-dot"></span>
+        <span class="check-text">客户端界面文字</span>
+      </label>
+
       <!-- 品牌图: 在勾选框右边; 高度与胶囊一致, 所以底部自然齐平、也不会把这行撑高 -->
       <button type="button" class="brand-banner" id="btnBrand" title="chosen1.lol · 稳定换肤" aria-label="ChosenLoLskins 稳定换肤">
         <img src="/brand/ChosenLoLskins-logo.png" alt="ChosenLoLskins" draggable="false" />
@@ -145,25 +152,6 @@
     </div>
   </section>
 
-  <!-- 第五排：客户端文字(只改客户端界面, 与局内文字无关) -->
-  <section class="row-card glass textpack-section">
-    <div class="row-head">
-      <span class="row-label">客户端文字</span>
-      <span class="textpack-scope">只改客户端界面 · 不动局内</span>
-    </div>
-    <div class="textpack-row">
-      <label class="textpack-toggle">
-        <input type="checkbox" id="chkTextPack" />
-        <span>把客户端界面文字换成</span>
-      </label>
-      <select class="select textpack-select" id="selTextPackLang"></select>
-      <button type="button" class="btn glass" id="btnTextPackActivate" hidden>授权开启</button>
-      <button type="button" class="btn glass" id="btnTextPackRemove" hidden>移除</button>
-      <button type="button" class="btn glass" id="btnTextPackRestart" hidden>重启客户端</button>
-      <span class="textpack-state" id="textPackState">读取中…</span>
-    </div>
-    <p class="textpack-note" id="textPackNote"></p>
-  </section>
 
   <!-- 第四排：恢复按钮和开启按钮 -->
   <section class="action-row">

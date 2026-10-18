@@ -909,7 +909,7 @@ button, input, select {
 }
 .brand-banner img {
   display: block;
-  height: 26px;             /* 品牌图裁成横条后(5974x655), 26px 高对应约 237px 宽(原先约 200px, 稍微放大一点);
+  height: 22px;             /* 勾选框那一排多了一项"客户端界面文字", 品牌图缩回去给它们腾地方(22px ≈ 200px 宽);
                                底部对齐靠 .brand-banner 的 align-self: flex-end, 行高仍由胶囊决定, 不会被撑高 */
   width: auto;
   -webkit-user-select: none;
@@ -972,12 +972,3 @@ button, input, select {
 .win-btn:focus-visible { outline: 2px solid var(--blue); outline-offset: -1px; }
 
 
-/* ---------------- 客户端文字(只改客户端界面, 与局内无关) ---------------- */
-.textpack-section { margin-top: 10px; }
-.textpack-scope { margin-left: auto; font-size: 12px; opacity: 0.6; }
-.textpack-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
-.textpack-toggle { display: inline-flex; align-items: center; gap: 8px; font-size: 13px; cursor: pointer; }
-.textpack-toggle input { width: 15px; height: 15px; accent-color: #2563eb; cursor: pointer; }
-.textpack-select { min-width: 120px; }
-.textpack-state { font-size: 12px; opacity: 0.8; }
-.textpack-note { margin: 8px 0 0; font-size: 12px; line-height: 1.55; opacity: 0.72; }
