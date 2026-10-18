@@ -62,6 +62,19 @@ for (const name of ["src", "web", "assets"]) {
   await fs.cp(path.join(root, name), path.join(resource, name), { recursive: true });
 }
 
+// 2b) 极窄范围的清理: 只清 assets/textpack 下"本次构建已经没有"的语言目录。
+//     用户放进 resource\language\ 的语音包一律不碰 —— 那是用户自己的数据。
+const srcPack = path.join(root, "assets", "textpack");
+const dstPack = path.join(resource, "assets", "textpack");
+const wanted = new Set(await fs.readdir(srcPack).catch(() => [] as string[]));
+let cleaned = 0;
+for (const name of await fs.readdir(dstPack).catch(() => [] as string[])) {
+  if (wanted.has(name)) continue;
+  await fs.rm(path.join(dstPack, name), { recursive: true, force: true }).catch(() => undefined);
+  cleaned += 1;
+}
+if (cleaned) console.log("清理过期的文字包目录: " + cleaned + " 个");
+
 // 3) 窗口外壳 → resource/desktop/
 const built = (await exists(path.join(root, "desktop", "target", "release", "voice-shell.exe")))
   ? path.join(root, "desktop", "target", "release")
