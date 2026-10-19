@@ -263,8 +263,8 @@ test("下载语音包: 弹窗只放链接和提取码, 点 × 关闭", async () 
   page.el("btnPackDownload").onclick!();
   await page.settle();
   assert.equal(modal.classList.contains("hidden"), false, "点『下载语音包』应弹出");
-  assert.equal(page.el("packDownloadLink").value, "https://pan.baidu.com/s/1ymzAEQ_GzHOcwXWThqakbQ?pwd=q3gf");
-  assert.equal(page.el("packDownloadCode").value, "q3gf");
+  assert.equal(page.el("packDownloadLink").value, "https://pan.quark.cn/s/faa460d28263");
+  assert.equal(page.el("packDownloadCode").value, "U3Dw");
 
   page.el("btnClosePackDownload").onclick!();
   await page.settle();

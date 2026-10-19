@@ -10,8 +10,8 @@
 
   /** 语音包网盘下载信息(要换下载地址只改这一处)。 */
   const PACK_DOWNLOAD = {
-    url: "https://pan.baidu.com/s/1ymzAEQ_GzHOcwXWThqakbQ?pwd=q3gf",
-    code: "q3gf"
+    url: "https://pan.quark.cn/s/faa460d28263",
+    code: "U3Dw"
   };
 
   const store = {
