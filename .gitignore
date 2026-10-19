@@ -26,3 +26,8 @@ desktop/voice-launcher.exe
 **/*.WebView2/
 **/EBWebView/
 
+
+# 本地预览图与个人配置, 不进仓库
+docs/ui-preview/
+config.json
+
