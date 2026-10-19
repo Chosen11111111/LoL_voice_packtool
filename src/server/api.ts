@@ -308,14 +308,18 @@ export function buildRouter(): Router {
     const body = asRecord(context.body);
     const config = await loadConfig();
     const locale = typeof body.locale === "string" && body.locale ? body.locale : config.defaultLocale;
-    return { ok: true, plan: await planSwitch({ locale, modules: asModules(body.modules) }) };
+    const modules = Array.isArray(body.modules) ? asModules(body.modules) ?? [] : undefined;
+    return { ok: true, plan: await planSwitch({ locale, modules }) };
   });
 
   router.post("/api/apply", async (context) => {
     const body = asRecord(context.body);
     const config = await loadConfig();
     const locale = typeof body.locale === "string" && body.locale ? body.locale : config.defaultLocale;
-    const modules = asModules(body.modules);
+    // 注意: asModules 会把空数组折成 undefined, 而 undefined 在这里的意思是"没指定, 全都要"。
+    // 于是"只勾了客户端界面文字"会变成"顺手把对局语音/对局文字也切了" —— 用户实测踩到过。
+    // 所以明确传了数组(哪怕是空的)就必须原样尊重。
+    const modules = Array.isArray(body.modules) ? asModules(body.modules) ?? [] : undefined;
     // 设计约定: 只有勾选了"选人语音"才要求客户端在运行(它必须连 LCU);
     // 对局语音/对局语言只改游戏文件, 客户端没开也能做。恢复原版不受任何限制。
     if (needsClient(modules) && !(await isClientRunning())) {

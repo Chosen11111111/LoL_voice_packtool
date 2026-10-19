@@ -162,6 +162,24 @@ test("POST /api/apply 全链路切换(对局语音+对局语言)", async () => {
   assert.equal(state.json.state.ingame.is_voice_active, true);
 });
 
+test("空模块列表 = 一个都不切(不能被当成『全都要』)", async () => {
+  // 只勾了"客户端界面文字"时, 前端发的就是 modules: []。这里必须什么都不做。
+  // 曾经 asModules 把空数组折成 undefined, 而 undefined 的意思是"没指定=全部",
+  // 于是用户只勾了客户端文字, 结果对局语音/对局文字也一起被切了。
+  const file = path.join(fixture!.finalDir, "Champions", "Ahri.zh_CN.wad.client");
+  const before = await readFile(file);
+  const before2 = (await get("/api/state")).json.state.ingame;
+  // 故意用一个和上文不同的语言: 万一又被换成默认值, 文件内容一定会变, 测试就会挂
+  const { json } = await post("/api/apply", { locale: "ko_KR", restartClient: false, modules: [] });
+  assert.equal(json.ok, true);
+  const finished = await waitTask(json.task.id);
+  assert.equal(finished.task.status, "succeeded", JSON.stringify(finished.result));
+  assert.equal(await readFile(file), before, "空模块列表不该改动任何游戏文件");
+  // 注意: 不能断言"未切换" —— 上一个用例已经把对局语音切成了 ja_JP, 这里要比的是"没被这次调用改动"。
+  const state = await get("/api/state");
+  assert.equal(state.json.state.ingame.active_locale ?? "", before2.active_locale ?? "", "什么都没勾时, 生效语种不该变");
+});
+
 test("客户端未启动: 只有勾选选人语音才拦截(对局语音/语言不受影响)", async () => {
   setClientRunningOverride(async () => false);
   try {

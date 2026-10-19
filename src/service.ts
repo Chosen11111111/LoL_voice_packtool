@@ -158,7 +158,9 @@ export interface SwitchPlan {
 export async function planSwitch(options: { locale: string; modules?: ModuleId[] }): Promise<SwitchPlan> {
   const config = await loadConfig();
   const env = await buildEnvFromConfig(config);
-  const modules: ModuleId[] = options.modules?.length ? options.modules : defaultApplyModules(config);
+  // 注意: 不能用 modules?.length 判断 —— 空数组在 JS 里是"假", 会被换成默认值,
+  // 于是"一个都不勾"变成了"默认两项全切"(用户实测踩到)。只有"完全没传"才用默认值。
+  const modules: ModuleId[] = Array.isArray(options.modules) ? options.modules : defaultApplyModules(config);
   const blockers: string[] = [];
   const warnings: string[] = [];
 
@@ -246,7 +248,7 @@ export function startApplyTask(request: ApplyRequest): TaskSnapshot {
       return { ok: false, partial: false, restarted: false, message: env.resolution.message, summary: { ok: false, partial: false, lines: [], failed: [] }, results: [] };
     }
     const locale = request.locale || appConfig.defaultLocale;
-    const modules: ModuleId[] = request.modules?.length ? request.modules : defaultApplyModules(appConfig);
+    const modules: ModuleId[] = Array.isArray(request.modules) ? request.modules : defaultApplyModules(appConfig);
     const result = await applyAll(env, {
       locale, modules,
       restartClient: request.restartClient ?? appConfig.autoRestartClient,
@@ -255,7 +257,7 @@ export function startApplyTask(request: ApplyRequest): TaskSnapshot {
     // 记住"上次开启": 重启工具后界面要能如实说明现在生效的是什么(否则会显示"国服原版"让人误以为没生效)
     if (result.ok) {
       try {
-        await saveConfig({ ui: { lastApplied: { locale, modules: [...modules], at: new Date().toISOString() } } });
+        if (modules.length) await saveConfig({ ui: { lastApplied: { locale, modules: [...modules], at: new Date().toISOString() } } });
       } catch (error) {
         logger.warn(`记录上次开启失败: ${String((error as Error).message ?? error)}`);
       }
@@ -274,7 +276,7 @@ export function startRestoreTask(request: RestoreRequest = {}): TaskSnapshot {
   return taskManager.startSnapshot("oneclick_restore", "恢复官方默认", async (handle) => {
     const appConfig = await loadConfig();
     const env = await buildEnvFromConfig(appConfig);
-    const modules: ModuleId[] = request.modules?.length ? request.modules : await defaultRestoreModules(appConfig, env);
+    const modules: ModuleId[] = Array.isArray(request.modules) ? request.modules : await defaultRestoreModules(appConfig, env);
 
     const result = await restoreAll(env, {
       modules, restartClient: request.restartClient ?? appConfig.autoRestartClient,

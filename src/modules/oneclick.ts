@@ -49,7 +49,18 @@ function stoppedOutcome(message: string, results: ModuleResult[] = []): RunOutco
 
 /** 开启: 大厅语音 + 对局语音 + 对局语言。 */
 export async function applyAll(env: SwitchEnv, options: RunOptions): Promise<RunOutcome> {
-  const modules = [...new Set(options.modules.length ? options.modules : (["lobby_voice", "ingame_voice", "ingame_lang"] as ModuleId[]))];
+  // 空数组就是"一个都不切"。以前这里用 options.modules.length 判断, 空数组在 JS 里是"假",
+  // 会被换成默认那三项(大厅语音/对局语音/对局文字) —— 用户"只勾客户端文字"时实测踩到过。
+  const modules = [...new Set<ModuleId>(options.modules)];
+  if (modules.length === 0) {
+    // 一个模块都没勾(例如用户只开了"客户端界面文字"): 什么都不做, 但这是成功, 不是失败。
+    return {
+      ok: true, partial: false, restarted: false,
+      message: "没有勾选任何要切换的内容",
+      summary: { ok: true, partial: false, lines: [], failed: [] },
+      results: []
+    };
+  }
   const results: ModuleResult[] = [];
   logger.info(`一键开启 locale=${options.locale} modules=${modules.join(",")}`);
   if (options.signal?.aborted) return stoppedOutcome("已取消");
@@ -144,7 +155,16 @@ export async function restoreAll(env: SwitchEnv, options: Omit<RunOptions, "loca
   }
 
   const counts = await countPendingRestores(env.finalDir);
-  const modules = [...new Set(options.modules.length ? options.modules : (["lobby_voice", "lobby_lang", "ingame_voice", "ingame_lang"] as ModuleId[]))];
+  const modules = [...new Set<ModuleId>(options.modules)];
+  if (modules.length === 0) {
+    // 一个模块都没勾(例如用户只开了"客户端界面文字"): 什么都不做, 但这是成功, 不是失败。
+    return {
+      ok: true, partial: false, restarted: false,
+      message: "没有勾选任何要切换的内容",
+      summary: { ok: true, partial: false, lines: [], failed: [] },
+      results: []
+    };
+  }
   const total = modules.reduce((sum, module) => sum + Math.max(1, counts[module]), 0);
   options.progress?.(0, total, "正在准备…");
 

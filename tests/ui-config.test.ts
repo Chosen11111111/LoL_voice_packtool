@@ -196,7 +196,7 @@ test("退出即清零: 重启后即使上次开启过也不自动启动监听", 
     0,
     "关掉软件再打开不该自己开起来; last_applied 只作为『上次开启』的记录"
   );
-  assert.equal(page.el("statusLobbyVoice").textContent, "【当前为：未开启】", "界面也要显示未开启");
+  assert.equal(page.el("statusLobbyVoice").textContent, "原皮", "界面也要显示未开启(统一文案: 原皮)");
 });
 
 test("上次开启没勾选人语音 -> 重启后不启动监听", async () => {
@@ -374,8 +374,9 @@ test("区服配置保存失败时阻止切换，不继续用旧配置执行", as
   assert.match(page.el("statusText").textContent, /配置.*保存/);
 });
 
-test("外服未替换时状态显示客户端原版，不显示国服", async () => {
+test("外服未替换时状态显示原皮，不显示国服", async () => {
   const page = await openWindow({ defaultLocale: "ja_JP", ui: { selectedLocale: "ja_JP", modules: [], volume: 60, followClient: false, voiceDelayMs: 1000, region: "global" } });
-  assert.equal(page.el("statusIngameVoice").textContent, "客户端原版文件");
-  assert.equal(page.el("statusIngameLang").textContent, "客户端原版文件");
+  // 状态词统一成两个: 没开是"原皮", 开了是"已开启"
+  assert.equal(page.el("statusIngameVoice").textContent, "原皮");
+  assert.equal(page.el("statusIngameLang").textContent, "原皮");
 });

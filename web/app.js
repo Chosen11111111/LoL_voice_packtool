@@ -439,14 +439,17 @@
     // 1. 游戏内语音及播报员
     const voiceActive = Boolean(ingame.is_voice_active);
     $("cardStatusVoice").classList.toggle("active", voiceActive);
-    $("tagStatusVoice").textContent = voiceActive ? "语音包" : "原版";
-    $("statusIngameVoice").textContent = cleanStatusDetail(ingame.voice, voiceActive, ingame.active_locale);
+    // 全站统一两个词: 没开是"原皮", 开了是"已开启"; 细节都收进悬停提示
+    $("tagStatusVoice").textContent = voiceActive ? "已开启" : "原皮";
+    $("statusIngameVoice").textContent = voiceActive ? "已开启" : "原皮";
+    $("cardStatusVoice").title = cleanStatusDetail(ingame.voice, voiceActive, ingame.active_locale) || "";
 
     // 2. 游戏内文字
     const langActive = Boolean(ingame.is_lang_active);
     $("cardStatusLang").classList.toggle("active", langActive);
-    $("tagStatusLang").textContent = langActive ? "语音包" : "原版";
-    $("statusIngameLang").textContent = cleanStatusDetail(ingame.lang, langActive, ingame.active_locale);
+    $("tagStatusLang").textContent = langActive ? "已开启" : "原皮";
+    $("statusIngameLang").textContent = langActive ? "已开启" : "原皮";
+    $("cardStatusLang").title = cleanStatusDetail(ingame.lang, langActive, ingame.active_locale) || "";
 
     // 3. 对局前选人语音: 走 "LCU 监听 + 本地播放", 状态以后端的监听引擎为准
     const live = store.state.lobby_live || {};
@@ -457,9 +460,11 @@
     $("cardStatusLobby").classList.toggle("active", lobbyActive);
     // 这一格的口径是"状态": 上次开启时勾了选人语音, 状态就是开启
     const lobbyStateOn = Boolean(lastApplied && (lastApplied.modules || []).includes("lobby_voice"));
-    $("tagStatusLobby").textContent = lobbyActive ? "实时播报" : lobbyStateOn ? "开启(待命)" : "未开启";
-    // 一行短句, 与另外两格同款; 细节收进悬停提示, 不占版面
-    $("statusLobbyVoice").textContent = lobbyStateOn ? "【当前为：" + (lobbyLocaleName || liveLocale || "已开启") + "】" : "【当前为：未开启】";
+    $("tagStatusLobby").textContent = lobbyStateOn ? "已开启" : "原皮";
+    $("statusLobbyVoice").textContent = lobbyStateOn ? "已开启" : "原皮";
+    const lobbyShort = lobbyStateOn ? "【当前为：" + (lobbyLocaleName || liveLocale || "已开启") + "】" : "未开启";
+    // 状态词统一成"原皮 / 已开启"两个, 这句细节挂到下面的悬停提示里
+    if (lobbyShort) $("cardStatusLobby").title = lobbyShort;
     const details = [
       "状态：" + (lobbyStateOn ? "开启" : "未开启"),
       lobbyActive ? (live.presence === "in" ? "正在选人, 实时播报中" : "监视中, 等待进入选人") : "监听未运行",
@@ -546,12 +551,14 @@
     const card = $("cardStatusClientText");
     if (card) card.classList.toggle("active", on);
     const tag = $("tagStatusClientText");
-    if (tag) tag.textContent = on ? "已开启" : "原版";
+    if (tag) tag.textContent = on ? "已开启" : "原皮";
     const badge = $("statusClientText");
-    if (badge) {
-      if (!on) badge.textContent = "未开启";
-      else badge.textContent = "【当前为：" + (names[locale] || locale) + "】" +
-        (textPackState.clientRunning ? "（需重启客户端）" : "");
+    if (badge) badge.textContent = on ? "已开启" : "原皮";
+    const cardEl = $("cardStatusClientText");
+    if (cardEl) {
+      cardEl.title = (textPackState.message || "") + (on
+        ? "目标语言：" + (names[locale] || locale) + (textPackState.clientRunning ? "（客户端正在运行，需重启后生效）" : "")
+        : "未开启，客户端界面为原版");
     }
   }
 
