@@ -526,6 +526,8 @@
   }
 
   let textPackState = null;
+  /** 只在第一次读到状态时, 用真实状态初始化第四项的勾选; 之后不再覆盖用户的选择。 */
+  let textPackInitialized = false;
 
   /** 状态画在勾选项上: 已开启就勾上; 语音包语言没有对应文字包时禁用并说明原因。 */
   function renderTextPack(state) {
@@ -541,7 +543,12 @@
       return;
     }
     box.disabled = false;
-    // 勾选是"这次要不要一起开"的选项, 由用户掌握; 真实状态看下面那张状态卡
+    // 勾选是"这次要不要一起开"的选项, 由用户掌握; 真实状态看下面那张状态卡。
+    // 但软件刚启动时要跟真实状态对齐一次(否则明明是开启的, 界面上却是没勾)。
+    if (!textPackInitialized) {
+      textPackInitialized = true;
+      box.checked = Boolean(textPackState.active);
+    }
     box.title = (textPackState.message || "") + " · 目标语言：" + ({ en_us: "英文", ja_jp: "日文", ko_kr: "韩文" }[locale] || locale) +
       " · 只改客户端界面文字，不动局内文字";
     const on = Boolean(textPackState.active && textPackState.staged === locale);
