@@ -969,18 +969,20 @@
 
   $("btnApply").onclick = () => {
     const locale = store.selected;
-    if (!locale) {
+    const modules = selectedModules();
+    // 客户端界面文字可以单独开: 只勾它一项时不要求选语音包(文字包默认英文)
+    const clientText = clientTextSelected();
+    if (!locale && !clientText) {
       setStatus("请先在第二排下拉栏中选择语音包", "err");
       $("selectTrigger").click();
       return;
     }
-    const modules = selectedModules();
-    if (!modules.length) {
+    if (!modules.length && !clientText) {
       setStatus("请至少勾选一项要切换的内容", "err");
       return;
     }
     const found = allLocaleItems().find((item) => item.code === locale);
-    const label = found ? found.name : locale;
+    const label = found ? found.name : clientText ? "仅客户端界面文字" : locale;
     // 没点过「不再提醒」时, 先弹一次提示(里面有关闭 / 不再提醒 / 确定)
     if (!hideEnableTip) {
       pendingEnable = { locale, modules, label };
