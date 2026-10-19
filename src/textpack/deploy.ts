@@ -218,8 +218,6 @@ export async function stage(locale: string): Promise<StageResult> {
     // 先放插件: 它才是"要更新的东西"; core.dll 只在客户端没开着时才可能被替换
     await fs.writeFile(path.join(dir, "plugins", "text-replacer", "index.js"), await fs.readFile(source));
     await put(core, path.join(dir, "core.dll"), "core.dll（客户端正在运行，已跳过）");
-    await put(path.join(assetDir(), "loader", "LICENSE-pengu.txt"), path.join(dir, "LICENSE-pengu.txt"), "许可声明");
-    await put(path.join(assetDir(), "loader", "NOTICE.txt"), path.join(dir, "NOTICE.txt"), "第三方声明");
     await fs.writeFile(path.join(dir, "config"), configText(), "utf8");
     await fs.writeFile(path.join(dir, "locale.txt"), locale + "\n", "utf8");
     const { install, uninstall } = scripts(dir);
@@ -237,6 +235,7 @@ export async function unstage(): Promise<{ ok: boolean; message: string }> {
   const dir = loaderDir();
   try {
     await fs.rm(path.join(dir, "plugins", "text-replacer"), { recursive: true, force: true });
+    // 许可声明两个名字留着: 早先版本装过, 这里顺手清掉
     for (const name of ["core.dll", "config", "locale.txt", "LICENSE-pengu.txt", "NOTICE.txt", "install.cmd", "uninstall.cmd"]) {
       await fs.rm(path.join(dir, name), { force: true });
     }

@@ -92,14 +92,33 @@ async function loadMerged(locale: string, download: boolean): Promise<Record<str
 const GAMEDATA = PLUGINS_ROOT + "/rcp-be-lol-game-data/global";
 const CDN_LOCALE: Record<string, string> = { en_us: "default" };
 const GAMEDATA_FILES = ["champion-summary.json", "skins.json", "items.json", "summoner-spells.json", "queues.json"];
-/** 同一份数据里, 哪些字段是要替换的界面文字。 */
-const GAMEDATA_FIELDS: Record<string, string[]> = {
-  "champion-summary.json": ["name"],
-  "skins.json": ["name"],
-  "items.json": ["name"],
-  "summoner-spells.json": ["name"],
-  "queues.json": ["name", "shortName", "description", "detailedDescription"]
-};
+/**
+ * 把一份数据里所有的字符串叶子摊平, 用"路径"当键。
+ *
+ * 原来只挑 name 一个字段, 于是英雄的短名("安妮")、皮肤的别名等等全漏了 —— 实测有上万条
+ * 界面上会出现的文字因此永远翻不到。现在整棵树都收, 两边靠路径对齐。
+ * 数组只收带 id 的元素: 万一两份数据的排序不同, 也不能把它们错配成"安妮 -> Olaf"。
+ */
+function flattenStrings(node: unknown, prefix: string, out: Record<string, string>, depth: number): void {
+  if (depth > 10) return;
+  if (typeof node === "string") {
+    if (node.length > 0 && node.length <= GAMEDATA_MAX && !node.includes("{{")) out[prefix] = node;
+    return;
+  }
+  if (Array.isArray(node)) {
+    for (const item of node) {
+      const id = item && typeof item === "object" ? (item as Record<string, unknown>).id : undefined;
+      if (typeof id !== "number" && typeof id !== "string") continue;
+      flattenStrings(item, "id" + String(id), out, depth + 1);
+    }
+    return;
+  }
+  if (node && typeof node === "object") {
+    for (const [field, value] of Object.entries(node as Record<string, unknown>)) {
+      flattenStrings(value, prefix + "/" + field, out, depth + 1);
+    }
+  }
+}
 /** 太长的多半是带占位符的说明, 不进字典(避免字典虚胖)。 */
 const GAMEDATA_MAX = 300;
 
@@ -126,24 +145,34 @@ async function loadGameData(locale: string, download: boolean): Promise<Record<s
     if (!raw) continue;
     let data: unknown;
     try { data = JSON.parse(raw); } catch { continue; }
-    const fields = GAMEDATA_FIELDS[file] ?? ["name"];
-    const items: [string, unknown][] = Array.isArray(data)
-      ? (data as any[]).map((entry) => [String(entry?.id ?? ""), entry])
-      : Object.entries(data as Record<string, unknown>);
-    for (const [id, entry] of items) {
-      if (!entry || typeof entry !== "object") continue;
-      for (const field of fields) {
-        const value = (entry as Record<string, unknown>)[field];
-        if (typeof value !== "string") continue;
-        if (!value || value.length > GAMEDATA_MAX || value.includes("{{")) continue;
-        out[id + "|" + field] = value;
+    flattenStrings(data, file.replace(/\.json$/, ""), out, 0);
+
+    // 英雄表要统一成"名字 / 称号"两个人话键名再配对。
+    // 注意: 只有国服那份的字段含义是反的 ——
+    //   中: name = 称号("黑暗之女")   description = 名字("安妮")
+    //   英: name = 名字("Annie")      description = 称号("the Dark Child")
+    // 两边都按同一个规则取, 就会得到"安妮 -> the Dark Child"这种错译(踩过)。
+    if (file === "champion-summary.json" && Array.isArray(data)) {
+      const sourceSide = locale === SOURCE;
+      for (const entry of data as Array<Record<string, unknown>>) {
+        const id = entry?.id;
+        if (typeof id !== "number") continue;
+        // 注意路径前缀: 数组元素摊平时用的是 "id<编号>", 不带文件名
+        delete out["id" + id + "/name"];
+        delete out["id" + id + "/description"];
+        // 国服这两栏谁才是"玩家看到的名字"并不统一(安妮看的是 description, 盲僧看的是 name),
+        // 所以两个都收, 且都指向英文的名字 —— 玩家无论在哪儿看到哪种写法都能变成 Lee Sin。
+        const displayName = sourceSide ? entry.description : entry.name;
+        const displayTitle = sourceSide ? entry.name : entry.name;
+        if (typeof displayName === "string" && displayName) out["id" + id + "/displayName"] = displayName;
+        if (typeof displayTitle === "string" && displayTitle) out["id" + id + "/displayTitle"] = displayTitle;
       }
     }
   }
   return out;
 }
 
-/** 按 id|字段 把两种语言的游戏数据对齐, 得到"中文 -> 译文"。 */
+/** 按路径把两种语言的游戏数据对齐, 得到"中文 -> 译文"。 */
 function joinGameData(source: Record<string, string>, target: Record<string, string>): [string, string][] {
   const pairs: [string, string][] = [];
   for (const [key, zh] of Object.entries(source)) {
@@ -157,6 +186,25 @@ function joinGameData(source: Record<string, string>, target: Record<string, str
 /** 含有中日韩文字的文字, 才算"需要被翻译"的原文。 */
 function hasCjk(text: string): boolean {
   return /[\u3400-\u9fff\u3000-\u303f\uff00-\uffef]/.test(text);
+}
+
+/**
+ * 带 HTML 标签的文案要拆成文本片段再配对。
+ *
+ * 客户端渲染 "<h5>勇敢举动</h5><p>你获得一个额外的属性锻造器…</p>" 时, 标签变成了真正的
+ * DOM 元素, 我们要替换的是里面的文本节点。而字典里若只存整段(含标签)原文, 永远匹配不上,
+ * 这就是"有些文案死活不翻"的主因之一。两边结构一致, 所以按标签拆开后按下标逐一配对。
+ * 片段数量对不上就整条放弃(宁可漏翻, 也不能错翻)。
+ */
+function splitHtmlPairs(zh: string, other: string): Array<[string, string]> {
+  if (!zh.includes("<") && !other.includes("<")) return [];
+  const runs = (text: string) => text.split(/<[^>]*>/).map((piece) => piece.trim()).filter((piece) => piece.length > 0);
+  const left = runs(zh);
+  const right = runs(other);
+  if (left.length === 0 || left.length !== right.length) return [];
+  const pairs: Array<[string, string]> = [];
+  for (let i = 0; i < left.length; i += 1) pairs.push([left[i]!, right[i]!]);
+  return pairs;
 }
 
 const download = process.argv.includes("--download");
@@ -181,6 +229,22 @@ for (const target of TARGETS) {
   let shared = 0;
   let cjk = 0;
   let collision = 0;
+  let split = 0;
+
+  // 游戏数据先来: 英雄名/皮肤名这类以它为准。界面插件里的文字表有时给的是称号, 会和名字
+  // 撞车(实测"安妮"被表里的称号译法占了位), 所以让游戏数据结构先占位, 表格再来补剩下的界面文案。
+  let gameAdded = 0;
+  for (const [zh, other] of joinGameData(sourceGame, targetGame)) {
+    if (!hasCjk(zh) || dict[zh] !== undefined) continue;
+    dict[zh] = other;
+    gameAdded += 1;
+    for (const [pieceZh, pieceOther] of splitHtmlPairs(zh, other)) {
+      if (!hasCjk(pieceZh) || pieceZh === pieceOther || dict[pieceZh] !== undefined) continue;
+      dict[pieceZh] = pieceOther;
+      split += 1;
+    }
+  }
+
   for (const [key, zh] of Object.entries(source)) {
     const other = translated[key];
     if (typeof zh !== "string" || typeof other !== "string") continue;
@@ -190,13 +254,13 @@ for (const target of TARGETS) {
     // 同一个中文原文映射到不同译文时, 只能取其一 —— 记录下来, 靠"更长的先替换"缓解
     if (dict[zh] !== undefined && dict[zh] !== other) { collision += 1; continue; }
     dict[zh] = other;
-  }
-  // 再把游戏数据(英雄名/皮肤名/道具名/技能名/模式名与说明)并进来
-  let gameAdded = 0;
-  for (const [zh, other] of joinGameData(sourceGame, targetGame)) {
-    if (!hasCjk(zh) || dict[zh] !== undefined) continue;
-    dict[zh] = other;
-    gameAdded += 1;
+    // 带标签的文案: 把里面的文字片段也单独收进来
+    for (const [pieceZh, pieceOther] of splitHtmlPairs(zh, other)) {
+      if (!hasCjk(pieceZh) || pieceZh === pieceOther) continue;
+      if (dict[pieceZh] !== undefined && dict[pieceZh] !== pieceOther) continue;
+      dict[pieceZh] = pieceOther;
+      split += 1;
+    }
   }
   // 最后叠一层"人工覆盖表": 官方数据里没有、或国服写法不一致的词条(比如英雄短名、国服专属皮肤名)
   let manualAdded = 0;
@@ -213,5 +277,5 @@ for (const target of TARGETS) {
   const dir = path.join(OUT, target);
   await fs.mkdir(dir, { recursive: true });
   await fs.writeFile(path.join(dir, "dict.json"), JSON.stringify(dict, null, 0), "utf8");
-  console.log("  " + target + ": 文字表 " + Object.keys(dict).length + " 条(游戏数据 " + gameAdded + " 条, 人工覆盖 " + manualAdded + " 条)");
+  console.log("  " + target + ": 文字表 " + Object.keys(dict).length + " 条(游戏数据 " + gameAdded + " 条, 拆标签 " + split + " 条, 人工覆盖 " + manualAdded + " 条)");
 }
