@@ -1,6 +1,6 @@
 {
   "name": "league-voice",
-  "version": "1.20.0",
+  "version": "1.21.0",
   "private": true,
   "type": "module",
   "description": "英雄联盟 多语种语音包 / 语言包 独立切换后端 (TypeScript, 零运行时依赖)",
