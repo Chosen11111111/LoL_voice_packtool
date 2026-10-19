@@ -439,16 +439,16 @@
     // 1. 游戏内语音及播报员
     const voiceActive = Boolean(ingame.is_voice_active);
     $("cardStatusVoice").classList.toggle("active", voiceActive);
-    // 全站统一两个词: 没开是"原皮", 开了是"已开启"; 细节都收进悬停提示
-    $("tagStatusVoice").textContent = voiceActive ? "已开启" : "原皮";
-    $("statusIngameVoice").textContent = voiceActive ? "已开启" : "原皮";
+    // 全站统一两个词: 没开是"原版", 开了是"已开启"; 细节都收进悬停提示
+    $("tagStatusVoice").textContent = voiceActive ? "已开启" : "原版";
+    $("statusIngameVoice").textContent = voiceActive ? "已开启" : "原版";
     $("cardStatusVoice").title = cleanStatusDetail(ingame.voice, voiceActive, ingame.active_locale) || "";
 
     // 2. 游戏内文字
     const langActive = Boolean(ingame.is_lang_active);
     $("cardStatusLang").classList.toggle("active", langActive);
-    $("tagStatusLang").textContent = langActive ? "已开启" : "原皮";
-    $("statusIngameLang").textContent = langActive ? "已开启" : "原皮";
+    $("tagStatusLang").textContent = langActive ? "已开启" : "原版";
+    $("statusIngameLang").textContent = langActive ? "已开启" : "原版";
     $("cardStatusLang").title = cleanStatusDetail(ingame.lang, langActive, ingame.active_locale) || "";
 
     // 3. 对局前选人语音: 走 "LCU 监听 + 本地播放", 状态以后端的监听引擎为准
@@ -460,10 +460,10 @@
     $("cardStatusLobby").classList.toggle("active", lobbyActive);
     // 这一格的口径是"状态": 上次开启时勾了选人语音, 状态就是开启
     const lobbyStateOn = Boolean(lastApplied && (lastApplied.modules || []).includes("lobby_voice"));
-    $("tagStatusLobby").textContent = lobbyStateOn ? "已开启" : "原皮";
-    $("statusLobbyVoice").textContent = lobbyStateOn ? "已开启" : "原皮";
+    $("tagStatusLobby").textContent = lobbyStateOn ? "已开启" : "原版";
+    $("statusLobbyVoice").textContent = lobbyStateOn ? "已开启" : "原版";
     const lobbyShort = lobbyStateOn ? "【当前为：" + (lobbyLocaleName || liveLocale || "已开启") + "】" : "未开启";
-    // 状态词统一成"原皮 / 已开启"两个, 这句细节挂到下面的悬停提示里
+    // 状态词统一成"原版 / 已开启"两个, 这句细节挂到下面的悬停提示里
     if (lobbyShort) $("cardStatusLobby").title = lobbyShort;
     const details = [
       "状态：" + (lobbyStateOn ? "开启" : "未开启"),
@@ -551,9 +551,9 @@
     const card = $("cardStatusClientText");
     if (card) card.classList.toggle("active", on);
     const tag = $("tagStatusClientText");
-    if (tag) tag.textContent = on ? "已开启" : "原皮";
+    if (tag) tag.textContent = on ? "已开启" : "原版";
     const badge = $("statusClientText");
-    if (badge) badge.textContent = on ? "已开启" : "原皮";
+    if (badge) badge.textContent = on ? "已开启" : "原版";
     const cardEl = $("cardStatusClientText");
     if (cardEl) {
       cardEl.title = (textPackState.message || "") + (on
