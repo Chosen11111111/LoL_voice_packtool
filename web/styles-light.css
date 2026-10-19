@@ -1,0 +1,408 @@
+/* ============================================================================
+   LoL Voice —— 浅色精修版(可选皮肤 · 零渐变)
+   ----------------------------------------------------------------------------
+   保留原来的"蓝白"气质, 但做三件事:
+     ① 去掉所有渐变与毛玻璃: 纯色底 + 纯白卡片, 用边框和分层阴影做层次;
+     ② 把偏紫的冷底改成中性冷灰白, 长时间看眼睛舒服;
+     ③ 修掉对比度与节奏问题(占位符太浅、模块标题字重太轻、状态卡文字发灰)。
+   布局、尺寸、元素 id、app.js 逻辑一律不动 —— 只在 styles.css 之后覆盖。
+   ============================================================================ */
+
+:root {
+  --bg: #f4f6fa;                            /* 中性冷白, 不再是偏紫的 #eef4fc */
+  --glass-bg: #ffffff;                      /* 卡片纯白, 才有层次 */
+  --glass-border: rgba(15, 23, 42, 0.07);
+  --control-bg: #ffffff;
+  --control-hover: #f7f9fc;
+  --control-border: rgba(15, 23, 42, 0.12);
+  --control-border-hover: rgba(15, 23, 42, 0.24);
+
+  --blue: #2f6bed;
+  --blue-hover: #2559d6;
+  --blue-active: #1d47ad;
+  --blue-soft: rgba(47, 107, 237, 0.08);
+  --blue-soft-hover: rgba(47, 107, 237, 0.13);
+  --blue-border: rgba(47, 107, 237, 0.30);
+  --blue-ring: rgba(47, 107, 237, 0.16);
+
+  --ok: #12a76a;
+  --danger: #d93a3a;
+
+  --text: #47546a;
+  --text-strong: #101a2b;
+  --muted: #64748b;
+  --placeholder: #7c8798;                   /* 比原来浅一度, 保证还能看清 */
+
+  /* 分层阴影: 一层贴边 + 一层扩散, 不用渐变也有立体感 */
+  --glass-shadow:
+    0 1px 2px rgba(16, 24, 40, 0.04),
+    0 10px 26px -18px rgba(16, 24, 40, 0.28);
+  --control-shadow:
+    0 1px 2px rgba(16, 24, 40, 0.05);
+}
+
+/* ------------------------------------------------------------------ 底色 */
+
+html,
+body {
+  background-color: var(--bg);
+  background-image: none;                   /* 明确不要任何渐变 */
+}
+
+/* 原来三个柔光球 = 大面积渐变感, 这个版本整个去掉 */
+.ambient-bg {
+  display: none;
+}
+
+/* ------------------------------------------------------------------ 卡片 */
+
+.glass {
+  background-color: var(--glass-bg);
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  border: 1px solid var(--glass-border);
+  box-shadow: var(--glass-shadow);
+}
+
+.row-card {
+  padding: 14px 18px;                       /* 比原来多给一点呼吸 */
+  transition: box-shadow 0.18s ease, border-color 0.18s ease;
+}
+
+/* 模块标题: 加粗到 600 并加深, 和内容拉开层级 */
+.row-label {
+  font-size: 13.5px;
+  font-weight: 600;
+  color: var(--text-strong);
+  letter-spacing: 0.01em;
+}
+
+/* ------------------------------------------------------------------ 按钮 */
+
+.btn {
+  background-color: var(--control-bg);
+  border: 1px solid var(--control-border);
+  color: var(--text);
+  box-shadow: var(--control-shadow);
+  transition: background-color 0.16s ease, border-color 0.16s ease,
+              color 0.16s ease, box-shadow 0.16s ease, transform 0.12s ease;
+}
+
+.btn:hover {
+  background-color: var(--control-hover);
+  border-color: var(--control-border-hover);
+  color: var(--text-strong);
+}
+
+.btn:active {
+  transform: translateY(1px);
+  box-shadow: none;
+}
+
+/* 主按钮: 纯色深蓝, 不用渐变 */
+.btn.primary {
+  background-color: var(--blue);
+  background-image: none;
+  border-color: var(--blue);
+  color: #ffffff;
+  font-weight: 600;
+  box-shadow: 0 1px 2px rgba(16, 24, 40, 0.10), 0 6px 16px -10px rgba(47, 107, 237, 0.55);
+}
+
+.btn.primary:hover {
+  background-color: var(--blue-hover);
+  border-color: var(--blue-hover);
+  color: #ffffff;
+}
+
+.btn.primary:active {
+  background-color: var(--blue-active);
+  border-color: var(--blue-active);
+}
+
+/* 次要按钮: 不要和主按钮抢视觉重量 */
+.soft-btn,
+.soft-blue-btn {
+  background-color: #ffffff;
+  color: var(--text);
+}
+
+.soft-btn:hover,
+.soft-blue-btn:hover {
+  color: var(--text-strong);
+}
+
+/* 国服那个药丸: 收成小圆章, 别再像个单选按钮 */
+.region-pill {
+  background-color: transparent;
+  border: 1px solid var(--control-border);
+  color: var(--muted);
+  box-shadow: none;
+}
+
+.region-dot {
+  width: 6px;
+  height: 6px;
+  background-color: var(--ok);
+  box-shadow: none;
+}
+
+/* ---------------------------------------------------------- 输入与下拉 */
+
+.field-shell,
+.select-trigger {
+  background-color: #ffffff;
+  border: 1px solid var(--control-border);
+  box-shadow: var(--control-shadow);
+}
+
+.field-shell:focus-within,
+.select-trigger:hover,
+.select-trigger[aria-expanded="true"] {
+  border-color: var(--blue-border);
+  box-shadow: 0 0 0 3px var(--blue-ring);
+}
+
+/* 占位符原来太浅, 加深一档 */
+.field-shell input::placeholder,
+.field-shell input[type="text"]::placeholder {
+  color: var(--placeholder);
+  opacity: 1;
+}
+
+.field-icon,
+.select-label.placeholder {
+  color: var(--placeholder);
+}
+
+.select-menu {
+  background-color: #ffffff;
+  border: 1px solid rgba(15, 23, 42, 0.10);
+  box-shadow: 0 1px 2px rgba(16, 24, 40, 0.04), 0 14px 34px -16px rgba(16, 24, 40, 0.30);
+}
+
+.select-option:hover {
+  background-color: #f4f7fc;
+}
+
+.select-option.active {
+  background-color: var(--blue-soft);
+  color: var(--blue-active);
+}
+
+/* ---------------------------------------------------------- 勾选胶囊 */
+
+.check-pill {
+  background-color: #f7f9fc;
+  border: 1px solid var(--control-border);
+  color: var(--muted);
+}
+
+.check-pill:hover {
+  background-color: #ffffff;
+  border-color: var(--control-border-hover);
+  color: var(--text);
+}
+
+.check-dot {
+  border: 2px solid #c3ccd9;
+  background-color: #ffffff;
+}
+
+.check-pill:has(input:checked) {
+  background-color: var(--blue-soft);
+  border-color: var(--blue-border);
+  color: var(--blue-active);
+  font-weight: 600;
+}
+
+.check-pill:has(input:checked) .check-dot {
+  border-color: var(--blue);
+  background-color: var(--blue);
+  box-shadow: none;                         /* 原来发光, 这个版本要干净 */
+}
+
+/* ------------------------------------------------------------ 状态卡 */
+
+.status-three-grid {
+  gap: 12px;
+}
+
+.status-item {
+  background-color: #ffffff;
+  border: 1px solid var(--control-border);
+  padding: 14px 16px;
+  box-shadow: var(--control-shadow);
+}
+
+.status-item.active {
+  background-color: #f6f9ff;
+  border-color: var(--blue-border);
+}
+
+/* 标题走到 13px / 深灰, 和下方大字拉开 */
+.status-name {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--muted);
+  letter-spacing: 0;
+}
+
+.status-item.active .status-name {
+  color: var(--blue-active);
+}
+
+.status-badge {
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--text-strong);
+  letter-spacing: 0.01em;
+}
+
+/* 小灯: 绿=原版 / 紫=已开启(尺寸放大到 8px, 去掉刺眼的光晕) */
+.status-tag {
+  background-color: transparent;
+  padding: 0;
+}
+
+.status-tag::before {
+  width: 8px;
+  height: 8px;
+  background-color: #21c07a;
+  box-shadow: none;
+}
+
+.status-item.active .status-tag::before {
+  background-color: #7c5cf0;
+  box-shadow: none;
+}
+
+/* ------------------------------------------------------------- 底部行 */
+
+.footer-row {
+  padding: 12px 18px;
+}
+
+.status-dot {
+  background-color: var(--blue);
+  box-shadow: none;
+}
+
+.progress-track {
+  background-color: rgba(15, 23, 42, 0.08);
+}
+
+.progress-fill {
+  background-color: var(--blue);
+  background-image: none;
+  box-shadow: none;
+}
+
+.hud-value {
+  color: var(--muted);
+}
+
+/* 两个按钮不再一样宽: 主操作更宽, 一眼看出主次 */
+.action-row {
+  gap: 12px;
+}
+
+.restore-btn {
+  flex: 0 0 auto;
+  min-width: 132px;
+}
+
+.apply-btn {
+  flex: 1 1 auto;
+}
+
+/* ------------------------------------------------------------- 标题栏 */
+
+.app-titlebar {
+  background: #ffffff;                      /* 去掉原来那条线性渐变 */
+  border-bottom: 1px solid rgba(15, 23, 42, 0.08);
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+
+.app-titlebar__name {
+  font-weight: 600;
+  color: var(--text-strong);
+  letter-spacing: 0.01em;
+}
+
+.app-titlebar__logo {
+  margin-right: 4px;                        /* 图标与文字的呼吸 */
+}
+
+.win-btn {
+  color: var(--muted);
+  border-radius: 6px;
+}
+
+.win-btn:hover {
+  background-color: rgba(15, 23, 42, 0.06);
+  color: var(--text-strong);
+}
+
+.win-btn--close:hover {
+  background-color: var(--danger);
+  color: #ffffff;
+}
+
+/* --------------------------------------------------------------- 弹窗 */
+
+.glass-modal {
+  background-color: #ffffff;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  border: 1px solid rgba(15, 23, 42, 0.10);
+  box-shadow: 0 1px 2px rgba(16, 24, 40, 0.05), 0 30px 60px -28px rgba(16, 24, 40, 0.40);
+}
+
+.modal-head {
+  color: var(--text-strong);
+  font-weight: 600;
+}
+
+.log-content {
+  background-color: #f7f9fc;
+  border: 1px solid var(--control-border);
+  color: #3c4a5e;
+}
+
+.path-cand-item {
+  background-color: #ffffff;
+  border: 1px solid var(--control-border);
+}
+
+.path-cand-item:hover {
+  border-color: var(--blue-border);
+  background-color: #f7faff;
+}
+
+/* --------------------------------------------------------- 滚动条/选中 */
+
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background-color: rgba(15, 23, 42, 0.18);
+  border-radius: 999px;
+  border: 2px solid transparent;
+  background-clip: content-box;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background-color: rgba(15, 23, 42, 0.30);
+}
+
+::selection {
+  background-color: rgba(47, 107, 237, 0.22);
+}
