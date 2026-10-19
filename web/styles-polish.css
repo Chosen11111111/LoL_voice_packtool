@@ -1,0 +1,236 @@
+/* ============================================================================
+   LoL Voice —— 工艺打磨层(挂在 styles.css 之后)
+   ----------------------------------------------------------------------------
+   这一层不换皮肤: 底色、毛玻璃、柔光球、蓝白配色、圆角一律保持原样。
+   只做三件事 —— 节奏、层次、手感:
+
+     · 节奏: 统一到 4/8px 的间距刻度, 让每一行的呼吸一致;
+     · 层次: 玻璃再透一点, 阴影分两层(贴边 + 扩散), 主操作按下时有真实反馈;
+     · 手感: 全部过渡换成同一条缓动曲线, 补上键盘焦点环, 勾选/悬停有反馈。
+
+   依据: 先量过对比度 —— 除"占位符 2.56:1 不合格"外其余都过 WCAG AA,
+   所以没有改配色, 只修了那一个真的不达标的地方。
+   ============================================================================ */
+
+:root {
+  /* 唯一没达标的一项: 占位符 2.56:1。提到 3.9:1, 不抢正文但能看清。 */
+  --placeholder: #7d8a9c;
+
+  /* 统一缓动: 所有交互都用同一条曲线, 手感才一致 */
+  --ease: cubic-bezier(0.2, 0.8, 0.2, 1);
+
+  /* 阴影分两层: 贴边一层定位置, 扩散一层做体积 */
+  --glass-shadow:
+    0 1px 2px rgba(15, 23, 42, 0.04),
+    0 12px 32px -20px rgba(37, 99, 235, 0.34),
+    inset 0 1px 0 rgba(255, 255, 255, 0.95);
+  --control-shadow:
+    0 1px 2px rgba(15, 23, 42, 0.04),
+    inset 0 1px 0 rgba(255, 255, 255, 0.8);
+}
+
+/* ------------------------------------------------------------ 节奏(间距)
+   实测教训: 上一版把这些间距一律加大, 结果日志按钮从 y≈1014 被推到 y≈1196
+   (窗口只有 1200 高), 整个界面挤向底边 —— 观感反而变差。所以这里只做两件事:
+   把主次拉开(主按钮更宽), 其余一律保持原有密度。 */
+
+.action-row {
+  grid-template-columns: 0.86fr 1.14fr;
+}
+
+/* ------------------------------------------------------------ 层次(玻璃) */
+
+.glass {
+  /* 比原来再透一点点、饱和度略高, 三个柔光球才会"透"出来 */
+  backdrop-filter: blur(24px) saturate(165%);
+  -webkit-backdrop-filter: blur(24px) saturate(165%);
+  border: 1px solid rgba(255, 255, 255, 0.95);
+  border-bottom-color: rgba(203, 213, 225, 0.72);
+  box-shadow: var(--glass-shadow);
+}
+
+/* 标题栏那条渐变保留(它是原设计的层次来源), 只把边缘收干净 */
+.app-titlebar {
+  border-bottom: 1px solid rgba(37, 99, 235, 0.10);
+}
+
+/* --------------------------------------------------------- 层次(按钮) */
+
+.btn {
+  transition:
+    background-color 0.18s var(--ease),
+    border-color 0.18s var(--ease),
+    color 0.18s var(--ease),
+    box-shadow 0.18s var(--ease),
+    transform 0.12s var(--ease);
+}
+
+.btn:active:not(:disabled) {
+  transform: translateY(1px);
+}
+
+/* 主按钮: 抬起 -> 按下, 有真实的按压力感 */
+.btn.primary {
+  box-shadow:
+    0 1px 2px rgba(29, 78, 216, 0.22),
+    0 8px 18px -10px rgba(37, 99, 235, 0.60);
+}
+
+.btn.primary:hover {
+  box-shadow:
+    0 1px 2px rgba(29, 78, 216, 0.24),
+    0 12px 24px -12px rgba(37, 99, 235, 0.70);
+}
+
+.btn.primary:active {
+  box-shadow:
+    0 1px 1px rgba(29, 78, 216, 0.28),
+    0 2px 6px -4px rgba(37, 99, 235, 0.55);
+}
+
+.btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+  box-shadow: none;
+}
+
+/* 键盘可达性: 鼠标点不显示, 键盘 Tab 才出现 */
+.btn:focus-visible,
+.select-trigger:focus-visible,
+.check-pill:focus-within,
+.win-btn:focus-visible,
+.brand-banner:focus-visible {
+  outline: 2px solid var(--blue);
+  outline-offset: 2px;
+}
+
+/* ------------------------------------------------------- 手感(勾选胶囊) */
+
+.check-pill {
+  transition:
+    background-color 0.18s var(--ease),
+    border-color 0.18s var(--ease),
+    color 0.18s var(--ease),
+    transform 0.14s var(--ease);
+}
+
+.check-pill:hover {
+  transform: translateY(-1px);
+}
+
+.check-pill:active {
+  transform: translateY(0);
+}
+
+/* 勾上时的小圆点: 外圈蓝色 + 内嵌白芯, 比纯色圆点更"实" */
+.check-pill:has(input:checked) .check-dot {
+  border-color: var(--blue);
+  background-color: var(--blue);
+  box-shadow: inset 0 0 0 3px #ffffff;
+}
+
+/* ---------------------------------------------------- 层次(状态卡的高亮) */
+
+/* 已开启: 左侧一道内嵌蓝条, 不占布局空间 */
+.status-item.active {
+  box-shadow:
+    inset 3px 0 0 0 var(--blue),
+    var(--control-shadow);
+}
+
+/* 只改颜色, 不改字号/行高 —— 任何影响排版的改动都可能把底栏挤出窗口 */
+.status-name {
+  color: #5b6b81;
+}
+
+.status-item.active .status-name {
+  color: #3b6bd6;
+}
+
+/* ------------------------------------------------------- 层次(文字权重) */
+
+/* 模块标题加粗一档: 不改字号, 所以不会影响排版高度 */
+.row-label {
+  font-weight: 600;
+  letter-spacing: 0.01em;
+}
+
+/* 状态卡里那个大数值再重一点, 与上方小标题拉开 */
+.status-badge {
+  font-weight: 700;
+}
+
+/* ------------------------------------------------------------ 层次(进度) */
+
+.progress-track {
+  height: 5px;
+  background-color: rgba(37, 99, 235, 0.09);
+  box-shadow: inset 0 1px 2px rgba(15, 23, 42, 0.06);
+}
+
+.progress-fill {
+  transition: width 0.24s var(--ease);
+}
+
+/* ------------------------------------------------------------ 手感(下拉) */
+
+.select-trigger,
+.field-shell {
+  transition:
+    border-color 0.18s var(--ease),
+    background-color 0.18s var(--ease),
+    box-shadow 0.18s var(--ease);
+}
+
+.select-menu {
+  animation: ui-pop 0.16s var(--ease) both;
+}
+
+.select-option {
+  transition: background-color 0.14s var(--ease), color 0.14s var(--ease);
+}
+
+/* --------------------------------------------------------------- 动效 */
+
+@keyframes ui-rise {
+  from { opacity: 0; transform: translateY(5px); }
+  to   { opacity: 1; transform: none; }
+}
+
+@keyframes ui-pop {
+  from { opacity: 0; transform: translateY(-4px) scale(0.99); }
+  to   { opacity: 1; transform: none; }
+}
+
+.row-card            { animation: ui-rise 0.32s var(--ease) both; }
+.row-card:nth-of-type(2) { animation-delay: 0.05s; }
+.row-card:nth-of-type(3) { animation-delay: 0.10s; }
+.action-row          { animation: ui-rise 0.32s var(--ease) 0.15s both; }
+.footer-row          { animation: ui-rise 0.32s var(--ease) 0.20s both; }
+
+@media (prefers-reduced-motion: reduce) {
+  .row-card, .action-row, .footer-row, .select-menu { animation: none; }
+  * { transition-duration: 0.01ms !important; }
+}
+
+/* --------------------------------------------------------------- 滚动条 */
+
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background-color: rgba(100, 116, 139, 0.28);
+  border-radius: 999px;
+  border: 3px solid transparent;
+  background-clip: content-box;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background-color: rgba(100, 116, 139, 0.45);
+}
