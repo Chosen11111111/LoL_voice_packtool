@@ -1,0 +1,414 @@
+/* ============================================================================
+   LoL Voice —— Hextech 暗色主题(可选皮肤)
+   ----------------------------------------------------------------------------
+   做法: 原版 styles.css 的配色几乎全走 CSS 变量, 所以这里只需重定义变量 +
+   覆盖少数几处硬编码颜色, 就能整体换成"深蓝底 + 金色描边"的海克斯质感,
+   布局、尺寸、逻辑一律不动 —— 页面里的元素 id 和 app.js 完全不用改。
+
+   想切回蓝白版: 换掉 index 里的这一行 <link> 即可。
+   ============================================================================ */
+
+:root {
+  /* —— 深蓝底 —— */
+  --bg: #050a12;
+  --glass-bg: rgba(11, 22, 38, 0.78);
+  --glass-border: rgba(200, 170, 110, 0.20);
+  --control-bg: rgba(17, 31, 51, 0.86);
+  --control-hover: rgba(28, 47, 74, 0.96);
+  --control-border: rgba(200, 170, 110, 0.18);
+  --control-border-hover: rgba(200, 170, 110, 0.52);
+
+  /* —— 主色: 海克斯金 —— */
+  --blue: #c8aa6e;
+  --blue-hover: #dcc08a;
+  --blue-active: #a98d55;
+  --blue-soft: rgba(200, 170, 110, 0.12);
+  --blue-soft-hover: rgba(200, 170, 110, 0.20);
+  --blue-border: rgba(200, 170, 110, 0.38);
+  --blue-ring: rgba(200, 170, 110, 0.22);
+
+  /* —— 状态色 —— */
+  --ok: #0ac8b9;
+  --danger: #e05252;
+
+  /* —— 文字: 羊皮纸白 + 冷灰 —— */
+  --text: #cdd6e3;
+  --text-strong: #f0e6d2;
+  --muted: #97a5b9;
+  --placeholder: #7d8b9f;
+
+  /* —— 阴影: 暗底要用更深的投影才立得起来 —— */
+  --glass-shadow:
+    0 18px 44px rgba(0, 0, 0, 0.46),
+    0 2px 8px rgba(0, 0, 0, 0.30),
+    inset 0 1px 0 rgba(200, 170, 110, 0.16);
+  --control-shadow:
+    0 1px 3px rgba(0, 0, 0, 0.35),
+    inset 0 1px 0 rgba(200, 170, 110, 0.10);
+}
+
+/* ------------------------------------------------------------------ 底色 */
+
+html {
+  background-color: var(--bg);
+}
+
+body {
+  /* 左上暖金光 + 右上青蓝光 + 竖向深底, 三层叠出"海克斯工坊"的深度 */
+  background-image:
+    radial-gradient(1100px 560px at 12% -12%, rgba(200, 170, 110, 0.13), transparent 62%),
+    radial-gradient(900px 520px at 92% -6%, rgba(10, 200, 185, 0.09), transparent 58%),
+    linear-gradient(180deg, #081321 0%, #060c16 52%, #03070d 100%);
+  background-attachment: fixed;
+  color: var(--text);
+}
+
+/* 原来那三个柔光球: 换成金色 / 青色 / 深蓝, 比蓝白版更暗更收敛 */
+.ambient-blob {
+  filter: blur(96px);
+  opacity: 0.85;
+}
+.blob-1 { background-color: rgba(200, 170, 110, 0.20); }
+.blob-2 { background-color: rgba(10, 200, 185, 0.14); }
+.blob-3 { background-color: rgba(37, 76, 140, 0.30); }
+
+/* ------------------------------------------------------------------ 卡片 */
+
+.glass {
+  position: relative;
+  background-color: var(--glass-bg);
+  border: 1px solid var(--glass-border);
+  box-shadow: var(--glass-shadow);
+  backdrop-filter: blur(22px) saturate(130%);
+  -webkit-backdrop-filter: blur(22px) saturate(130%);
+}
+
+/* 卡片顶部一道金色高光, 海克斯面板的标志性细节 */
+.glass::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 14px;
+  right: 14px;
+  height: 1px;
+  background: linear-gradient(90deg, transparent, rgba(200, 170, 110, 0.55), transparent);
+  pointer-events: none;
+}
+
+.row-label {
+  color: var(--text-strong);
+  letter-spacing: 0.02em;
+}
+
+/* ------------------------------------------------------------------ 按钮 */
+
+.btn {
+  background-color: var(--control-bg);
+  border: 1px solid var(--control-border);
+  color: var(--text);
+  transition: background-color 0.16s ease, border-color 0.16s ease,
+              color 0.16s ease, box-shadow 0.16s ease, transform 0.12s ease;
+}
+
+.btn:hover {
+  background-color: var(--control-hover);
+  border-color: var(--control-border-hover);
+  color: var(--text-strong);
+}
+
+.btn:active {
+  transform: translateY(1px);
+}
+
+/* 主按钮: 金属金渐变 + 深色字, 这是整页唯一的"发光元件" */
+.btn.primary {
+  background-image: linear-gradient(180deg, #e2c892 0%, #c8aa6e 46%, #a2854c 100%);
+  border-color: #ecd9ac;
+  color: #08111c;
+  font-weight: 700;
+  box-shadow:
+    0 6px 20px rgba(200, 170, 110, 0.30),
+    0 1px 0 rgba(255, 255, 255, 0.30) inset;
+}
+
+.btn.primary:hover {
+  background-image: linear-gradient(180deg, #f0dcae 0%, #d6b87c 46%, #b0945a 100%);
+  color: #04080f;
+  box-shadow:
+    0 8px 26px rgba(200, 170, 110, 0.42),
+    0 1px 0 rgba(255, 255, 255, 0.38) inset;
+}
+
+.soft-btn:hover,
+.soft-blue-btn:hover {
+  border-color: var(--control-border-hover);
+}
+
+/* ------------------------------------------------- 输入框 / 下拉 / 路径栏 */
+
+.field-shell,
+.select-trigger {
+  background-color: var(--control-bg);
+  border: 1px solid var(--control-border);
+  color: var(--text);
+}
+
+.field-shell:focus-within,
+.select-trigger:hover,
+.select-trigger[aria-expanded="true"] {
+  border-color: var(--control-border-hover);
+  box-shadow: 0 0 0 3px var(--blue-ring);
+}
+
+.field-shell input {
+  color: var(--text-strong);
+  background: transparent;
+}
+
+.field-icon,
+.select-label.placeholder {
+  color: var(--placeholder);
+}
+
+/* 暗底上占位符容易糊: 显式提亮一档(视觉核验反馈过) */
+.field-shell input::placeholder {
+  color: #7d8b9f;
+  opacity: 1;
+}
+
+.hud-value,
+.status-name {
+  color: #97a5b9;
+}
+
+.select-menu {
+  background-color: rgba(9, 18, 32, 0.97);
+  border: 1px solid var(--glass-border);
+  box-shadow: 0 18px 40px rgba(0, 0, 0, 0.55);
+}
+
+.select-option:hover {
+  background-color: var(--blue-soft);
+}
+
+.select-option.active {
+  background-color: var(--blue-soft-hover);
+  color: var(--text-strong);
+}
+
+/* ---------------------------------------------------------- 勾选胶囊 */
+
+.check-pill {
+  background-color: rgba(17, 31, 51, 0.72);
+  border: 1px solid var(--control-border);
+  color: var(--muted);
+}
+
+.check-pill:hover {
+  border-color: var(--control-border-hover);
+  color: var(--text);
+}
+
+.check-dot {
+  border: 2px solid #46536b;
+  background-color: transparent;
+}
+
+/* 勾上: 金点 + 光晕 */
+.check-pill:has(input:checked) {
+  background-color: var(--blue-soft);
+  border-color: var(--blue-border);
+  color: #e6d3a8;
+  font-weight: 600;
+}
+
+.check-pill:has(input:checked) .check-dot {
+  border-color: #e6cd9a;
+  background-color: var(--blue);
+  box-shadow: 0 0 8px rgba(200, 170, 110, 0.85);
+}
+
+.check-pill:has(input:disabled) {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+/* ------------------------------------------------------------ 状态卡 */
+
+.status-item {
+  background-color: rgba(14, 26, 44, 0.72);
+  border: 1px solid var(--control-border);
+}
+
+.status-item.active {
+  background-color: var(--blue-soft);
+  border-color: var(--blue-border);
+  box-shadow:
+    0 0 0 1px rgba(200, 170, 110, 0.14),
+    0 8px 22px rgba(200, 170, 110, 0.10),
+    inset 0 1px 0 rgba(200, 170, 110, 0.20);
+}
+
+.status-name {
+  color: var(--muted);
+  letter-spacing: 0.01em;
+}
+
+.status-item.active .status-name {
+  color: #cbb894;
+}
+
+.status-badge {
+  color: var(--text-strong);
+  letter-spacing: 0.02em;
+}
+
+/* 小灯: 原版=绿, 已开启=紫(保持你定的配色, 只把亮度调到暗底上好看) */
+.status-tag {
+  background-color: rgba(255, 255, 255, 0.06);
+}
+
+.status-tag::before {
+  background-color: #2ed18a;
+  box-shadow: 0 0 6px rgba(46, 209, 138, 0.85);
+}
+
+.status-item.active .status-tag::before {
+  background-color: #a855f7;
+  box-shadow: 0 0 9px rgba(168, 85, 247, 0.95);
+}
+
+/* ------------------------------------------------------------- 底部状态 */
+
+.footer-status-top .status-text {
+  color: var(--muted);
+}
+
+.status-dot {
+  box-shadow: 0 0 7px rgba(200, 170, 110, 0.75);
+}
+
+.progress-track {
+  background-color: rgba(200, 170, 110, 0.13);
+}
+
+.progress-fill {
+  background-image: linear-gradient(90deg, #a2854c, #e2c892);
+  box-shadow: 0 0 10px rgba(200, 170, 110, 0.55);
+}
+
+.hud-value {
+  color: var(--placeholder);
+}
+
+/* ------------------------------------------------------------- 标题栏 */
+
+.app-titlebar {
+  background: linear-gradient(180deg, rgba(12, 24, 40, 0.94), rgba(8, 16, 28, 0.90));
+  border-bottom: 1px solid rgba(200, 170, 110, 0.16);
+}
+
+.app-titlebar__name {
+  color: #cdbe91;
+  letter-spacing: 0.04em;
+}
+
+.win-btn {
+  color: #9aa7ba;
+  background: transparent;
+}
+
+.win-btn:hover {
+  background-color: rgba(200, 170, 110, 0.14);
+  color: #f0e6d2;
+}
+
+.win-btn--close:hover {
+  background-color: rgba(224, 82, 82, 0.85);
+  color: #ffffff;
+}
+
+/* --------------------------------------------------------------- 弹窗 */
+
+.glass-modal {
+  background-color: rgba(9, 18, 32, 0.97);
+  border: 1px solid var(--glass-border);
+  box-shadow: 0 30px 70px rgba(0, 0, 0, 0.65);
+}
+
+.modal-head {
+  color: var(--text-strong);
+}
+
+.modal-close {
+  color: var(--muted);
+}
+
+.modal-close:hover {
+  color: var(--text-strong);
+  background-color: rgba(200, 170, 110, 0.14);
+}
+
+.log-content {
+  background-color: rgba(4, 9, 17, 0.85);
+  border: 1px solid var(--control-border);
+  color: #9fb0c6;
+}
+
+.path-cand-item {
+  background-color: rgba(17, 31, 51, 0.72);
+  border: 1px solid var(--control-border);
+}
+
+.path-cand-item:hover {
+  border-color: var(--control-border-hover);
+  background-color: var(--control-hover);
+}
+
+/* --------------------------------------------------------- 滚动条/选中 */
+
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background-color: rgba(200, 170, 110, 0.22);
+  border-radius: 999px;
+  border: 2px solid transparent;
+  background-clip: content-box;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background-color: rgba(200, 170, 110, 0.40);
+}
+
+::selection {
+  background-color: rgba(200, 170, 110, 0.32);
+  color: #ffffff;
+}
+
+/* ------------------------------------------------------------------ 动效 */
+
+@keyframes hextech-rise {
+  from { opacity: 0; transform: translateY(6px); }
+  to   { opacity: 1; transform: none; }
+}
+
+.row-card {
+  animation: hextech-rise 0.34s ease both;
+}
+
+.row-card:nth-of-type(2) { animation-delay: 0.04s; }
+.row-card:nth-of-type(3) { animation-delay: 0.08s; }
+.action-row             { animation: hextech-rise 0.34s ease 0.12s both; }
+.footer-row             { animation: hextech-rise 0.34s ease 0.16s both; }
+
+/* 尊重"减少动态效果"的系统设置 */
+@media (prefers-reduced-motion: reduce) {
+  .row-card, .action-row, .footer-row { animation: none; }
+}

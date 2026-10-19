@@ -1,0 +1,254 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>英雄联盟 语音包切换器 · Hextech</title>
+<link rel="stylesheet" href="/styles.css" />
+  <link rel="stylesheet" href="/styles-hextech.css" />
+</head>
+<body>
+<!-- 自绘标题栏: 只在原生外壳(无边框窗口)里显示; 浏览器里打开时保持隐藏, 见 app.js -->
+<div class="app-titlebar" id="appTitlebar" hidden>
+  <img class="app-titlebar__logo" src="/brand/ico/voicepack-icon-trim.png" alt="" draggable="false" />
+  <span class="app-titlebar__name">英雄联盟 语音包切换器</span>
+  <div class="app-titlebar__actions">
+    <button type="button" class="win-btn" id="winMin" title="最小化" aria-label="最小化">&#8722;</button>
+    <button type="button" class="win-btn" id="winTray" title="收起来（右下角小条，可恢复/关闭）" aria-label="收起来">
+          <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true" focusable="false">
+            <path d="M8 2.6v5.6" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>
+            <path d="M5.3 6.4 8 9.1l2.7-2.7" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
+            <path d="M2.6 11.6h10.8" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>
+          </svg>
+        </button>
+    <button type="button" class="win-btn win-btn--close" id="winClose" title="关闭" aria-label="关闭">&#10005;</button>
+  </div>
+</div>
+
+<!-- 柔和蓝白环境底衬（供毛玻璃折射出通透质感，克制不花哨） -->
+<div class="ambient-bg" aria-hidden="true">
+  <span class="ambient-blob blob-1"></span>
+  <span class="ambient-blob blob-2"></span>
+  <span class="ambient-blob blob-3"></span>
+</div>
+
+<div class="layout">
+
+  <!-- 第一排：路径栏 -->
+  <section class="row-card glass">
+    <div class="row-head">
+      <span class="row-label">游戏路径</span>
+    </div>
+    <div class="control-bar">
+      <div class="field-shell" id="pathFieldShell">
+        <input
+          type="text"
+          id="leaguePathInput"
+          placeholder="例如：D:\WeGameApps\英雄联盟\LeagueClient"
+          autocomplete="off"
+          spellcheck="false"
+        />
+      </div>
+
+      <button type="button" class="btn soft-btn" id="btnAutoSearchPath">自动搜索</button>
+      <button type="button" class="btn primary" id="btnConfirmPath">确认</button>
+      <button type="button" class="btn region-pill" id="btnServerRegion" data-region="cn">
+        <span class="region-dot"></span>
+        <span id="regionText">国服</span>
+      </button>
+    </div>
+  </section>
+
+  <!-- 第二排：语言包下拉栏 + 压缩包选择 + 三种勾选情况 -->
+  <section class="row-card glass row-dropdown-section">
+    <div class="row-head">
+      <span class="row-label">语音包选择</span>
+    </div>
+    <div class="control-bar">
+      <!-- 自定义毛玻璃下拉栏 -->
+      <div class="custom-select" id="customLocaleSelect">
+        <button type="button" class="select-trigger" id="selectTrigger" aria-expanded="false">
+          <span class="select-label placeholder" id="selectLabel">未选中语音包</span>
+          <span class="select-caret"></span>
+        </button>
+        <div class="select-menu hidden" id="selectMenu"></div>
+        <select id="localeSelect" class="hidden">
+          <option value="">未选中语音包</option>
+        </select>
+      </div>
+
+      <input
+        type="file"
+        id="voicePackFileInput"
+        class="hidden"
+        accept=".zip,.7z,.rar,.tar,.gz"
+      />
+      <button type="button" class="btn soft-blue-btn" id="btnChooseLocale">语音包选择</button>
+      <button type="button" class="btn soft-blue-btn" id="btnPackDownload">下载语音包</button>
+    </div>
+
+    <!-- 三种情况：胶囊式舒适勾选框 -->
+    <div class="check-subrow">
+      <label class="check-pill">
+        <input type="checkbox" id="modIngameVoice" checked />
+        <span class="check-dot"></span>
+        <span class="check-text">游戏内语音及播报员</span>
+      </label>
+
+      <label class="check-pill">
+        <input type="checkbox" id="modIngameLang" checked />
+        <span class="check-dot"></span>
+        <span class="check-text">游戏内文字</span>
+      </label>
+
+      <label class="check-pill">
+        <input type="checkbox" id="modLobbyVoice" checked />
+        <span class="check-dot"></span>
+        <span class="check-text">对局前选人语音</span>
+      </label>
+
+      <!-- 客户端界面文字: 语言跟着上面选的语音包走; 只改客户端, 不动局内 -->
+      <label class="check-pill">
+        <input type="checkbox" id="modClientText" checked />
+        <span class="check-dot"></span>
+        <span class="check-text">客户端界面文字</span>
+      </label>
+
+      <!-- 品牌图: 在勾选框右边; 高度与胶囊一致, 所以底部自然齐平、也不会把这行撑高 -->
+      <button type="button" class="brand-banner" id="btnBrand" title="chosen1.lol · 稳定换肤" aria-label="ChosenLoLskins 稳定换肤">
+        <img src="/brand/ChosenLoLskins-logo.png" alt="ChosenLoLskins" draggable="false" />
+      </button>
+    </div>
+  </section>
+
+  <!-- 第三排：当前状态（三个状况） -->
+  <section class="row-card glass status-section">
+    <div class="row-head">
+      <span class="row-label">当前状态</span>
+    </div>
+    <div class="status-three-grid">
+      <div class="status-item" id="cardStatusVoice">
+        <div class="status-item-top">
+          <span class="status-name">游戏内语音及播报员</span>
+          <span class="status-tag" id="tagStatusVoice">原版</span>
+        </div>
+        <strong class="status-badge" id="statusIngameVoice">读取中…</strong>
+      </div>
+
+      <div class="status-item" id="cardStatusLang">
+        <div class="status-item-top">
+          <span class="status-name">游戏内文字</span>
+          <span class="status-tag" id="tagStatusLang">原版</span>
+        </div>
+        <strong class="status-badge" id="statusIngameLang">读取中…</strong>
+      </div>
+
+      <div class="status-item" id="cardStatusClientText">
+        <div class="status-item-top">
+          <span class="status-name">客户端界面文字</span>
+          <span class="status-tag" id="tagStatusClientText">原版</span>
+        </div>
+        <strong class="status-badge" id="statusClientText">读取中…</strong>
+      </div>
+
+      <div class="status-item" id="cardStatusLobby">
+        <div class="status-item-top">
+          <span class="status-name">对局前选人语音</span>
+          <span class="status-tag" id="tagStatusLobby">原版</span>
+        </div>
+        <strong class="status-badge" id="statusLobbyVoice">读取中…</strong>
+      </div>
+    </div>
+  </section>
+
+
+  <!-- 第四排：恢复按钮和开启按钮 -->
+  <section class="action-row">
+    <button type="button" class="btn action-btn restore-btn glass" id="btnRestore">恢复原版</button>
+    <button type="button" class="btn primary action-btn apply-btn" id="btnApply">开启语音包</button>
+  </section>
+
+  <!-- 第五排：状态 和 日志按钮 -->
+  <footer class="row-card glass footer-row">
+    <div class="footer-status">
+      <div class="footer-status-top">
+        <span class="status-dot" id="statusDot"></span>
+        <span class="status-text" id="statusText">就绪</span>
+      </div>
+      <div class="progress-track">
+        <div class="progress-fill" id="progressFill"></div>
+      </div>
+    </div>
+    <span class="hud-value" id="configSaveStatus" role="status" aria-live="polite">配置读取中…</span>
+    <button type="button" class="btn soft-btn log-btn" id="btnOpenLog">日志</button>
+  </footer>
+
+</div>
+
+<!-- 下载语音包 / 从路径导入 -->
+<div class="modal hidden" id="packDownloadModal">
+  <div class="modal-box glass-modal">
+    <div class="modal-head">
+      <h3>下载语音包</h3>
+      <button type="button" class="modal-close" id="btnClosePackDownload" aria-label="关闭" title="关闭">×</button>
+    </div>
+    <div class="dl-line">
+      <span class="dl-label">链接</span>
+      <input type="text" id="packDownloadLink" readonly value="https://pan.baidu.com/s/1ymzAEQ_GzHOcwXWThqakbQ?pwd=q3gf" />
+      <button type="button" class="btn tiny soft-btn" id="btnCopyPackLink">复制</button>
+    </div>
+    <div class="dl-line">
+      <span class="dl-label">提取码</span>
+      <input type="text" id="packDownloadCode" readonly value="q3gf" />
+      <button type="button" class="btn tiny soft-btn" id="btnCopyPackCode">复制</button>
+    </div>
+  </div>
+</div>
+
+<!-- 多路径选择弹窗 -->
+<div class="modal hidden" id="pathSelectModal">
+  <div class="modal-box glass-modal">
+    <div class="modal-head">
+      <h3>检测到多个英雄联盟路径，请选择</h3>
+      <button type="button" class="btn tiny soft-btn" id="btnClosePathSelect">关闭</button>
+    </div>
+    <p class="modal-tip">在电脑中搜索到以下多个游戏目录，点击对应项即可选用：</p>
+    <div class="path-cand-list" id="pathCandidateList"></div>
+  </div>
+</div>
+
+<!-- 日志弹窗 -->
+  <!-- 开启语音包前的提示: 关闭 / 不再提醒 / 确定 三个出口 -->
+  <div class="modal hidden" id="enableTipModal">
+    <div class="modal-box glass-modal">
+      <div class="modal-head">
+        <h3>开启语音包</h3>
+        <button type="button" class="modal-close" id="btnCloseEnableTip" aria-label="关闭" title="关闭">×</button>
+      </div>
+      <p class="modal-tip">开启后，请勿通过 Wegame 启动，直接启动英雄联盟客户端</p>
+      <p class="modal-tip">如需启用对局选人语音功能，请勿关闭软件</p>
+      <p class="modal-tip">不想使用，点击还原即可</p>
+      <div class="modal-actions">
+        <button type="button" class="btn soft-blue-btn" id="btnEnableTipNever">不再提醒</button>
+        <button type="button" class="btn primary" id="btnEnableTipOk">我知道了，开启</button>
+      </div>
+    </div>
+  </div>
+
+
+<div class="modal hidden" id="logModal">
+  <div class="modal-box glass-modal">
+    <div class="modal-head">
+      <h3>运行日志</h3>
+      <div class="modal-actions">
+        <button type="button" class="btn tiny soft-btn" id="btnClearLog">清空</button>
+        <button type="button" class="btn tiny soft-btn" id="btnCloseLog">关闭</button>
+      </div>
+    </div>
+    <div class="log-content" id="logBox">[就绪]</div>
+  </div>
+</div>
+
+<script src="/app.js"></script>
+</body>
+</html>
