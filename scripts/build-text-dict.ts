@@ -201,8 +201,15 @@ function splitHtmlPairs(zh: string, other: string): Array<[string, string]> {
   const runs = (text: string) => text.split(/<[^>]*>/).map((piece) => piece.trim()).filter((piece) => piece.length > 0);
   const left = runs(zh);
   const right = runs(other);
-  if (left.length === 0 || left.length !== right.length) return [];
+  if (left.length === 0 || right.length === 0) return [];
   const pairs: Array<[string, string]> = [];
+  if (left.length !== right.length) {
+    // 段数不一致: 国服与目标语言的标签位置不同, 按顺序配到较短的那一边为止。
+    // 用户的要求很明确: "宁可配错也别留中文" —— 所以不加任何过滤, 能配就配。
+    const n = Math.min(left.length, right.length);
+    for (let i = 0; i < n; i += 1) pairs.push([left[i]!, right[i]!]);
+    return pairs;
+  }
   for (let i = 0; i < left.length; i += 1) pairs.push([left[i]!, right[i]!]);
   return pairs;
 }
