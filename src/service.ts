@@ -236,6 +236,7 @@ export interface ApplyRequest {
   locale: string;
   modules?: ModuleId[];
   restartClient?: boolean;
+  clientText?: boolean;
   lobbyLang?: "keep" | "en_US" | "zh_CN";
   oneClick?: boolean;
 }
@@ -251,6 +252,7 @@ export function startApplyTask(request: ApplyRequest): TaskSnapshot {
     const modules: ModuleId[] = Array.isArray(request.modules) ? request.modules : defaultApplyModules(appConfig);
     const result = await applyAll(env, {
       locale, modules,
+      clientText: request.clientText === true,
       restartClient: request.restartClient ?? appConfig.autoRestartClient,
       progress: handle.progress, signal: handle.signal, lobbyLang: request.lobbyLang
     });

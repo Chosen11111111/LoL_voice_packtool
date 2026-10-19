@@ -19,6 +19,8 @@ export interface RunOptions {
   modules: ModuleId[];
   /** 全部成功后自动重启客户端 UX。 */
   restartClient?: boolean;
+  /** 是否装了"客户端界面文字"(它没有模块可切, 但注入只在客户端启动时发生, 同样要重启一次)。 */
+  clientText?: boolean;
   progress?: ProgressReporter;
   signal?: AbortSignal;
   /** 大厅界面语言: "en_US" 时一并切成英文界面。 */
@@ -53,10 +55,17 @@ export async function applyAll(env: SwitchEnv, options: RunOptions): Promise<Run
   // 会被换成默认那三项(大厅语音/对局语音/对局文字) —— 用户"只勾客户端文字"时实测踩到过。
   const modules = [...new Set<ModuleId>(options.modules)];
   if (modules.length === 0) {
-    // 一个模块都没勾(例如用户只开了"客户端界面文字"): 什么都不做, 但这是成功, 不是失败。
+    // 一个模块都没勾(例如只勾了"客户端界面文字"): 没有文件要切, 但注入只发生在客户端启动的那一刻,
+    // 所以还是要重启一次 —— 用的就是下面那条和对局语音完全相同的路径。什么都没切不算失败。
+    let onlyRestart = false;
+    if (options.clientText === true && options.restartClient !== false && (await isClientRunning())) {
+      const restart = await restartClientUx();
+      onlyRestart = restart.ok;
+      if (onlyRestart) await waitForClientUp(90000);
+    }
     return {
-      ok: true, partial: false, restarted: false,
-      message: "没有勾选任何要切换的内容",
+      ok: true, partial: false, restarted: onlyRestart,
+      message: onlyRestart ? "已开启客户端界面文字，并重启了客户端" : "没有勾选任何要切换的内容",
       summary: { ok: true, partial: false, lines: [], failed: [] },
       results: []
     };

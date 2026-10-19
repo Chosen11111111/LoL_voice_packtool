@@ -338,6 +338,8 @@ export function buildRouter(): Router {
       const textPackBefore = await getTextPackState();
       if (wantClientText && !textPackBefore.active) {
         const staged = await stageTextPack(clientTextLocale || locale.toLowerCase());
+        // 提权跑 install.cmd: 它除了写注册表, 还会关掉正在运行的客户端(注入只在启动时发生)。
+        // 关闭放在脚本里是因为它已经提权, 从我们这边普通权限 taskkill 未必杀得动 WeGame 启动的客户端。
         if (staged.ok) await runElevated("install");
       } else if (!wantClientText && textPackBefore.staged) {
         await runElevated("uninstall");
@@ -350,6 +352,7 @@ export function buildRouter(): Router {
     const task = startApplyTask({
       locale,
       modules,
+      clientText: wantClientText,
       restartClient: typeof body.restartClient === "boolean" ? body.restartClient : undefined,
       lobbyLang: body.lobbyLang === "en_US" || body.lobbyLang === "zh_CN" ? body.lobbyLang : "keep"
     });
