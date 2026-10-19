@@ -511,10 +511,13 @@
 
   /* ------------------------------------------------ 客户端界面文字(语言跟着语音包走) */
 
-  /** 语音包代码 -> 文字包代码(en_US -> en_us); 选了没有文字包的语言就返回空。 */
+  /**
+   * 客户端界面文字用哪种语言: 优先跟着选中的语音包走;
+   * 没选语音包(或选的语言没有文字包)时默认英文 —— 这样它可以单独开启, 不必先选语音包。
+   */
   function textPackLocale() {
     const code = String(store.selected || "").toLowerCase();
-    return ["en_us", "ja_jp", "ko_kr"].indexOf(code) >= 0 ? code : "";
+    return ["en_us", "ja_jp", "ko_kr"].indexOf(code) >= 0 ? code : "en_us";
   }
 
   let textPackState = null;
@@ -525,22 +528,17 @@
     const box = $("modClientText");
     if (!box || !textPackState) return;
     const locale = textPackLocale();
-    const supported = textPackState.supported || [];
-    if (!locale || supported.indexOf(locale) < 0) {
+    const supported = (textPackState && textPackState.supported) || [];
+    if (supported.length && supported.indexOf(locale) < 0) {
       box.checked = false;
       box.disabled = true;
-      box.title = "只有语音包选了英语 / 日语 / 韩语时, 才能替换客户端界面文字";
-      const cardOff = $("cardStatusClientText");
-      if (cardOff) cardOff.classList.remove("active");
-      const tagOff = $("tagStatusClientText");
-      if (tagOff) tagOff.textContent = "原版";
-      const badgeOff = $("statusClientText");
-      if (badgeOff) badgeOff.textContent = "未开启";
+      box.title = "没有这个语言的文字包";
       return;
     }
     box.disabled = false;
     // 勾选是"这次要不要一起开"的选项, 由用户掌握; 真实状态看下面那张状态卡
-    box.title = (textPackState.message || "") + " · 只改客户端界面文字，不动局内文字";
+    box.title = (textPackState.message || "") + " · 目标语言：" + ({ en_us: "英文", ja_jp: "日文", ko_kr: "韩文" }[locale] || locale) +
+      " · 只改客户端界面文字，不动局内文字";
     const on = Boolean(textPackState.active && textPackState.staged === locale);
 
     // 状态卡(与另外三格同款): 开了就点亮, 并写清目标语言与是否需要重启客户端
@@ -930,7 +928,7 @@
         // restartClient: 客户端正在运行时, 切换完自动帮用户重启一次(客户端占着文件句柄, 重启后才生效)。
         // 后端只会在"客户端在运行 + 勾了需要重启的项"时才真的重启, 纯选人语音不会重启。
         // clientText: 勾了"客户端界面文字"就一起装注入器(需要一次授权), 后端会先装好再重启客户端
-        body: JSON.stringify({ locale, modules, restartClient: true, clientText: clientTextSelected() })
+        body: JSON.stringify({ locale, modules, restartClient: true, clientText: clientTextSelected(), clientTextLocale: textPackLocale() })
       })
     ).then((result) => {
       // 只有真的成功了才算"本次会话已开启选人语音"

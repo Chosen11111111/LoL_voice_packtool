@@ -327,14 +327,20 @@ export function buildRouter(): Router {
     }
     // 客户端界面文字不是游戏模块: 它要装/卸注入器(各需要一次管理员授权), 所以在任务开始前
     // 先做掉 —— 这样任务后面那次"重启客户端"正好能让注入生效。
+    // 这一步失败绝不能拖垮"开启语音包"本身: 授权被拒、文件被占用都要照常继续, 只记一条日志。
     const wantClientText = body.clientText === true;
-    const textPackBefore = await getTextPackState();
-    if (wantClientText && !textPackBefore.active) {
-      const staged = await stageTextPack(locale.toLowerCase());
-      if (staged.ok) await runElevated("install");
-    } else if (!wantClientText && textPackBefore.staged) {
-      await runElevated("uninstall");
-      await unstageTextPack();
+    const clientTextLocale = typeof body.clientTextLocale === "string" ? body.clientTextLocale : "";
+    try {
+      const textPackBefore = await getTextPackState();
+      if (wantClientText && !textPackBefore.active) {
+        const staged = await stageTextPack(clientTextLocale || locale.toLowerCase());
+        if (staged.ok) await runElevated("install");
+      } else if (!wantClientText && textPackBefore.staged) {
+        await runElevated("uninstall");
+        await unstageTextPack();
+      }
+    } catch (error) {
+      logger.warn("客户端界面文字这一步没做成(不影响语音包): " + String((error as Error).message).slice(0, 120));
     }
 
     const task = startApplyTask({
