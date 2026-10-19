@@ -399,15 +399,19 @@ export function buildRouter(): Router {
   router.post("/api/restore", async (context) => {
     // "恢复原版"要把它也还原: 先取消激活(删注册表项, 需要管理员), 再删掉我们放进去的文件。
     // 顺序不能反 —— 先删文件的话注册表还指着不存在的 core.dll, 客户端会启动不了。
+    let removedTextPack = false;
     const textPack = await getTextPackState();
     if (textPack.staged) {
       await runElevated("uninstall");
       await unstageTextPack();
+      removedTextPack = true;
       logger.info("恢复原版: 客户端界面文字已还原");
     }
     const body = asRecord(context.body);
     const task = startRestoreTask({
       modules: asModules(body.modules),
+      // 撤过文字包就要重启客户端: 运行中的客户端里注入器还挂着, 不重启等于没还原。
+      clientText: removedTextPack,
       restartClient: typeof body.restartClient === "boolean" ? body.restartClient : undefined,
     });
     return { ok: true, task };

@@ -271,6 +271,8 @@ export function startApplyTask(request: ApplyRequest): TaskSnapshot {
 export interface RestoreRequest {
   modules?: ModuleId[];
   restartClient?: boolean;
+  /** 这次恢复是否撤掉了"客户端界面文字"(撤了就要重启客户端, 否则注入器还挂在运行中的客户端里)。 */
+  clientText?: boolean;
   oneClick?: boolean;
 }
 
@@ -281,7 +283,8 @@ export function startRestoreTask(request: RestoreRequest = {}): TaskSnapshot {
     const modules: ModuleId[] = Array.isArray(request.modules) ? request.modules : await defaultRestoreModules(appConfig, env);
 
     const result = await restoreAll(env, {
-      modules, restartClient: request.restartClient ?? appConfig.autoRestartClient,
+      modules,
+      clientText: request.clientText === true, restartClient: request.restartClient ?? appConfig.autoRestartClient,
       progress: handle.progress, signal: handle.signal
     });
     // 还原成功就把"上次开启"记录清掉(否则界面会显示一个已经失效的状态)
