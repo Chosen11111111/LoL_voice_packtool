@@ -7,6 +7,7 @@ import { isGameRunning } from "../core/win/processes.ts";
 import { wadSuffix } from "../packs/baselocale.ts";
 import { localeDisplayName } from "../packs/locales.ts";
 import { langSources } from "../packs/wad.ts";
+import { applyIngameFont, restoreIngameFont } from "./ingameFont.ts";
 
 const MODULE = "ingame_lang" as const;
 
@@ -75,12 +76,15 @@ export async function applyIngameLang(locale: string, context: ModuleContext): P
   const [ok, reason] = await replaceFile(sources[0]!, dst);
   context.progress?.(1, 1, name);
   if (ok) {
+    // 文字换完之后接着换字体: 局内字体跟着语言走, 不额外占界面选项
+    const font = await applyIngameFont(locale, context.finalDir);
+    const fontNote = font.ok ? `，${font.message}` : `，但字体未切换：${font.message}`;
     return makeResult(MODULE, true, {
       planned: 1,
       success: 1,
       failed: 0,
-      message: `游戏内语言 1/1 已切换为 ${localeDisplayName(locale)}`,
-      detail: { target: dst, base_locale: context.baseLocale }
+      message: `游戏内语言 1/1 已切换为 ${localeDisplayName(locale)}${fontNote}`,
+      detail: { target: dst, base_locale: context.baseLocale, font_changed: font.changed }
     });
   }
   return makeResult(MODULE, false, {
@@ -106,6 +110,9 @@ export async function restoreIngameLang(context: ModuleContext): Promise<ModuleR
     return makeResult(MODULE, false, { action: "restore", reason: "游戏路径未就绪", message: "未能解析游戏文件目录 Game\\DATA\\FINAL。" });
   }
 
+  // 先还原局内字体(UI.wad.client), 再还原文本语言包
+  const fontRestore = await restoreIngameFont(context.finalDir);
+
   const destDir = path.join(context.finalDir, "Localized");
   const targets = (await walkFiles(destDir, { match: (file) => file.endsWith(".wad.client.chosen_bak") }))
     .filter((file) => path.basename(file).startsWith("Global."))
@@ -118,7 +125,7 @@ export async function restoreIngameLang(context: ModuleContext): Promise<ModuleR
       planned: 0,
       success: 0,
       failed: 0,
-      message: "未发现需要还原的语言包备份文件"
+      message: `未发现需要还原的语言包备份文件${fontRestore.changed ? `（${fontRestore.message}）` : ""}`
     });
   }
 
