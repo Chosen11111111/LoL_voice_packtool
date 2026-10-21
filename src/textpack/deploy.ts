@@ -30,6 +30,15 @@ export function assetDir(): string {
   return path.join(import.meta.dirname, "..", "..", "assets");
 }
 
+/**
+ * 测试环境必须跳过提权。
+ * 踩过的坑: 测试跑的 LOCALAPPDATA 是临时目录, 但提权脚本写的是**真实 HKLM**,
+ * 结果 Debugger 指向了一个随后被删掉的临时 core.dll —— 客户端直接启动不起来。
+ */
+function elevationDisabled(): boolean {
+  return process.env.LEAGUE_VOICE_SKIP_ELEVATION === "1";
+}
+
 /** 激活用的注册表位置: 把 LeagueClientUx.exe 的调试器换成 rundll32 调用 core.dll。 */
 export const IFEO_KEY =
   "HKLM\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\Image File Execution Options\\LeagueClientUx.exe";
@@ -127,6 +136,7 @@ export async function supportedLocales(): Promise<string[]> {
 
 /** 读取注册表里的激活项(只读, 不需要管理员)。 */
 export async function readRegistry(): Promise<"set" | "missing" | "unknown"> {
+  if (elevationDisabled()) return "set";   // 测试环境: 不去读真实注册表
   return new Promise((resolve) => {
     const child = spawn("reg", ["query", IFEO_KEY, "/v", "Debugger"], { windowsHide: true });
     let out = "";
@@ -325,6 +335,7 @@ export async function restartClient(): Promise<{ ok: boolean; message: string }>
 
 /** 用 UAC 执行我们生成的那个脚本(会弹一次系统授权框)。 */
 export async function runElevated(script: "install" | "uninstall"): Promise<{ ok: boolean; message: string }> {
+  if (elevationDisabled()) return { ok: true, message: `已跳过真实提权（测试环境，${script}）` };
   const file = path.join(loaderDir(), script + ".cmd");
   if (!(await exists(file))) return { ok: false, message: "找不到脚本, 请先复制文件" };
   // 取消激活时如果本来就没激活, 不必弹 UAC

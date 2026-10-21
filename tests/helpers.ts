@@ -1,3 +1,5 @@
+// 测试一律跳过真实提权: 绝不允许测试去改 HKLM 里的启动激活项
+process.env.LEAGUE_VOICE_SKIP_ELEVATION = "1";
 /** 测试脚手架: 一切都在项目内的 .tmp/tests 下建临时目录, 绝不触碰真实游戏文件。 */
 import fs from "node:fs/promises";
 import path from "node:path";

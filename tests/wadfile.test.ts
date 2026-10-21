@@ -370,3 +370,18 @@ test("zstd: 不填 uncompressedSize 时两个大小字段都写成数据长度(�
   assert.equal(toc.entries[0]!.size2, replacement.length);
   assert.deepEqual(await readEntryContent(file, toc.entries[0]!), replacement);
 });
+
+test("测试环境绝不提权: runElevated 是空操作, 不会改真实注册表", async () => {
+  const { runElevated, readRegistry } = await import("../src/textpack/deploy.ts");
+  const real = process.env.LEAGUE_VOICE_SKIP_ELEVATION;
+  process.env.LEAGUE_VOICE_SKIP_ELEVATION = "1";
+  try {
+    const r = await runElevated("install");
+    assert.equal(r.ok, true);
+    assert.match(r.message, /跳过真实提权/, "必须是空操作");
+    assert.equal(await readRegistry(), "set", "测试环境下假装已激活, 免得触发提权");
+  } finally {
+    if (real === undefined) delete process.env.LEAGUE_VOICE_SKIP_ELEVATION;
+    else process.env.LEAGUE_VOICE_SKIP_ELEVATION = real;
+  }
+});
