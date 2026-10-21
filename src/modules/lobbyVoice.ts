@@ -25,6 +25,7 @@ import {
   cdnLocaleOf,
   countVoiceLines,
   isVoicePluginStaged,
+  readVoiceTrace,
   mountVoiceAssets,
   readVoiceConfig,
   stageVoicePlugin,
@@ -192,6 +193,8 @@ export interface LobbyStatus {
   /** 旧方案(资源包补丁)是否还挂着备份, 需要回滚。 */
   legacy_wad_patch: boolean;
   wad_file: string | null;
+  /** 插件上报的拦截计数(证明客户端真的在用我们的插件)。 */
+  trace: { hits: number; at: number } | null;
   message: string;
 }
 
@@ -214,6 +217,7 @@ export async function getLobbyStatus(env: SwitchEnv): Promise<LobbyStatus> {
     locateClientAssetWad(env.leagueDir, env.baseLocale)
   ]);
   const legacy = located.path ? (await lobbyPatchState(located.path)).patched : false;
+  const trace = await readVoiceTrace();
 
   const parts: string[] = [];
   if (enabled) {
@@ -222,6 +226,8 @@ export async function getLobbyStatus(env: SwitchEnv): Promise<LobbyStatus> {
   } else {
     parts.push("未开启");
   }
+  if (enabled && trace && trace.hits > 0) parts.push("已拦截 " + trace.hits + " 次");
+  else if (enabled && !trace) parts.push("等待客户端注入");
   if (legacy) parts.push("检测到旧资源包补丁, 还原即可回滚");
 
   return {
@@ -238,6 +244,7 @@ export async function getLobbyStatus(env: SwitchEnv): Promise<LobbyStatus> {
     client_running: clientRunning,
     legacy_wad_patch: legacy,
     wad_file: located.path,
+    trace: trace ? { hits: trace.hits, at: trace.at } : null,
     message: parts.join(" · ")
   };
 }

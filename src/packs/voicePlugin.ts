@@ -13,7 +13,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { isDirectory, isFile } from "../core/fsx.ts";
 import { createLogger } from "../core/logger.ts";
-import { assetDir, loaderDir } from "../textpack/deploy.ts";
+import { assetDir, loaderDir, readDatastoreMap } from "../textpack/deploy.ts";
 
 const logger = createLogger("voice-plugin");
 
@@ -155,6 +155,41 @@ export async function stageVoicePlugin(): Promise<{ ok: boolean; message: string
     return { ok: false, message: "复制插件失败：" + String((error as Error).message).slice(0, 120) };
   }
   return { ok: true, message: "插件已就位" };
+}
+
+export interface VoiceTrace {
+  /** 插件累计拦截了多少次选人台词请求(0 = 没被拦截过, 插件可能没注入)。 */
+  hits: number;
+  /** 最后一次拦截的时间(unix 秒)。 */
+  at: number;
+  kind: string;
+  id: string;
+  locale: string;
+  enabled: boolean;
+}
+
+/**
+ * 读插件上报的拦截计数。
+ * 插件跑在客户端里, 它把计数写进加载器的 DataStore(落盘), 我们从这里读回来 ——
+ * 这是**唯一能证明"客户端真的用了我们的插件"的证据**, 靠看文件是看不出来的。
+ */
+export async function readVoiceTrace(): Promise<VoiceTrace | null> {
+  const map = await readDatastoreMap();
+  const raw = map["voice-sync.trace"];
+  if (!raw) return null;
+  try {
+    const parsed = JSON.parse(raw) as Partial<VoiceTrace>;
+    return {
+      hits: Number(parsed.hits) || 0,
+      at: Number(parsed.at) || 0,
+      kind: typeof parsed.kind === "string" ? parsed.kind : "",
+      id: typeof parsed.id === "string" ? parsed.id : "",
+      locale: typeof parsed.locale === "string" ? parsed.locale : "",
+      enabled: parsed.enabled === true
+    };
+  } catch {
+    return null;
+  }
 }
 
 /** 统计某语种语音包里的台词条数。 */

@@ -456,6 +456,11 @@
     const details = [
       "状态：" + (lobbyStateOn ? "开启" : "未开启"),
       lobbyActive ? "客户端内替换（" + (lobbyLocaleName || liveLocale) + "，共 " + (live.available || 0) + " 条台词）" : "未开启",
+      lobbyActive
+        ? (live.trace && live.trace.hits > 0
+            ? "已拦截 " + live.trace.hits + " 次客户端请求（说明插件在客户端里生效了）"
+            : "插件还没被客户端加载过 —— 重启客户端后才会生效")
+        : "",
       live.legacy_wad_patch ? "检测到旧资源包补丁, 还原即可回滚" : "",
       lastAppliedText()
     ].filter(Boolean);

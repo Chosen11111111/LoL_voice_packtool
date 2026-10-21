@@ -52,6 +52,22 @@ function transformData(buffer: Buffer): Buffer {
   return out;
 }
 
+/** 把加载器的 datastore 整个读出来(异或解密后是 JSON 对象)。 */
+export async function readDatastoreMap(): Promise<Record<string, string>> {
+  const file = path.join(loaderDir(), "datastore");
+  try {
+    const raw = transformData(await fs.readFile(file)).toString("utf8");
+    const parsed = JSON.parse(raw) as Record<string, unknown>;
+    const out: Record<string, string> = {};
+    for (const [key, value] of Object.entries(parsed)) {
+      if (typeof value === "string") out[key] = value;
+    }
+    return out;
+  } catch {
+    return {};
+  }
+}
+
 /**
  * 从加载器的 datastore 文件里把插件交上来的"没翻到"清单取回来。
  * 文件形如 {"键": "值"}(异或混淆), 我们只取自己那把键。

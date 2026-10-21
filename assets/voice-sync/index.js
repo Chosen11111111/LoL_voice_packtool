@@ -37,12 +37,38 @@
     return CDN + "/" + (cdnLocale || "default") + "/v1/" + kind + "/" + id + ".ogg";
   }
 
+  /** 拦截计数: 用于让软件那边验证"插件真的在客户端里干活了"。 */
+  var stat = { hits: 0, at: 0, kind: "", id: "", since: 0 };
+  var lastReported = -1;
+
+  /** 把计数写进加载器的 DataStore(会落盘), 软件读它就知道插件跑没跑。 */
+  function report() {
+    if (stat.hits === lastReported) return;
+    lastReported = stat.hits;
+    try {
+      if (window.DataStore && typeof window.DataStore.set === "function") {
+        window.DataStore.set("voice-sync.trace", JSON.stringify({
+          hits: stat.hits,
+          at: Math.floor(stat.at || Date.now() / 1000),
+          kind: stat.kind,
+          id: stat.id,
+          locale: locale,
+          enabled: enabled
+        }));
+      }
+    } catch (e) {}
+  }
+
   /** 把客户端要的原始地址换成我们本地的; 不是选人台词就原样返回。 */
   function rewrite(url) {
     if (!enabled || typeof url !== "string") return url;
     if (locale === "zh_CN") return url;
     var m = url.match(KIND_RE);
     if (!m) return url;
+    stat.hits += 1;
+    stat.at = Math.floor(Date.now() / 1000);
+    stat.kind = m[1];
+    stat.id = m[2];
     return localUrl(m[1], m[2]);
   }
 
@@ -62,6 +88,7 @@
   readConfig();
   // 每 3 秒重读一次: 软件里开关一改, 客户端这边几秒内就跟上, 不用重启客户端
   setInterval(readConfig, 3000);
+  setInterval(report, 5000);
 
   // ---------- 2. 三个音频入口 ----------
   try {

@@ -131,7 +131,7 @@ export async function applyAll(env: SwitchEnv, options: RunOptions): Promise<Run
 
   const summary = summarize(results);
   let restarted = false;
-  if ((options.clientText === true || modules.some((module) => module !== "lobby_voice")) && options.restartClient !== false && (await isClientRunning())) {
+  if ((options.clientText === true || modules.length > 0) && options.restartClient !== false && (await isClientRunning())) {
     const restart = await restartClientUx();
     restarted = restart.ok;
     if (restarted) await waitForClientUp(90000);
@@ -178,7 +178,7 @@ export async function restoreAll(env: SwitchEnv, options: Omit<RunOptions, "loca
   options.progress?.(0, total, "正在准备…");
 
   let restarted = false;
-  if ((options.clientText === true || modules.some((module) => module !== "lobby_voice")) && options.restartClient !== false && (await isClientRunning())) {
+  if ((options.clientText === true || modules.length > 0) && options.restartClient !== false && (await isClientRunning())) {
     // 客户端占着 d3d9.dll/配置文件时, 先重启 UX 拿到干净的文件句柄
     const restart = await restartClientUx();
     restarted = restart.ok;
