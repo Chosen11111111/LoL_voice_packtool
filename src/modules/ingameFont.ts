@@ -11,6 +11,9 @@ import { backupPathFor } from "../packs/wadfile.ts";
 
 export const UI_WAD_NAME = "UI.wad.client";
 
+/** 局内字体功能开关: 校验值问题解决前保持关闭。 */
+const FONT_FEATURE_ENABLED = false;
+
 /** 局内字体所在的资源包(游戏目录 DATA\FINAL\UI.wad.client)。 */
 export function uiWadPath(finalDir: string): string {
   return path.join(finalDir, UI_WAD_NAME);
@@ -25,6 +28,11 @@ export interface FontStepResult {
 
 /** 按语种替换局内字体。中文保持不变(官方本来就是中文字体)。 */
 export async function applyIngameFont(locale: string, finalDir: string): Promise<FontStepResult> {
+  // 暂停: 实测发现游戏会校验条目校验值(xxh3_64), 现有补丁器没重算它, 会导致
+  // "Installation is corrupt. WadFile mount failed."。等校验值算对了再打开。
+  if (!FONT_FEATURE_ENABLED) {
+    return { ok: true, changed: 0, message: "局内字体保持原版" };
+  }
   const wad = uiWadPath(finalDir);
   // 完整安装一定有这个包; 没有说明游戏没装全或给了个不完整的目录, 不当成错误
   if (!(await pathExists(wad))) {
