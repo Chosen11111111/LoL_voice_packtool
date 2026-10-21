@@ -90,6 +90,46 @@
   setInterval(readConfig, 3000);
   setInterval(report, 5000);
 
+  // ---------- 1.5 藏掉加载器自己的界面 ----------
+  /**
+   * 加载器会往 body 挂 <div id="pengu-root">(企鹅图标、欢迎窗、左下角那些),
+   * 还把客户端的启动加载画面改了。用户要的是"除了语言以外和原版客户端一样",
+   * 所以这里只加一层样式把它们藏掉 —— 不改任何文件。
+   *
+   * 注意: 这段原来只写在文字翻译插件里, 于是"只开选人语音"时企鹅会露出来。
+   * 现在两个插件各带一份, 谁先注入都能生效(用同一个 style id 避免重复)。
+   */
+  function hideLoaderUi() {
+    var STYLE_ID = "lol-voice-hide-loader-ui";
+    if (document.getElementById(STYLE_ID)) return;
+    if (document.getElementById("text-replacer-hide-loader-ui")) return;
+    try {
+      var style = document.createElement("style");
+      style.id = STYLE_ID;
+      style.textContent = [
+        "#pengu-root, pengu-root { display: none !important; visibility: hidden !important; }",
+        // 启动加载画面: 放出客户端自己的图标, 去掉企鹅头像与 "Pengu-Powered" 字样
+        "div[id^=index_loading_div] > img { display: block !important; }",
+        "div[id^=index_loading_div]::before { content: none !important; background-image: none !important; width: 0 !important; height: 0 !important; border-radius: 0 !important; }",
+        "div[id^=index_loading_div]::after { content: none !important; margin-top: 0 !important; }"
+      ].join("\n");
+      (document.head || document.documentElement).appendChild(style);
+    } catch (e) {}
+  }
+  hideLoaderUi();
+  // 加载器可能比我们晚挂 DOM, 多试几次
+  if (typeof document !== "undefined") {
+    if (document.readyState === "loading") {
+      document.addEventListener("DOMContentLoaded", hideLoaderUi);
+    }
+    var tries = 0;
+    var timer = setInterval(function () {
+      hideLoaderUi();
+      tries += 1;
+      if (tries > 20) clearInterval(timer);
+    }, 500);
+  }
+
   // ---------- 2. 三个音频入口 ----------
   try {
     var origOpen = XMLHttpRequest.prototype.open;
