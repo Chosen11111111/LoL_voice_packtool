@@ -5,7 +5,6 @@ import path from "node:path";
 import { invalidateConfigCache, loadConfig, saveConfig } from "../src/core/config.ts";
 import { setClientRunningOverride } from "../src/core/win/processes.ts";
 import { taskManager } from "../src/tasks/manager.ts";
-import { lobbyLive } from "../src/modules/lobbyLive.ts";
 import { startApiServer } from "../src/server/api.ts";
 import type { RunningServer } from "../src/server/http.ts";
 import { cleanupSuite, exists, makeDirSafe, makeFinalDir, makePack, makeTempDir, readFile, useSuite, writeFile } from "./helpers.ts";
@@ -217,7 +216,7 @@ test("POST /api/restore 全部还原为官方默认", async () => {
   assert.equal(state.json.state.ingame.is_voice_active, false);
 });
 
-test("大厅选人语音: 开启后走 LCU 监听(不改客户端文件), 关闭能停掉", async () => {
+test("大厅选人语音: 部署插件 + 目录联接, 不改客户端文件, 关闭能还原", async () => {
   const d3d9Before = await readFile(path.join(fixture!.leagueDir, "d3d9.dll"));
   const pluginDirExists = await exists(path.join(fixture!.leagueDir, "Plugins"));
 
@@ -225,28 +224,39 @@ test("大厅选人语音: 开启后走 LCU 监听(不改客户端文件), 关闭
   assert.equal(json.ok, true);
   const finished = await waitTask(json.task.id);
   assert.equal(finished.result.ok, true, JSON.stringify(finished.result.summary));
-  assert.equal(finished.result.results[0].detail.mechanism, "lcu-live");
+  assert.equal(finished.result.results[0].detail.mechanism, "pengu-audio");
   assert.equal(finished.result.results[0].detail.locale, "ja_JP");
+  assert.equal(finished.result.results[0].detail.available, 2, "夹具里有两个选人台词");
 
-  // 状态与监听引擎一致
+  // 插件和联接都落在加载器目录里, 不碰客户端目录
+  const pluginDir = path.join(process.env.LOCALAPPDATA!, "LoL_Voice", "loader", "plugins", "voice-sync");
+  assert.equal(await exists(path.join(pluginDir, "index.js")), true, "插件本体应已就位");
+  assert.equal(await exists(path.join(pluginDir, "voice_assets", "champion-choose-vo", "100.ogg")), true, "捷接应能读到语音包");
+  const config = JSON.parse(await readFile(path.join(pluginDir, "config.json")));
+  assert.deepEqual(config, { enabled: true, locale: "ja_JP", cdn_locale: "ja_jp" });
+  const script = await readFile(path.join(pluginDir, "index.js"));
+  assert.match(script, /var enabled = true;/, "代码里的开关也要同步打开");
+
+  // 状态与插件一致
   const state = await get("/api/state");
   assert.equal(state.json.state.lobby.enabled, true);
-  assert.equal(state.json.state.lobby.mechanism, "lcu-live");
-  assert.equal(state.json.state.lobby_live.running, true);
-  assert.equal(state.json.state.lobby_live.locale, "ja_JP");
-  assert.equal(state.json.state.lobby_live.available, 2);
+  assert.equal(state.json.state.lobby.mechanism, "pengu-audio");
+  assert.equal(state.json.state.lobby.locale, "ja_JP");
+  assert.equal(state.json.state.lobby.available, 2);
 
   // 客户端目录一个字节都没动、也没有新建目录
   assert.equal(await readFile(path.join(fixture!.leagueDir, "d3d9.dll")), d3d9Before);
   assert.equal(await exists(path.join(fixture!.leagueDir, "Plugins")), pluginDirExists);
 
-  // 关闭后引擎停止
+  // 关闭: 开关关掉、联接拆掉
   const closed = await post("/api/restore", { modules: ["lobby_voice"], restartClient: false });
   const closedTask = await waitTask(closed.json.task.id);
   assert.equal(closedTask.result.ok, true);
   const after = await get("/api/state");
-  assert.equal(after.json.state.lobby_live.running, false);
   assert.equal(after.json.state.lobby.enabled, false);
+  const off = JSON.parse(await readFile(path.join(pluginDir, "config.json")));
+  assert.equal(off.enabled, false);
+  assert.equal(await exists(path.join(pluginDir, "voice_assets")), false, "联接应已拆除");
 });
 
 test("大厅选人语音: 语音包里没有该语种时明确失败", async () => {
@@ -257,7 +267,7 @@ test("大厅选人语音: 语音包里没有该语种时明确失败", async () 
   assert.equal(finished.task.status, "failed");
   assert.match(String(finished.result.results[0].reason), /资源缺失/);
   const state = await get("/api/state");
-  assert.equal(state.json.state.lobby_live.running, false);
+  assert.equal(state.json.state.lobby.enabled, false);
 });
 
 test("POST /api/packs/import 上传压缩包 -> 自动出现在语言包列表", async () => {
@@ -476,25 +486,18 @@ test("并发保护: 语音任务互斥, 第二个任务被拒绝", async () => {
   await post("/api/restore", { restartClient: false }).then((response) => waitTask(response.json.task.id));
 });
 
-test("关闭 API 服务会解除任务和选人事件订阅", async (t) => {
+test("关闭 API 服务会解除任务订阅", async (t) => {
   let taskUnsubscribed = 0;
-  let lobbyUnsubscribed = 0;
   const subscribeTask = taskManager.subscribe.bind(taskManager);
-  const subscribeLobby = lobbyLive.subscribe.bind(lobbyLive);
   t.mock.method(taskManager, "subscribe", (listener: Parameters<typeof taskManager.subscribe>[0]) => {
     const off = subscribeTask(listener);
     return () => { taskUnsubscribed++; off(); };
-  });
-  t.mock.method(lobbyLive, "subscribe", (listener: Parameters<typeof lobbyLive.subscribe>[0]) => {
-    const off = subscribeLobby(listener);
-    return () => { lobbyUnsubscribed++; off(); };
   });
   for (let i = 0; i < 3; i++) {
     const started = await startApiServer({ port: 0 });
     await started.running.close();
   }
   assert.equal(taskUnsubscribed, 3);
-  assert.equal(lobbyUnsubscribed, 3);
 });
 
 test("server.maxUploadBytes 配置实际约束 API 上传", async () => {

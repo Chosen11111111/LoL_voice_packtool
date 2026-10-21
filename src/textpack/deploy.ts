@@ -230,6 +230,34 @@ export async function stage(locale: string): Promise<StageResult> {
   }
 }
 
+/**
+ * 只部署**加载器本体**(core.dll + 激活脚本), 不放任何插件。
+ * 选人语音插件用这条: 它和文字翻译共用同一个加载器, 谁先开都能用。
+ */
+export async function stageLoader(): Promise<{ ok: boolean; dir: string; message: string; locked: string[] }> {
+  const dir = loaderDir();
+  const core = path.join(assetDir(), "loader", "core.dll");
+  if (!(await exists(core))) return { ok: false, dir, message: "软件包里的 core.dll 缺失", locked: [] };
+  const locked: string[] = [];
+  try {
+    await fs.mkdir(path.join(dir, "plugins"), { recursive: true });
+    try {
+      await fs.copyFile(core, path.join(dir, "core.dll"));
+    } catch (error) {
+      const code = String((error as NodeJS.ErrnoException).code ?? "");
+      if (code === "EBUSY" || code === "EPERM" || code === "EACCES") locked.push("core.dll（客户端正在运行，已跳过）");
+      else throw error;
+    }
+    if (!(await exists(path.join(dir, "config")))) await fs.writeFile(path.join(dir, "config"), configText(), "utf8");
+    const { install, uninstall } = scripts(dir);
+    await fs.writeFile(path.join(dir, "install.cmd"), install, "utf8");
+    await fs.writeFile(path.join(dir, "uninstall.cmd"), uninstall, "utf8");
+    return { ok: true, dir, message: "加载器已就位", locked };
+  } catch (error) {
+    return { ok: false, dir, message: `复制加载器失败：${String((error as Error).message).slice(0, 120)}`, locked };
+  }
+}
+
 /** 只删我们自己放的文件; 目录里有别的东西就留着(绝不误删用户的文件)。 */
 export async function unstage(): Promise<{ ok: boolean; message: string }> {
   const dir = loaderDir();

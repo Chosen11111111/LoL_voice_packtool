@@ -23,12 +23,6 @@ const logger = createLogger("app");
  */
 async function cleanupOnExit(): Promise<void> {
   try {
-    const { lobbyLive } = await import("./modules/lobbyLive.ts");
-    if (lobbyLive.isRunning()) await lobbyLive.stop();
-  } catch (error) {
-    logger.warn(`退出清理: 停止监听失败(${String((error as Error).message ?? error)})`);
-  }
-  try {
     const { setClientOriginalVoice } = await import("./modules/clientVoice.ts");
     await setClientOriginalVoice(false, "tool");
   } catch (error) {

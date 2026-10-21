@@ -14,8 +14,7 @@ import { wadSuffix } from "./packs/baselocale.ts";
 import { scanLocales } from "./packs/locales.ts";
 import { importArchive } from "./packs/archive.ts";
 import { applyAll, restoreAll } from "./modules/oneclick.ts";
-import { getLobbyStatus, type LobbyStatus } from "./modules/lobbyVoice.ts";
-import { lobbyLive } from "./modules/lobbyLive.ts";
+import { getLobbyStatus, lobbyVoiceEnabled, type LobbyStatus } from "./modules/lobbyVoice.ts";
 import { buildEnv, type SwitchEnv } from "./modules/context.ts";
 import { taskManager, type TaskSnapshot } from "./tasks/manager.ts";
 
@@ -223,8 +222,8 @@ export function defaultApplyModules(config: AppConfig): ModuleId[] {
 /** 默认还原范围: 大厅能力关闭时, 只在大厅确实处于开启状态才把它加回来(避免残留)。 */
 async function defaultRestoreModules(config: AppConfig, env: SwitchEnv): Promise<ModuleId[]> {
   const modules: ModuleId[] = [];
-  // 选人语音现在是"LCU 监听 + 本地播报": 只要监听还在跑就必须带上, 否则一键还原关不掉它
-  if (config.features.lobbyVoice || lobbyLive.isRunning()) modules.push("lobby_voice");
+  // 选人语音现在是"插件替换": 只要插件还开着就必须带上, 否则一键还原关不掉它
+  if (config.features.lobbyVoice || (await lobbyVoiceEnabled())) modules.push("lobby_voice");
   if (config.features.lobbyLang) modules.push("lobby_lang");
   modules.push("ingame_voice", "ingame_lang");
   return modules;

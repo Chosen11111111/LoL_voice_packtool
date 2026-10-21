@@ -138,9 +138,6 @@
     return {
       selectedLocale: store.selected,
       modules: selectedModules(),
-      volume,
-      followClient,
-      voiceDelayMs,
       region: preferenceRegion
     };
   }
@@ -173,18 +170,14 @@
     store.selected = typeof ui.selectedLocale === "string" ? ui.selectedLocale : config.defaultLocale || "";
     const modules = Array.isArray(ui.modules) ? ui.modules : Object.keys(moduleControls);
     for (const [module, id] of Object.entries(moduleControls)) $(id).checked = modules.includes(module);
-    if (typeof ui.volume === "number" && Number.isFinite(ui.volume)) setVolume(ui.volume, false);
-    followClient = typeof ui.followClient === "boolean" ? ui.followClient : followClient;
-    if (typeof ui.voiceDelayMs === "number" && Number.isFinite(ui.voiceDelayMs)) setVoiceDelay(ui.voiceDelayMs, false);
     if (ui.region === "cn" || ui.region === "global") {
       preferenceRegion = ui.region;
       setServerRegion(ui.region, true);
     }
-    applyFollowLabel();
     preferencesReady = true;
     $("configSaveStatus").title = "配置文件：" + file;
     $("configSaveStatus").textContent = "配置已读取";
-    if (ui.volume == null || ui.followClient == null || ui.selectedLocale == null) void savePreferences();
+    if (ui.selectedLocale == null) void savePreferences();
   }
 
   // 关闭时将尚未落盘的最新选择提交，keepalive 允许请求在窗口关闭后完成。
@@ -396,11 +389,6 @@
   /** 监听器的启动/停止串行队列(避免并发起两个监听器)。 */
   let syncQueue = Promise.resolve();
 
-  /** 选人语音的开关状态(只看状态, 不看勾选框)。 */
-  function lobbyVoiceStateOn() {
-    return Boolean(lastApplied && lastApplied.locale && (lastApplied.modules || []).includes("lobby_voice"));
-  }
-
   /** "上次开启"的简短文案(用于悬停提示与日志)。 */
   function lastAppliedText() {
     if (!lastApplied || !lastApplied.locale) return "";
@@ -451,9 +439,9 @@
     $("statusIngameLang").textContent = langActive ? "已开启" : "原版";
     $("cardStatusLang").title = cleanStatusDetail(ingame.lang, langActive, ingame.active_locale) || "";
 
-    // 3. 对局前选人语音: 走 "LCU 监听 + 本地播放", 状态以后端的监听引擎为准
-    const live = store.state.lobby_live || {};
-    const lobbyActive = Boolean(live.running);
+    // 3. 对局前选人语音: 由加载器插件在客户端里替换音频, 状态以插件开关为准
+    const live = store.state.lobby || {};
+    const lobbyActive = Boolean(live.enabled);
     const liveLocale = live.locale || lobby.locale || "";
     const lobbyLocaleObj = store.locales.find((item) => item.code === liveLocale);
     const lobbyLocaleName = lobbyLocaleObj ? lobbyLocaleObj.name : liveLocale;
@@ -467,10 +455,8 @@
     if (lobbyShort) $("cardStatusLobby").title = lobbyShort;
     const details = [
       "状态：" + (lobbyStateOn ? "开启" : "未开启"),
-      lobbyActive ? (live.presence === "in" ? "正在选人, 实时播报中" : "监视中, 等待进入选人") : "监听未运行",
-      "已播报 " + (live.played || 0) + " 条",
-      clientVoice && clientVoice.supported ? "原版台词：" + (clientVoice.suppressed ? "已静音" : "开着") : clientRunning === false ? "原版台词：客户端未启动" : "",
-      live.playback_failed ? "播放失败 " + live.playback_failed + " 次（" + ((live.last_playback && live.last_playback.error) || "未知") + "）" : "",
+      lobbyActive ? "客户端内替换（" + (lobbyLocaleName || liveLocale) + "，共 " + (live.available || 0) + " 条台词）" : "未开启",
+      live.legacy_wad_patch ? "检测到旧资源包补丁, 还原即可回滚" : "",
       lastAppliedText()
     ].filter(Boolean);
     $("cardStatusLobby").title = details.join("\n");
@@ -508,10 +494,7 @@
     }
     const logButton = $("btnOpenLog");
     if (logButton) logButton.classList.toggle("hidden", releaseMode);
-    await loadClientVoice();
     await loadTextPack();
-    // 状态刷新后同步监听器: 开启语音包(含选人语音)就启动, 还原就停止, 重启后自动恢复
-    void syncLobbyLive();
   }
 
   /* ------------------------------------------------ 客户端界面文字(语言跟着语音包走) */
@@ -1062,425 +1045,9 @@
         setStatus("操作已完成", "ok", 100);
       }
     });
-    // 选人台词: 后端监听到悬停/锁定/禁用后推过来, 这里用 <audio> 播语音包里的音频
-    events.addEventListener("lobby", (event) => {
-      try {
-        playLobbyVoice(JSON.parse(event.data));
-      } catch (error) {
-        // 以前这里静默吞掉, 出错时完全查不到 —— 现在写进日志框
-        log("选人事件处理失败：" + (error && error.message ? error.message : error), "warn");
-      }
-    });
-    // 客户端音量变了: 立刻把播报音量对齐过去(后端每 5 秒检查一次客户端设置并推送)
-    events.addEventListener("voice-volume", (event) => {
-      try {
-        const data = JSON.parse(event.data);
-        const next = Number(data.volume);
-        if (next > 0) {
-          setVolume(next, false);
-          log("客户端音量变化，播报音量已对齐：" + next + "%");
-          reportPlayback(true, "", "volume:" + next);
-        }
-      } catch {
-        /* ignore */
-      }
-    });
     events.onerror = () => {
       setStatus("后端服务连接已断开", "err");
     };
-  }
-
-  /* ------------------------------------------------ 选人语音实时播报 */
-
-  // 播放端就是本窗口: Chromium 原生支持 ogg/vorbis, 不需要任何解码依赖
-  const lobbyAudio = new Audio();
-  lobbyAudio.preload = "auto";
-  let lobbyLiveLocale = "";
-  let lastVoice = { kind: "choose", championId: 0 };
-
-  /* --------------------------------- 播报音量 / 延迟(不显示在界面上)
-
-     播报音量**不需要用户设置**: 选人语音开启时自动抓客户端的总音量来对齐
-     (监听期间每 30 秒复查一次, 用户在客户端改了音量也能跟上)。
-     延迟固定在 config.json -> ui.voiceDelayMs(默认 1000ms)。
-     客户端原版台词的自动静音闭环由后端默认开启, 可用 POST /api/client-voice {"auto":false} 关掉。
-  */
-
-  const VOLUME_KEY = "leagueVoice.volume";
-  const FOLLOW_KEY = "leagueVoice.followClient";
-
-  function legacyPreference(key) {
-    try { return localStorage.getItem(key); } catch { return null; }
-  }
-  const legacyVolume = legacyPreference(VOLUME_KEY);
-  let volume = legacyVolume === null ? 60 : Number(legacyVolume);
-  if (!Number.isFinite(volume)) volume = 60;
-  volume = Math.max(0, Math.min(100, Math.round(volume)));
-  let volumeBeforeMute = volume > 0 ? volume : 60;
-  // 是否跟随客户端音量(总音量 × 音效), 默认开启; 手动拖过滑杆就自动关掉
-  let followClient = legacyPreference(FOLLOW_KEY) !== "0";
-  // 播报固定延迟(毫秒): 实测 1000ms 最贴合官方台词的节奏, 作为固定默认值
-  let voiceDelayMs = 1000;
-  let pendingPlayTimer = null;
-
-  function setVoiceDelay(ms, persist) {
-    const value = Math.max(0, Math.min(3000, Math.round(Number(ms) || 0)));
-    voiceDelayMs = value;
-    const input = $("delayInput");
-    if (input) input.value = String(value);
-    if (persist) void savePreferences();
-  }
-
-  function applyDelayInput() {
-    const input = $("delayInput");
-    if (input) input.value = String(voiceDelayMs);
-  }
-
-  function applyFollowLabel() {
-    const button = $("btnAlignVolume");
-    if (!button) return;
-    button.dataset.on = followClient ? "true" : "false";
-    button.title = followClient
-      ? "已开启：播报音量跟随客户端音量（点一下改为手动）"
-      : "手动音量（点一下改为跟随客户端音量）";
-  }
-
-  function applyVolume() {
-    lobbyAudio.volume = Math.max(0, Math.min(1, volume / 100));
-    const slider = $("volumeSlider");
-    if (slider) slider.value = String(volume);
-    const label = $("volumeValue");
-    if (label) label.textContent = volume + "%";
-    const icon = $("btnMuteToggle");
-    if (icon) icon.dataset.muted = volume === 0 ? "true" : "false";
-  }
-
-  function setVolume(next, persist) {
-    volume = Math.max(0, Math.min(100, Math.round(next)));
-    if (volume > 0) volumeBeforeMute = volume;
-    if (persist) void savePreferences();
-    applyVolume();
-  }
-
-
-  /* 客户端原版台词开关(关掉客户端自己念的原版台词, 保留音效与音乐) */
-  let clientVoice = { supported: false, suppressed: false, message: "" };
-  let clientVoiceRetry = null;
-
-  function applyClientVoiceLabel() {
-    const button = $("btnClientVoice");
-    if (!button) return;
-    if (!clientVoice.supported && !clientVoice.suppressed) {
-      // 客户端没启动 / 读不到设置: 明确禁用, 不做无效操作
-      button.textContent = "原版台词：客户端未启动";
-      button.dataset.mode = "off";
-      button.disabled = true;
-      button.title = clientVoice.message || "英雄联盟没在运行，读不到也改不了它的设置；客户端启动后这个按钮会自动可用。";
-      return;
-    }
-    button.disabled = false;
-    button.dataset.mode = clientVoice.auto ? "on" : "off";
-    if (!clientVoice.auto) {
-      button.textContent = "原版台词：不自动";
-      button.title = "已关闭自动静音：客户端会照常念原版台词。点一下开启自动闭环。";
-      return;
-    }
-    button.textContent = clientVoice.suppressed ? "原版台词：自动静音中" : "原版台词：自动";
-    button.title = clientVoice.suppressed
-      ? "选人期间已自动关闭客户端原版台词（音效与音乐不受影响），选人结束后会自动打开。点一下关闭这套自动逻辑。"
-      : "已开启自动闭环：启动选人语音时自动静音客户端原版台词，选人结束自动打开。";
-  }
-
-  async function loadClientVoice() {
-    try {
-      const data = await api("/api/client-voice");
-      clientVoice = {
-        supported: Boolean(data.supported),
-        suppressed: Boolean(data.suppressed),
-        auto: data.auto !== false,
-        aligned: Number(data.aligned_volume) || 0,
-        volumes: data.volumes || null,
-        message: data.message || ""
-      };
-      clientRunning = data.client_running !== false;
-    } catch {
-      clientVoice = { supported: false, suppressed: false, auto: true, aligned: 0, volumes: null, message: "读取失败" };
-      clientRunning = false;
-    }
-    applyClientVoiceLabel();
-    applyDisabledStates();
-    // 客户端可能稍后才启动: 没读到就每 10 秒重试, 起来后按钮自动可用、自动接管
-    if (clientRunning === false) {
-      if (!clientVoiceRetry) {
-        clientVoiceRetry = setTimeout(() => {
-          clientVoiceRetry = null;
-          void loadClientVoice();
-        }, 10000);
-      }
-    } else if (clientVoiceRetry) {
-      clearTimeout(clientVoiceRetry);
-      clientVoiceRetry = null;
-    }
-    // 播报音量 = 客户端 总音量 × 音效音量(后端 computeAlignedVolume 算好)
-    if (lobbyVoiceStateOn() && clientVoice.aligned > 0 && clientVoice.aligned !== volume) {
-      setVolume(clientVoice.aligned, false);
-      const volumes = clientVoice.volumes || {};
-      log(
-        "播报音量已对齐客户端：" + clientVoice.aligned + "%" +
-          "（客户端 总音量 " + (volumes.master ?? "?") + "% × 音效 " + (volumes.voice ?? volumes.sfx ?? "?") + "%）"
-      );
-    }
-    applyFollowLabel();
-  }
-
-  function initHud() {
-    applyVolume();
-    applyClientVoiceLabel();
-    const clientVoiceButton = $("btnClientVoice");
-    if (clientVoiceButton) {
-      clientVoiceButton.addEventListener("click", async () => {
-        if (clientRunning === false) {
-          setStatus("英雄联盟未启动：读不到也改不了它的设置，客户端启动后会自动接管", "warn", 4000);
-          log("英雄联盟未启动：原版台词开关需要客户端在运行");
-          return;
-        }
-        // 这个按钮切换"选人期间自动静音"这套闭环
-        const next = !clientVoice.auto;
-        clientVoiceButton.disabled = true;
-        try {
-          const data = await api("/api/client-voice", { method: "POST", body: JSON.stringify({ auto: next }) });
-          clientVoice = {
-            supported: Boolean(data.supported),
-            suppressed: Boolean(data.suppressed),
-            auto: data.auto !== false,
-            aligned: Number(data.aligned_volume) || 0,
-            volumes: data.volumes || null,
-            message: data.message || ""
-          };
-          log(data.message || (next ? "已开启自动静音" : "已关闭自动静音"));
-        } catch (error) {
-          log("切换客户端原版台词失败：" + (error && error.message ? error.message : error), "warn");
-        } finally {
-          clientVoiceButton.disabled = false;
-          applyClientVoiceLabel();
-        }
-      });
-    }
-    const slider = $("volumeSlider");
-    if (slider) {
-      slider.addEventListener("input", () => {
-        // 手动拖过滑杆就不再让客户端音量覆盖
-        if (followClient) {
-          followClient = false;
-          applyFollowLabel();
-        }
-        setVolume(Number(slider.value), true);
-      });
-    }
-    applyDelayInput();
-    const delay = $("delayInput");
-    if (delay) {
-      delay.addEventListener("change", () => {
-        setVoiceDelay(delay.value, true);
-        log("播报延迟设为 " + voiceDelayMs + "ms");
-      });
-    }
-    const align = $("btnAlignVolume");
-    if (align) {
-      align.addEventListener("click", () => {
-        followClient = !followClient;
-        void savePreferences();
-        applyFollowLabel();
-        if (followClient) {
-          void loadClientVoice();
-        } else {
-          log("已改为手动音量");
-        }
-      });
-    }
-    const mute = $("btnMuteToggle");
-    if (mute) {
-      mute.addEventListener("click", () => setVolume(volume === 0 ? volumeBeforeMute : 0, true));
-    }
-  }
-
-  /** 把播放结果回报给后端(排障: 能直接看到浏览器给的错误原因)。 */
-  function reportPlayback(ok, error, detail) {
-    try {
-      fetch("/api/lobby-live/report", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          ok,
-          error: error || "",
-          detail: detail || "",
-          kind: lastVoice.kind,
-          championId: lastVoice.championId,
-          volume
-        })
-      }).catch(() => undefined);
-    } catch {
-      /* ignore */
-    }
-  }
-
-  lobbyAudio.addEventListener("playing", () => {
-    reportPlayback(true, "", "playing");
-  });
-  lobbyAudio.addEventListener("error", () => {
-    const code = lobbyAudio.error ? lobbyAudio.error.code : 0;
-    const message = lobbyAudio.error ? String(lobbyAudio.error.message || "") : "";
-    reportPlayback(false, "media_error_" + code, message);
-    setStatus("播报音频加载失败（code " + code + " " + message + "）", "warn", 0);
-  });
-
-  let lastPlayKey = "";
-  let lastPlayAt = 0;
-
-  // 兜底轮询用: 最近处理过的事件时间戳(SSE 万一不通, 也能靠它播放)
-  let lastEventAt = 0;
-
-  function playLobbyVoice(data) {
-    if (!data || !data.url) return;
-    if (Number(data.at) > lastEventAt) lastEventAt = Number(data.at);
-    // 双保险: 同一句台词短时间重复推送时忽略(否则第二遍会把第一遍打断, 声音反而迟迟不出来)
-    const key = data.kind + ":" + data.championId;
-    const now = Date.now();
-    if (key === lastPlayKey && now - lastPlayAt < 1500) {
-      log("忽略重复推送：" + key);
-      return;
-    }
-    lastPlayKey = key;
-    lastPlayAt = now;
-    lastVoice = { kind: data.kind, championId: data.championId };
-    // 播报前现取一次客户端音量: 否则刚调完音量就锁定英雄, 这一句会用上一个音量(实测体感就是"偏大")
-    void loadClientVoice();
-    // 固定延迟: 等官方那句先起头, 避免两路叠在一起或我们抢在前面
-    if (pendingPlayTimer) {
-      clearTimeout(pendingPlayTimer);
-      pendingPlayTimer = null;
-    }
-    if (voiceDelayMs > 0) {
-      pendingPlayTimer = setTimeout(() => {
-        pendingPlayTimer = null;
-        startPlayback(data.url);
-      }, voiceDelayMs);
-    } else {
-      startPlayback(data.url);
-    }
-    if (data.championId) {
-      log("播放选人台词：" + data.kind + " 英雄 " + data.championId + "（" + data.phase + "）" + (voiceDelayMs > 0 ? "，延迟 " + voiceDelayMs + "ms" : ""));
-    }
-  }
-
-  /** 真正开始播放(换英雄时立刻切掉上一条, 避免两条台词叠在一起)。 */
-  function startPlayback(url) {
-    try {
-      lobbyAudio.pause();
-      lobbyAudio.currentTime = 0;
-    } catch {
-      /* ignore */
-    }
-    lobbyAudio.src = url;
-    const played = lobbyAudio.play();
-    if (played && typeof played.catch === "function") {
-      played.catch((error) => {
-        reportPlayback(false, "play_" + (error && error.name ? error.name : "error"), error && error.message ? error.message : "");
-        setStatus("浏览器拦下了自动播放，点一下窗口任意位置即可", "warn", 0);
-      });
-    }
-  }
-
-  // 首次交互时解锁音频(浏览器自动播放策略); 用 pointerdown 比 click 更早
-  const unlockAudio = () => {
-    try {
-      lobbyAudio.muted = true;
-      const started = lobbyAudio.play();
-      if (started && typeof started.then === "function") {
-        started.then(() => {
-          lobbyAudio.pause();
-          lobbyAudio.muted = false;
-        }).catch(() => {
-          lobbyAudio.muted = false;
-        });
-      }
-    } catch {
-      /* ignore */
-    }
-  };
-  document.addEventListener("pointerdown", unlockAudio, { once: true });
-  document.addEventListener("click", unlockAudio, { once: true });
-
-  /**
-   * 选人语音的开关: **本次会话**点过"开启语音包"(且含选人语音)才开启。
-   *
-   *   - 勾选"选人语音" + 点"开启语音包" -> 本次会话开启 -> 这里启动监听
-   *   - 点"恢复原版" -> 关闭 -> 这里停止监听
-   *   - 关掉软件再打开 -> 状态清零(**不会自己开起来**), 需要重新点一次"开启语音包"
-   * 勾选框/下拉栏只是"这次开启要用的参数"。config.json 里的 ui.lastApplied 只作为
-   * "上次开启"的记录显示(日志/悬停), 不再用来自动开启 —— 用户明确要求退出即结束。
-   */
-  async function syncLobbyLive() {
-    // 串行化: 并发调用会各自越过下面的判断, 结果起两个监听器(换语种时实测出现过)
-    syncQueue = syncQueue.then(() => doSyncLobbyLive()).catch(() => undefined);
-    return syncQueue;
-  }
-
-  async function doSyncLobbyLive() {
-    if (!preferencesReady) return;
-    // 任务执行中(比如"一键开启"后端正在启动监听)先不动它, 否则会出现 停->启 的无谓抖动
-    if (store.busy) return;
-    const modules = (lastApplied && lastApplied.modules) || [];
-    const wanted =
-      lobbyVoiceSessionOn && lastApplied && lastApplied.locale && modules.includes("lobby_voice")
-        ? lastApplied.locale
-        : "";
-    if (!wanted) {
-      await stopLobbyLive();
-      return;
-    }
-    if (wanted === lobbyLiveLocale) return;
-    // 换语种**不先停**: 后端会原地换语音包(停了会先还原客户端设置再重新静音, 用户看到"设置里没关上")
-    const switchedLocale = lobbyLiveLocale;
-    lobbyLiveLocale = wanted;
-    try {
-      const response = await fetch("/api/lobby-live/start", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ locale: wanted })
-      });
-      const data = await response.json();
-      if (data && data.ok) {
-        log(
-          switchedLocale
-            ? switchedLocale + " -> " + wanted + "：语音包已切换（" + data.message + "）"
-            : "选人语音监听已启动（状态：开启）：" + data.message
-        );
-        renderStatusRow();
-        // 启动瞬间: 后端按闭环静音客户端原版台词, 同时抓客户端音量对齐播报音量
-        void loadClientVoice();
-      } else if (data) {
-        lobbyLiveLocale = "";
-        log("选人语音监听未启动：" + (data.message || ""));
-      }
-    } catch (error) {
-      lobbyLiveLocale = "";
-      log("选人语音监听启动失败：" + error.message);
-    }
-  }
-
-  /** 显式停止监听(用户主动选"未选中语音包"时)。 */
-  async function stopLobbyLive() {
-    if (!lobbyLiveLocale) return;
-    lobbyLiveLocale = "";
-    try {
-      await fetch("/api/lobby-live/stop", { method: "POST" });
-      log("选人语音监听已停止");
-      // 关闭时后端会还原原版台词, 同步界面
-      void loadClientVoice();
-    } catch {
-      /* ignore */
-    }
   }
 
   /* ------------------------------------------------ 启动初始化 */
@@ -1493,41 +1060,9 @@
     /* ignore */
   }
 
-  // 排障用: 控制台里执行 __playVoice("choose", 266) 可手动触发一次播放, 排除"事件没来"的干扰
-  window.__playVoice = (kind, championId) => {
-    playLobbyVoice({ kind: kind || "choose", championId: Number(championId) || 0, phase: "test", url: "/api/lobby-audio/" + (kind || "choose") + "/" + championId + ".ogg?locale=" + (store.selected || "ja_JP") });
-  };
-
-  initHud();
-  // 兜底: 每 2 秒问一次后端"最近有没有选人事件"。SSE 正常时这里什么也不会做(时间戳已被 SSE 更新),
-  // SSE 断了就由它把台词播出来 —— 保证"听得见"不依赖单一通道
-  // 每 30 秒重新对齐一次客户端音量(用户中途改了客户端音量也能跟上)
-  setInterval(() => {
-    if (!lobbyLiveLocale) return;
-    void loadClientVoice();
-  }, 30000);
-  setInterval(() => {
-    if (!lobbyLiveLocale) return;
-    // SSE 连着的时候这条兜底没有任何用(时间戳已被 SSE 更新), 直接跳过,
-    // 省掉每 2 秒一次的多余请求; 只有 SSE 断了才真的去问后端。
-    if (events && events.readyState === 1) return;
-    void (async () => {
-      try {
-        const data = await request("/api/lobby-live/state");
-        const event = data && data.last_event;
-        if (event && Number(event.at) > lastEventAt) {
-          log("通过兜底轮询拿到选人事件（SSE 可能没送到）");
-          playLobbyVoice(event);
-        }
-      } catch {
-        /* ignore */
-      }
-    })();
-  }, 2000);
   setBusy(false);
   refresh()
     .then(() => {
-      void syncLobbyLive();
       log("已连接后端服务 v" + store.state.app.version);
       setStatus("就绪", "ok", 0);
     })
