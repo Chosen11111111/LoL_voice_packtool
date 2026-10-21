@@ -18,6 +18,7 @@
 import { createReadStream, createWriteStream } from "node:fs";
 import fs from "node:fs/promises";
 import { pipeline } from "node:stream/promises";
+import zlib from "node:zlib";
 import path from "node:path";
 import { isDirectory, isFile, listNames, removeQuietly } from "../core/fsx.ts";
 import { createLogger } from "../core/logger.ts";
@@ -36,6 +37,32 @@ export const FIELD_SIZE = 12;
 export const FIELD_SIZE2 = 16;
 /** [+24] 是客户端校验用的内容校验值(算法未公开, 只能原样搬运)。 */
 export const FIELD_CHECKSUM = 24;
+/**
+ * 资源包里的条目可能是 zstd 压缩的(Game\DATA\FINAL 下的大包几乎全是)。
+ * 判断依据就是 zstd 帧魔数, 不需要额外标记。
+ */
+export const ZSTD_MAGIC = Buffer.from([0x28, 0xb5, 0x2f, 0xfd]);
+
+export function isZstdFrame(data: Buffer): boolean {
+  return data.length >= 4 && data.subarray(0, 4).equals(ZSTD_MAGIC);
+}
+
+/** 条目是不是"压缩后"的(按魔数判断, 不信任 TOC 里的大小字段)。 */
+export function isCompressedEntry(data: Buffer): boolean {
+  return isZstdFrame(data);
+}
+
+/** 解压单个条目; 不是压缩的就原样返回, 调用方不用判断。 */
+export function decompressEntry(data: Buffer): Buffer {
+  if (!isZstdFrame(data)) return data;
+  return zlib.zstdDecompressSync(data) as Buffer;
+}
+
+/** 把数据压成 zstd 帧(补丁写回压缩条目时必须用)。 */
+export function compressEntry(data: Buffer, level = 19): Buffer {
+  return zlib.zstdCompressSync(data, { params: { [zlib.constants.ZSTD_c_compressionLevel]: level } }) as Buffer;
+}
+
 /** 兼容旧名(早期误以为它是路径哈希, 实测为内容校验值)。 */
 export const FIELD_HASH = FIELD_CHECKSUM;
 
@@ -261,6 +288,12 @@ export interface PatchItem {
    * 搬运"数据 + 校验值"这一对时才会提供; 不提供则保持原值不动。
    */
   checksum?: bigint;
+  /**
+   * 数据是压缩帧时, 这里填**解压后**的字节数。
+   * wad 的 [+12] 存压缩后大小、[+16] 存解压后大小; 不填则两个字段都写 data.length
+   * (即"未压缩条目", 语音包一直走的就是这条路)。
+   */
+  uncompressedSize?: number;
 }
 
 export interface PatchResult {
@@ -281,6 +314,12 @@ export function backupPathFor(wadFile: string): string {
 /** 是否已被打过补丁(备份存在即视为可还原)。 */
 export async function isWadPatched(wadFile: string): Promise<boolean> {
   return isFile(backupPathFor(wadFile));
+}
+
+/** 读出某个条目的内容, 压缩的自动解开(字体、贴图等都在压缩条目里)。 */
+export async function readEntryContent(file: string, entry: WadEntry): Promise<Buffer> {
+  const raw = await readEntryBytes(file, entry, entry.size);
+  return decompressEntry(raw);
 }
 
 /**
@@ -353,7 +392,7 @@ export async function patchWadEntries(wadFile: string, items: PatchItem[]): Prom
     record.writeBigUInt64LE(entry.hash, 16);
     record.writeUInt32LE(cursor, 0);
     record.writeUInt32LE(item.data.length, 4);
-    record.writeUInt32LE(item.data.length, 8);
+    record.writeUInt32LE(item.uncompressedSize ?? item.data.length, 8);
     if (item.checksum !== undefined) record.writeBigUInt64LE(item.checksum, 16);
     tocEdits.push({ at: TOC_OFFSET + item.index * ENTRY_SIZE + FIELD_OFFSET, buf: record });
     cursor += item.data.length;

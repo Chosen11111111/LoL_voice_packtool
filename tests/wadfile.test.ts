@@ -18,6 +18,11 @@ import {
   backupPathFor,
   buildFingerprintIndex,
   buildFingerprintIndexFromFile,
+  compressEntry,
+  decompressEntry,
+  isCompressedEntry,
+  isZstdFrame,
+  readEntryContent,
   entryFingerprint,
   isWadPatched,
   patchWadEntries,
@@ -297,4 +302,71 @@ test("指纹: 按需读取建的索引与整读版本完全一致(含重复内�
 
 test.after(async () => {
   await cleanupSuite();
+});
+
+/* ------------- zstd 压缩条目(游戏里的字体、贴图都在压缩条目里) ------------- */
+
+/** 合成一个"条目本身是压缩帧"的 wad: [+12] 放压缩后大小, [+16] 放解压后大小。 */
+function makeCompressedWad(items: { data: Buffer; rawSize: number }[]): Buffer {
+  const header = Buffer.alloc(272);
+  header.write("RW", 0, "ascii");
+  header[2] = 3;
+  header[3] = 4;
+  header.writeUInt32LE(items.length, 268);
+  const toc = Buffer.alloc(items.length * 32);
+  let offset = 272 + items.length * 32;
+  const datas: Buffer[] = [];
+  items.forEach((item, i) => {
+    const base = i * 32;
+    toc.writeUInt32LE(offset, base + 8);
+    toc.writeUInt32LE(item.data.length, base + 12);
+    toc.writeUInt32LE(item.rawSize, base + 16);
+    toc.writeBigUInt64LE(BigInt("0x9abc") * BigInt(i + 1), base + 24);
+    datas.push(item.data);
+    offset += item.data.length;
+  });
+  return Buffer.concat([header, toc, ...datas]);
+}
+
+test("zstd: 压缩/解压往返一致, 未压缩的数据原样返回", () => {
+  const raw = Buffer.concat([Buffer.from([0, 1, 0, 0]), Buffer.from("font-data".repeat(500))]);
+  const packed = compressEntry(raw);
+
+  assert.equal(isZstdFrame(packed), true, "压缩结果必须是 zstd 帧");
+  assert.equal(isZstdFrame(raw), false, "未压缩数据不能被误判成压缩帧");
+  assert.equal(isCompressedEntry(packed), true);
+  assert.deepEqual(decompressEntry(packed), raw);
+  assert.deepEqual(decompressEntry(raw), raw, "非压缩数据必须原样返回");
+});
+
+test("zstd: 替换压缩条目后, [+12] 是压缩后大小, [+16] 是解压后大小, 内容能读回", async () => {
+  const root = await makeTempDir("wad-zstd");
+  const oldFont = Buffer.concat([Buffer.from([0, 1, 0, 0]), Buffer.from("old-font-glyphs".repeat(300))]);
+  const file = path.join(root, "UI.wad.client");
+  await fs.writeFile(file, makeCompressedWad([{ data: compressEntry(oldFont), rawSize: oldFont.length }]));
+
+  const newFont = Buffer.concat([Buffer.from([0, 1, 0, 0]), Buffer.from("new-font-glyphs".repeat(420))]);
+  const packedNew = compressEntry(newFont);
+  const result = await patchWadEntries(file, [
+    { index: 0, data: packedNew, uncompressedSize: newFont.length, label: "font" }
+  ]);
+  assert.equal(result.ok, true);
+  assert.equal(result.patched, 1);
+
+  const toc = await readWadEntries(file);
+  assert.equal(toc.entries[0]!.size, packedNew.length, "[+12] 应为压缩后大小");
+  assert.equal(toc.entries[0]!.size2, newFont.length, "[+16] 应为解压后大小");
+  assert.deepEqual(await readEntryContent(file, toc.entries[0]!), newFont, "解压后应等于新字体");
+});
+
+test("zstd: 不填 uncompressedSize 时两个大小字段都写成数据长度(旧的未压缩路径不变)", async () => {
+  const root = await makeTempDir("wad-uncompressed");
+  const { file } = await writeWad(root, [OGG_A, OGG_B]);
+  const replacement = Buffer.from("plain-voice".repeat(40));
+  await patchWadEntries(file, [{ index: 0, data: replacement }]);
+
+  const toc = await readWadEntries(file);
+  assert.equal(toc.entries[0]!.size, replacement.length);
+  assert.equal(toc.entries[0]!.size2, replacement.length);
+  assert.deepEqual(await readEntryContent(file, toc.entries[0]!), replacement);
 });
