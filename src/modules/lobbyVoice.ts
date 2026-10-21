@@ -32,7 +32,7 @@ import {
   unmountVoiceAssets,
   writeVoiceConfig
 } from "../packs/voicePlugin.ts";
-import { readRegistry, stageLoader } from "../textpack/deploy.ts";
+import { readRegistry, runElevated, stageLoader } from "../textpack/deploy.ts";
 import type { SwitchEnv } from "./context.ts";
 
 const logger = createLogger("lobby_voice");
@@ -117,8 +117,26 @@ export async function applyLobbyVoice(
     return makeResult(MODULE, false, { planned: 1, success: 0, failed: 1, reason: "写入失败", message: written.message });
   }
 
-  const [registry, clientRunning] = await Promise.all([readRegistry(), isClientRunning()]);
-  if (registry !== "set") notes.push("加载器还没激活 —— 需要管理员授权一次（点「开启语音包」会顺带完成）");
+  // 加载器没激活 => core.dll 不会注入 => 插件根本跑不起来(只能听到原声)。
+  // 这一步必须当场做掉: 文字翻译和选人语音共用同一个注册表项, 用户只开语音时没人替他激活。
+  let registry = await readRegistry();
+  const clientRunning = await isClientRunning();
+  if (registry !== "set") {
+    progress?.(3, 5, "等待管理员授权");
+    const elevated = await runElevated("install");
+    if (!elevated.ok) {
+      return makeResult(MODULE, false, {
+        planned: 1,
+        success: 0,
+        failed: 1,
+        reason: "激活失败",
+        message: "已复制文件，但加载器没有激活（需要管理员授权一次）：" + elevated.message,
+        detail: { mechanism: "pengu-audio", locale, available, notes }
+      });
+    }
+    registry = await readRegistry();
+    notes.push("已激活加载器（刚才弹了一次管理员授权）");
+  }
   progress?.(4, 4, "完成");
 
   const message =

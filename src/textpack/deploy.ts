@@ -274,13 +274,21 @@ export async function stageLoader(): Promise<{ ok: boolean; dir: string; message
   }
 }
 
-/** 只删我们自己放的文件; 目录里有别的东西就留着(绝不误删用户的文件)。 */
-export async function unstage(): Promise<{ ok: boolean; message: string }> {
+/**
+ * 只删我们自己放的文件; 目录里有别的东西就留着(绝不误删用户的文件)。
+ *
+ * keepLoader = true 时**不删 core.dll / 激活脚本**: 加载器是和"选人语音"共用的,
+ * 只还原文字翻译却把加载器拆了, 选人语音的插件就再也注入不进去了(踩过这个坑)。
+ */
+export async function unstage(options: { keepLoader?: boolean } = {}): Promise<{ ok: boolean; message: string }> {
   const dir = loaderDir();
   try {
     await fs.rm(path.join(dir, "plugins", "text-replacer"), { recursive: true, force: true });
     // 许可声明两个名字留着: 早先版本装过, 这里顺手清掉
-    for (const name of ["core.dll", "config", "locale.txt", "LICENSE-pengu.txt", "NOTICE.txt", "install.cmd", "uninstall.cmd"]) {
+    const names = options.keepLoader
+      ? ["locale.txt", "LICENSE-pengu.txt", "NOTICE.txt"]
+      : ["core.dll", "config", "locale.txt", "LICENSE-pengu.txt", "NOTICE.txt", "install.cmd", "uninstall.cmd"];
+    for (const name of names) {
       await fs.rm(path.join(dir, name), { force: true });
     }
     // 目录空了就一起删掉, 做到"一键卸干净"; 父目录(LoL_Voice)绝对不动, 那里还有界面内核的运行目录

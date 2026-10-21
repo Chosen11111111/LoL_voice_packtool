@@ -9,6 +9,7 @@ import { resolveVoiceRoot } from "../core/paths.ts";
 import { isDirectory, listNames } from "../core/fsx.ts";
 import { getState as getTextPackState, mergeCollected, restartClient as restartClientForTextPack, runElevated, stage as stageTextPack, unstage as unstageTextPack } from "../textpack/deploy.ts";
 import { isClientRunning } from "../core/win/processes.ts";
+import { lobbyVoiceEnabled } from "../modules/lobbyVoice.ts";
 import type { ModuleId } from "../core/types.ts";
 import { invalidateConfigCache } from "../core/config.ts";
 import { createLogger, setLogLevel, type LogLevel } from "../core/logger.ts";
@@ -29,6 +30,19 @@ function takeWindowShowRequest(): boolean {
   const value = windowShowRequested;
   windowShowRequested = false;
   return value;
+}
+
+/**
+ * 加载器(core.dll + 那个注册表项)是"客户端界面文字"和"选人语音"**共用**的。
+ * 只要选人语音还开着, 就不能把注册表项删掉 —— 删了插件就再也注入不进去,
+ * 用户看到的就是"明明开启了却还是原声"(实际踩过)。
+ */
+async function loaderInUseByVoice(): Promise<boolean> {
+  try {
+    return await lobbyVoiceEnabled();
+  } catch {
+    return false;
+  }
 }
 
 const logger = createLogger("api");
@@ -184,6 +198,10 @@ export function buildRouter(): Router {
       return { ok: result.ok, message: result.message, state: await getTextPackState() };
     }
     if (action === "activate" || action === "deactivate") {
+      if (action === "deactivate" && (await loaderInUseByVoice())) {
+        const state = await getTextPackState();
+        return { ok: true, message: "选人语音还在用加载器，激活项保留", state };
+      }
       const result = await runElevated(action === "activate" ? "install" : "uninstall");
       return { ok: result.ok, message: result.message, state: await getTextPackState() };
     }
@@ -261,8 +279,10 @@ export function buildRouter(): Router {
         // 关闭放在脚本里是因为它已经提权, 从我们这边普通权限 taskkill 未必杀得动 WeGame 启动的客户端。
         if (staged.ok) await runElevated("install");
       } else if (!wantClientText && textPackBefore.staged) {
-        await runElevated("uninstall");
-        await unstageTextPack();
+        const keepLoader = await loaderInUseByVoice();
+        if (!keepLoader) await runElevated("uninstall");
+        else logger.info("选人语音还在用加载器，保留激活项与 core.dll");
+        await unstageTextPack({ keepLoader });
       }
     } catch (error) {
       logger.warn("客户端界面文字这一步没做成(不影响语音包): " + String((error as Error).message).slice(0, 120));
@@ -321,10 +341,12 @@ export function buildRouter(): Router {
     let removedTextPack = false;
     const textPack = await getTextPackState();
     if (textPack.staged) {
-      await runElevated("uninstall");
-      await unstageTextPack();
+      const keepLoader = await loaderInUseByVoice();
+      if (!keepLoader) await runElevated("uninstall");
+      else logger.info("选人语音还在用加载器，保留激活项与 core.dll");
+      await unstageTextPack({ keepLoader });
       removedTextPack = true;
-      logger.info("恢复原版: 客户端界面文字已还原");
+      logger.info("恢复原版: 客户端界面文字已还原" + (keepLoader ? "（加载器保留给选人语音）" : ""));
     }
     const body = asRecord(context.body);
     const task = startRestoreTask({
