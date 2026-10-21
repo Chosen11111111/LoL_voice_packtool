@@ -7,6 +7,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { test } from "node:test";
 import { cleanupSuite, makeTempDir, useSuite } from "./helpers.ts";
+import { xxh3_64 } from "../src/core/xxh3.ts";
 import {
   APPEND_ALIGN,
   ENTRY_SIZE,
@@ -177,22 +178,28 @@ test("还原: 写回备份并删除备份文件, 内容与原始文件一致", a
   assert.equal(again.ok, true);
 });
 
-test("补丁: 提供 checksum 时写入 [+24], 不提供则保持原值", async () => {
+test("补丁: [+24] 默认重算为 xxh3_64(新数据), 显式给了 checksum 就用给的", async () => {
   const root = await makeTempDir("wad-checksum");
   const { file } = await writeWad(root, [OGG_A, OGG_B, PNG_C]);
   const before = await readWad(file);
   const originalChecksum0 = before.entries[0]!.hash;
-  const originalChecksum1 = before.entries[1]!.hash;
-  const newChecksum = 0x0123456789abcdefn;
+  const explicit = 0x0123456789abcdefn;
+  const dataWith = Buffer.from("with-checksum");
+  const dataWithout = Buffer.from("without-checksum");
 
   await patchWadEntries(file, [
-    { index: 0, data: Buffer.from("with-checksum"), checksum: newChecksum },
-    { index: 1, data: Buffer.from("without-checksum") }
+    { index: 0, data: dataWith, checksum: explicit },
+    { index: 1, data: dataWithout }
   ]);
 
   const after = await readWad(file);
-  assert.equal(after.entries[0]!.hash, newChecksum);
-  assert.equal(after.entries[1]!.hash, originalChecksum1);
+  assert.equal(after.entries[0]!.hash, explicit, "显式给的值必须原样写入");
+  assert.equal(
+    after.entries[1]!.hash,
+    xxh3_64(dataWithout),
+    "没给时必须重算 —— 游戏会校验它, 留着旧值就会被判成文件损坏"
+  );
+  assert.notEqual(after.entries[1]!.hash, before.entries[1]!.hash, "换了内容, 校验值必须跟着变");
   assert.notEqual(after.entries[0]!.hash, originalChecksum0);
 });
 
@@ -229,7 +236,7 @@ async function patchOldWay(
     wad.buffer.writeUInt32LE(cursor, base + FIELD_OFFSET);
     wad.buffer.writeUInt32LE(item.data.length, base + FIELD_SIZE);
     wad.buffer.writeUInt32LE(item.data.length, base + FIELD_SIZE2);
-    if (item.checksum !== undefined) wad.buffer.writeBigUInt64LE(item.checksum, base + FIELD_CHECKSUM);
+    wad.buffer.writeBigUInt64LE(item.checksum ?? xxh3_64(item.data), base + FIELD_CHECKSUM);
     cursor += item.data.length;
     const pad = (APPEND_ALIGN - (cursor % APPEND_ALIGN)) % APPEND_ALIGN;
     if (pad) {

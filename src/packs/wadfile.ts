@@ -19,6 +19,7 @@ import { createReadStream, createWriteStream } from "node:fs";
 import fs from "node:fs/promises";
 import { pipeline } from "node:stream/promises";
 import zlib from "node:zlib";
+import { xxh3_64 } from "../core/xxh3.ts";
 import path from "node:path";
 import { isDirectory, isFile, listNames, removeQuietly } from "../core/fsx.ts";
 import { createLogger } from "../core/logger.ts";
@@ -284,8 +285,11 @@ export interface PatchItem {
   label?: string;
   /**
    * 该条目的内容校验值(wad 的 [+24] 字段)。
-   * 客户端会校验它 —— 自己算不出来(算法未公开), 所以只有从**官方同源 wad**
-   * 搬运"数据 + 校验值"这一对时才会提供; 不提供则保持原值不动。
+   *
+   * 算法已确认: **xxh3_64(写入的字节)**。不填就自动重算, 这是正常路径 ——
+   * 游戏(对局端)在挂载资源包时会校验它, 值不对会直接判定
+   * "Installation is corrupt. WadFile mount failed."。
+   * 只有需要原样搬运"官方数据 + 官方校验值"时才显式指定。
    */
   checksum?: bigint;
   /**
@@ -393,7 +397,7 @@ export async function patchWadEntries(wadFile: string, items: PatchItem[]): Prom
     record.writeUInt32LE(cursor, 0);
     record.writeUInt32LE(item.data.length, 4);
     record.writeUInt32LE(item.uncompressedSize ?? item.data.length, 8);
-    if (item.checksum !== undefined) record.writeBigUInt64LE(item.checksum, 16);
+    record.writeBigUInt64LE(item.checksum ?? xxh3_64(item.data), 16);
     tocEdits.push({ at: TOC_OFFSET + item.index * ENTRY_SIZE + FIELD_OFFSET, buf: record });
     cursor += item.data.length;
     const pad = (APPEND_ALIGN - (cursor % APPEND_ALIGN)) % APPEND_ALIGN;

@@ -8,6 +8,7 @@
  * 日文 ...Ja / 韩文 UttumDotum), 所以换字体不需要下载、不需要打包、也不会增加体积 ——
  * 直接把目标语种字体条目的**原始压缩字节**原样写到中文字体条目上即可。
  */
+import { xxh3_64 } from "../core/xxh3.ts";
 import {
   decompressEntry,
   isCompressedEntry,
@@ -194,7 +195,37 @@ export async function applyFontPatches(wadPath: string, patches: FontPatch[]): P
   if (!items.length) {
     return { ok: true, patched: 0, skipped: 0, backup: null, bytesAppended: 0, message: "没有需要替换的字体", labels: [], skippedLabels: [] };
   }
-  return patchWadEntries(wadPath, items);
+  const result = await patchWadEntries(wadPath, items);
+
+  // 打完之后立刻自检: 逐条把数据读回来重算校验值。
+  // 游戏挂载资源包时会校验 [+24], 值不对会直接判定文件损坏 —— 与其让用户进游戏才发现,
+  // 不如这里就查出来并自动还原。
+  if (result.ok) {
+    const check = await verifyPatchedEntries(wadPath, items.map((item) => item.index));
+    if (!check.ok) {
+      await restoreWad(wadPath);
+      return { ...result, ok: false, message: "字体校验自检未通过（" + check.message + "），已自动还原" };
+    }
+  }
+  return result;
+}
+
+/** 把指定条目读回来重算 xxh3, 确认与条目表里存的一致。 */
+export async function verifyPatchedEntries(wadPath: string, indexes: number[]): Promise<{ ok: boolean; message: string }> {
+  const toc = await readWadEntries(wadPath);
+  for (const index of indexes) {
+    const entry = toc.entries[index];
+    if (!entry) return { ok: false, message: "条目 " + index + " 不存在" };
+    const data = await readEntryBytes(wadPath, entry, entry.size);
+    const actual = xxh3_64(data);
+    if (actual !== entry.hash) {
+      return {
+        ok: false,
+        message: "条目 " + index + " 校验值不符（存 " + entry.hash.toString(16) + "，算 " + actual.toString(16) + "）"
+      };
+    }
+  }
+  return { ok: true, message: "全部一致" };
 }
 
 /** 还原字体(把整个 UI.wad.client 从备份恢复)。 */
