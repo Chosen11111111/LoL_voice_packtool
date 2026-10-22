@@ -510,7 +510,7 @@
    */
   function textPackLocale() {
     const code = String(store.selected || "").toLowerCase();
-    return ["en_us", "ja_jp", "ko_kr"].indexOf(code) >= 0 ? code : "en_us";
+    return ["en_us", "ja_jp", "ko_kr", "ru_ru"].indexOf(code) >= 0 ? code : "en_us";
   }
 
   let textPackState = null;
@@ -537,7 +537,7 @@
       textPackInitialized = true;
       box.checked = Boolean(textPackState.active);
     }
-    box.title = (textPackState.message || "") + " · 目标语言：" + ({ en_us: "英文", ja_jp: "日文", ko_kr: "韩文" }[locale] || locale) +
+    box.title = (textPackState.message || "") + " · 目标语言：" + ({ en_us: "英文", ja_jp: "日文", ko_kr: "韩文", ru_ru: "俄文" }[locale] || locale) +
       " · 只改客户端界面文字，不动局内文字";
     const on = Boolean(textPackState.active && textPackState.staged === locale);
 

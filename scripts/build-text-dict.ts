@@ -20,7 +20,7 @@ const CACHE = path.join(import.meta.dirname, "..", ".tmp", "trans");
 const OUT = path.join(import.meta.dirname, "..", "assets", "textpack");
 /** 客户端界面里可能出现的中文 → 目标语言。zh_cn 是"原文", 其余是"译文"。 */
 const SOURCE = "zh_cn";
-const TARGETS = ["en_us", "ja_jp", "ko_kr"];
+const TARGETS = ["en_us", "ja_jp", "ko_kr", "ru_ru"];
 
 /** 列出 CommunityDragon 上的全部客户端插件名。 */
 async function listPlugins(): Promise<string[]> {
