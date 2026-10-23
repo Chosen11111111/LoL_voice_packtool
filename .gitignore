@@ -31,3 +31,7 @@ desktop/voice-launcher.exe
 docs/ui-preview/
 config.json
 
+
+# 字体/资源探测的临时产物, 绝不进仓库
+overlay-probe/
+
