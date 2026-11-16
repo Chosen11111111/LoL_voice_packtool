@@ -279,7 +279,7 @@ async function relaunchElevated(extraArgs: string[]): Promise<boolean> {
  * 重新编译 shell(tao/wry)需要联网拉 crates。这里内联一段 C# 到内存里编译执行,
  * 动画循环跑在 C# 侧, 比逐帧起进程稳。外壳还没出现时先在 C# 里轮询等它。
  */
-function startWindowAnimator(): void {
+function startWindowAnimator(mode: "shell" | "browser" = "shell"): void {
   if (process.platform !== "win32") return;
   const script = [
     'Add-Type -TypeDefinition @"',
@@ -302,13 +302,15 @@ function startWindowAnimator(): void {
     '  [DllImport("user32.dll")] static extern bool SetWindowPos(IntPtr h, IntPtr after, int x, int y, int cx, int cy, uint flags);',
     '  [DllImport("user32.dll")] static extern bool ShowWindow(IntPtr h, int cmd);',
     '  [DllImport("user32.dll")] static extern int GetSystemMetrics(int index);',
-    "  static bool IsOurs(IntPtr h) {",
-    '    var c = new StringBuilder(128); GetClassName(h, c, 128); if (c.ToString() != "Window Class") return false;',
-    '    var t = new StringBuilder(256); GetWindowText(h, t, 256); return t.ToString() == "LoL Voice";',
+    "  static bool IsOurs(IntPtr h, int mode) {",
+    "    var c = new StringBuilder(128); GetClassName(h, c, 128);",
+    "    var t = new StringBuilder(256); GetWindowText(h, t, 256);",
+    '    if (mode == 0) return c.ToString() == "Window Class" && t.ToString() == "LoL Voice";',
+    '    return c.ToString() == "Chrome_WidgetWin_1" && t.ToString().Contains("英雄联盟");',
     "  }",
-    "  static List<IntPtr> Snapshot() {",
+    "  static List<IntPtr> Snapshot(int mode) {",
     "    var list = new List<IntPtr>();",
-    "    EnumWindows(delegate(IntPtr h, IntPtr l) { if (IsOurs(h)) list.Add(h); return true; }, IntPtr.Zero);",
+    "    EnumWindows(delegate(IntPtr h, IntPtr l) { if (IsOurs(h, mode)) list.Add(h); return true; }, IntPtr.Zero);",
     "    return list;",
     "  }",
     "  static bool IsFresh(IntPtr hwnd, DateTime notBefore) {",
@@ -320,12 +322,12 @@ function startWindowAnimator(): void {
     "    if (!ok) return false;",
     "    return DateTime.FromFileTimeUtc(c) >= notBefore.AddSeconds(-2);",
     "  }",
-    "  public static void Run(DateTime notBefore) {",
-    "    List<IntPtr> before = Snapshot();",
+    "  public static void Run(DateTime notBefore, int mode) {",
+    "    List<IntPtr> before = Snapshot(mode);",
     "    IntPtr hwnd = IntPtr.Zero;",
     "    DateTime deadline = DateTime.UtcNow.AddSeconds(6);",
     "    while (DateTime.UtcNow < deadline) {",
-    "      foreach (IntPtr candidate in Snapshot()) { if (!before.Contains(candidate) || IsFresh(candidate, notBefore)) { hwnd = candidate; break; } }",
+    "      foreach (IntPtr candidate in Snapshot(mode)) { if (!before.Contains(candidate) || IsFresh(candidate, notBefore)) { hwnd = candidate; break; } }",
     "      if (hwnd != IntPtr.Zero) break;",
     "      Thread.Sleep(5);",
     "    }",
@@ -352,7 +354,7 @@ function startWindowAnimator(): void {
     "  }",
     "}",
     '"@',
-    "[LvWindowAnim]::Run([DateTime]::UtcNow)"
+    `[LvWindowAnim]::Run([DateTime]::UtcNow, ${mode === "browser" ? 1 : 0})`
   ].join("\r\n");
   try {
     spawn("powershell", ["-NoProfile", "-ExecutionPolicy", "Bypass", "-EncodedCommand", encodePowerShell(script)], {
@@ -360,8 +362,9 @@ function startWindowAnimator(): void {
       stdio: "ignore",
       windowsHide: true
     }).unref();
-  } catch {
-    /* 动画失败不影响启动 */
+    logger.info(`窗口动画器已启动（${mode}）`);
+  } catch (error) {
+    logger.warn(`窗口动画器启动失败（${mode}）: ${String((error as Error).message ?? error)}`);
   }
 }
 
@@ -536,19 +539,22 @@ async function main(): Promise<void> {
   }
 
   // 上一次的 shell 可能还占着 WebView2 的用户数据目录(0x800700AA)。先清掉再开。
-  if (shell) {
-    await killStaleShells();
-    await new Promise((resolve) => setTimeout(resolve, 200));
-    // 先让动画器把 C# 编译好、拍下"当前已有窗口"的快照, 再启动外壳 ——
-    // 这样新窗口一创建就被它认出来并挪到右侧, 不会先在中间闪一下。
-    // (Add-Type 实测约 300~400ms, 这里留 700ms 余量; 编译慢的机器也不会漏掉窗口)
-    startWindowAnimator();
-    await new Promise((resolve) => setTimeout(resolve, 700));
-  }
-
+  // 同时先让窗口动画器把 C# 编译好、拍下"当前已有窗口"的快照, 再创建窗口 ——
+  // 这样新窗口一出现就被它认出来并挪到右侧, 不会先在中间闪一下。
   let windowProcess: ChildProcess;
   try {
-    windowProcess = shell ? openShellWindow(shell, shellUrl) : openAppWindow(browser!, url);
+    if (shell) {
+      await killStaleShells();
+      await new Promise((resolve) => setTimeout(resolve, 200));
+      startWindowAnimator("shell");
+      await new Promise((resolve) => setTimeout(resolve, 700));
+      windowProcess = openShellWindow(shell, shellUrl);
+    } else {
+      // 浏览器 --app 窗口也要动: 它的标题就是页面标题, 用 Chrome_WidgetWin_1 + 标题识别
+      startWindowAnimator("browser");
+      await new Promise((resolve) => setTimeout(resolve, 500));
+      windowProcess = openAppWindow(browser!, url);
+    }
   } catch (error) {
     logger.warn(`打开应用窗口失败, 改用默认浏览器: ${String((error as Error).message ?? error)}`);
     openDefaultBrowser(url);
@@ -624,6 +630,9 @@ async function main(): Promise<void> {
     const browserAlreadyTried = !shell;
     if (!browserAlreadyTried && fallbackBrowser) {
       logger.warn("原生外壳启动失败, 改用浏览器窗口继续运行");
+      // 浏览器窗口同样让它从右边滑进来(标题匹配页面标题)
+      startWindowAnimator("browser");
+      await new Promise((resolve) => setTimeout(resolve, 500));
       try {
         windowProcess = openAppWindow(fallbackBrowser, url);
         outcome = await waitWindow(windowProcess, false);
