@@ -6,6 +6,7 @@
  */
 import { spawn, type ChildProcess } from "node:child_process";
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { appRoot, loadConfig, saveConfig } from "./core/config.ts";
 import { createLogger, getLogFile, setLogFile, setLogLevel, type LogLevel } from "./core/logger.ts";
@@ -107,6 +108,13 @@ function findChromium(): string | null {
 
 /** 系统默认浏览器打开(找不到 Chromium 时的兜底)。 */
 function openDefaultBrowser(url: string): void {
+  // 用 rundll32 而不是 cmd /c start: 它是图形程序, 不闪控制台, 也不容易被安全软件拦。
+  try {
+    spawn("rundll32", ["url.dll,FileProtocolHandler", url], { detached: true, stdio: "ignore", windowsHide: true }).unref();
+    return;
+  } catch {
+    /* 退回 cmd */
+  }
   try {
     spawn("cmd", ["/c", "start", "", url], { detached: true, stdio: "ignore", windowsHide: true }).unref();
   } catch {
@@ -114,12 +122,41 @@ function openDefaultBrowser(url: string): void {
   }
 }
 
+/** 目录可写性探测: 真写一个文件再删掉。 */
+function probeWritable(dir: string): boolean {
+  try {
+    fs.mkdirSync(dir, { recursive: true });
+    const probe = path.join(dir, `.write-probe-${process.pid}`);
+    fs.writeFileSync(probe, "ok");
+    fs.rmSync(probe, { force: true });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function localAppDataDir(): string {
+  return path.join(process.env["LOCALAPPDATA"] ?? appRoot(), "LoL_Voice");
+}
+
+/** 浏览器窗口的独立 profile: LOCALAPPDATA 不可写时退到临时目录/程序目录。 */
+function browserProfileDir(): string {
+  const candidates = [
+    path.join(localAppDataDir(), ".app-profile"),
+    path.join(os.tmpdir(), "LoL_Voice", ".app-profile"),
+    path.join(appRoot(), ".tmp", ".app-profile")
+  ];
+  for (const dir of candidates) {
+    if (probeWritable(dir)) return dir;
+  }
+  return candidates[candidates.length - 1]!;
+}
+
 /** 以应用窗口方式打开界面, 返回窗口进程(关闭时 resolve)。 */
 function openAppWindow(browser: string, url: string): ChildProcess {
   // 独立 profile: 避免复用已打开的浏览器实例(那样窗口会立刻交出去, 拿不到关闭事件)。
-  // 放 LOCALAPPDATA 而不是程序目录: 程序目录可能只读, 而且不该往发布包里写缓存。
-  const profile = path.join(process.env["LOCALAPPDATA"] ?? appRoot(), "LoL_Voice", ".app-profile");
-  fs.mkdirSync(profile, { recursive: true });
+  // 不一定能写 LOCALAPPDATA(权限/安全软件), 所以逐个候选探测, 最后退到程序目录。
+  const profile = browserProfileDir();
   return spawn(
     browser,
     [
@@ -320,7 +357,17 @@ async function main(): Promise<void> {
   // 没有 WebView2 就别用原生外壳了: 它必然秒退, 表现为"打开了但界面不出现"
   const webview2 = hasWebView2();
   if (!webview2) logger.warn("未检测到 WebView2 运行时, 改用浏览器窗口(装 WebView2 后可恢复无边框窗口)");
-  const shell = hasFlag("browser-window") || !webview2 ? null : findShell();
+  // WebView2 的外壳把用户数据目录固定写在 %LOCALAPPDATA%\LoL_Voice\WebView2。
+  // 这个目录不可写时(权限/安全软件), 外壳会以 0x800700AA「资源在使用中」秒退, 用户只看到闪一下。
+  // 所以先探测: 不能写就直接走浏览器窗口, 别让用户看两次失败。
+  const localWritable = probeWritable(localAppDataDir());
+  if (!localWritable) {
+    logger.warn(
+      "LocalAppData\\LoL_Voice 不可写（权限或安全软件拦截）：跳过 WebView2 外壳，改用浏览器窗口；" +
+        "若想恢复原生窗口，请右键以管理员运行发布包里的『修复权限(管理员).cmd』"
+    );
+  }
+  const shell = hasFlag("browser-window") || !webview2 || !localWritable ? null : findShell();
   const browser = shell ? null : findChromium();
   if (!shell && !browser) {
     console.log("[!] 未找到 Edge/Chrome，改用系统默认浏览器打开；关闭本窗口即退出。");
@@ -349,13 +396,14 @@ async function main(): Promise<void> {
     return;
   }
 
-  /** 等窗口进程结束; 外壳在 4 秒内就退出时判定为"启动失败"而不是"用户关窗"。 */
+  /** 等窗口进程结束; 4 秒内就退出时判定为"启动失败"而不是"用户关窗"。 */
   const waitWindow = (proc: ChildProcess, isShell: boolean): Promise<"closed" | "failed"> =>
     new Promise((resolve) => {
       const startedAt = Date.now();
       proc.on("exit", (code) => {
-        if (isShell && Date.now() - startedAt < 4000) {
-          logger.warn(`原生外壳 ${Date.now() - startedAt}ms 就退出了(exit=${code}), 判定为启动失败`);
+        const lived = Date.now() - startedAt;
+        if (lived < 4000) {
+          logger.warn(`${isShell ? "原生外壳" : "窗口进程"} ${lived}ms 就退出了(exit=${code}), 判定为启动失败`);
           resolve("failed");
           return;
         }
@@ -364,7 +412,7 @@ async function main(): Promise<void> {
       });
       proc.on("error", (error) => {
         logger.warn(`窗口进程异常: ${error.message}`);
-        resolve(isShell ? "failed" : "closed");
+        resolve("failed");
       });
     });
 
@@ -407,21 +455,25 @@ async function main(): Promise<void> {
     }
   }
   if (outcome === "failed") {
-    // 外壳死了(最常见是 WebView2 缺失/被杀软拦截/显卡驱动崩), 退回浏览器窗口,
-    // 至少让用户看到界面, 而不是"闪一下就没了"。
+    // 外壳死了(WebView2 被占用/被杀软拦/用户数据目录不可写), 退回浏览器窗口。
+    // 注意: 只有"一开始用的就是外壳"才需要再开浏览器; 如果浏览器窗口自己 4 秒就退了,
+    // 说明它在这台机器上也起不来, 直接走系统默认浏览器, 并把服务保持在运行状态。
     const fallbackBrowser = findChromium();
-    logger.warn("原生外壳启动失败, 改用浏览器窗口继续运行");
-    if (fallbackBrowser) {
+    const browserAlreadyTried = !shell;
+    if (!browserAlreadyTried && fallbackBrowser) {
+      logger.warn("原生外壳启动失败, 改用浏览器窗口继续运行");
       try {
         windowProcess = openAppWindow(fallbackBrowser, url);
         outcome = await waitWindow(windowProcess, false);
       } catch (error) {
         logger.warn(`浏览器窗口也打不开: ${String((error as Error).message ?? error)}`);
-        openDefaultBrowser(url);
-        await waitForever();
-        outcome = "closed";
+        outcome = "failed";
       }
-    } else {
+    }
+    if (outcome === "failed") {
+      // 最后一层兜底: 用系统默认浏览器打开, **服务保持运行**。
+      // 以前这里会直接退出, 结果用户只剩一个"127.0.0.1 拒绝连接"的死页面。
+      logger.warn("窗口进程无法保持运行, 改用系统默认浏览器打开界面（后端保持运行）…");
       openDefaultBrowser(url);
       await waitForever();
       outcome = "closed";

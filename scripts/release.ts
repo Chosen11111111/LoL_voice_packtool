@@ -150,6 +150,31 @@ const relaunch = [
 await fs.writeFile(path.join(out, "启动(自动清理).cmd"), relaunch, "utf8");
 console.log("入口: 启动(自动清理).cmd");
 
+// 5.7) 权限修复: 有些机器上 %LOCALAPPDATA%\LoL_Voice 的 ACL 只给了管理员组写权限,
+//      普通(未提权)进程写不进去 -> app.log/WebView2/浏览器 profile 全部报 EPERM,
+//      表现是"点了 exe 只有 127.0.0.1 窗口 / 没有界面"。这个脚本用管理员把目录重新授权。
+const repair = [
+  "@echo off",
+  "chcp 65001 >nul",
+  "setlocal",
+  'cd /d "%~dp0"',
+  "net session >nul 2>&1",
+  "if errorlevel 1 (",
+  "  echo 需要管理员权限，正在请求授权...",
+  '  powershell -NoProfile -Command "Start-Process -FilePath \'%~f0\' -Verb RunAs"',
+  "  exit /b",
+  ")",
+  'echo 修复 "%LOCALAPPDATA%\\LoL_Voice" 的写入权限...',
+  'takeown /F "%LOCALAPPDATA%\\LoL_Voice" /R /D Y >nul 2>&1',
+  'icacls "%LOCALAPPDATA%\\LoL_Voice" /grant "%USERNAME%:(OI)(CI)F" /T /C',
+  "echo.",
+  "echo 完成。现在可以重新双击 LoL_Voice.exe。",
+  "pause",
+  ""
+].join("\r\n");
+await fs.writeFile(path.join(out, "修复权限(管理员).cmd"), repair, "utf8");
+console.log("入口: 修复权限(管理员).cmd");
+
 // 6) 清掉"低完整性"标记: 带该标记的 exe 只能低权限运行, 而 Windows 禁止低权限进程
 //    注册托盘图标(Shell_NotifyIcon 会返回 5 拒绝访问)。
 spawnSync("icacls", [out, "/setintegritylevel", "(OI)(CI)M", "/T", "/C", "/Q"], { stdio: "ignore" });
