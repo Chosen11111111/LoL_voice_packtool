@@ -1126,6 +1126,28 @@
       { once: true }
     );
   }
+  // 液态按钮: 在按下的位置扩散一圈白色涟漪(纯装饰, 不影响点击)
+  document.addEventListener(
+    "pointerdown",
+    function (event) {
+      const target =
+        event.target && event.target.closest
+          ? event.target.closest(".btn, .win-btn, .select-trigger, .modal-close, .brand-banner, .check-pill")
+          : null;
+      if (!target || target.disabled) return;
+      const rect = target.getBoundingClientRect();
+      const ripple = document.createElement("span");
+      ripple.className = "press-ripple";
+      ripple.style.left = event.clientX - rect.left + "px";
+      ripple.style.top = event.clientY - rect.top + "px";
+      target.appendChild(ripple);
+      setTimeout(function () {
+        if (ripple.parentNode) ripple.parentNode.removeChild(ripple);
+      }, 650);
+    },
+    { passive: true }
+  );
+
   // 页面的 HTML/CSS/图片都加载完, 再通知后端"界面已经能看了":
   // 窗口动画器收到后才会把窗口从屏幕外滑进来, 避免先看到白窗口。
   if (typeof fetch === "function" && window.location && /^https?:$/.test(window.location.protocol)) {

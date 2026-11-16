@@ -1034,4 +1034,322 @@ button, input, select {
 .win-btn--close:active { background-color: #c9362c; }
 .win-btn:focus-visible { outline: 2px solid var(--blue); outline-offset: -1px; }
 
+/* ============================================================
+   液态玻璃 (Liquid Glass) —— 覆盖上面的基础毛玻璃
+   多层半透明渐变 + 强背板模糊 + 四边内高光 + 缓慢流动的高光/色相
+   以及按钮的按下/悬浮/扫光/涟漪动效
+   ============================================================ */
+:root {
+  --lg-edge-top: rgba(255, 255, 255, 0.96);
+  --lg-edge-bottom: rgba(255, 255, 255, 0.30);
+  --lg-shadow:
+    0 18px 40px rgba(27, 58, 112, 0.10),
+    0 2px 6px rgba(15, 23, 42, 0.05);
+}
+
+/* ---------------- 环境光: 液体一样缓慢漂移 ---------------- */
+.ambient-blob {
+  animation: blob-drift 18s ease-in-out infinite alternate;
+}
+.blob-1 { animation-duration: 21s; }
+.blob-2 { animation-duration: 25s; animation-delay: -7s; }
+.blob-3 { animation-duration: 19s; animation-delay: -3s; }
+@keyframes blob-drift {
+  0% { transform: translate3d(0, 0, 0) scale(1); }
+  50% { transform: translate3d(22px, -16px, 0) scale(1.07); }
+  100% { transform: translate3d(-14px, 12px, 0) scale(0.97); }
+}
+
+/* ---------------- 液态玻璃卡片 ---------------- */
+.glass {
+  border-radius: 18px;
+  border: 1px solid rgba(255, 255, 255, 0.60);
+  background-color: rgba(255, 255, 255, 0.34);
+  background-image:
+    radial-gradient(120% 95% at 16% 6%, rgba(255, 255, 255, 0.90) 0%, rgba(255, 255, 255, 0) 46%),
+    radial-gradient(110% 95% at 90% 94%, rgba(147, 197, 253, 0.38) 0%, rgba(147, 197, 253, 0) 54%),
+    radial-gradient(90% 70% at 50% 118%, rgba(59, 130, 246, 0.16) 0%, rgba(59, 130, 246, 0) 62%),
+    linear-gradient(150deg, rgba(255, 255, 255, 0.68) 0%, rgba(255, 255, 255, 0.36) 46%, rgba(255, 255, 255, 0.56) 100%);
+  background-size: 170% 170%, 160% 160%, 150% 150%, 100% 100%;
+  background-position: 0% 0%, 100% 100%, 50% 100%, 0 0;
+  -webkit-backdrop-filter: blur(26px) saturate(185%) brightness(1.05);
+  backdrop-filter: blur(26px) saturate(185%) brightness(1.05);
+  box-shadow:
+    inset 0 1px 0 var(--lg-edge-top),
+    inset 0 -1px 0 var(--lg-edge-bottom),
+    inset 1px 0 0 rgba(255, 255, 255, 0.40),
+    inset -1px 0 0 rgba(255, 255, 255, 0.26),
+    inset 0 -10px 22px rgba(147, 197, 253, 0.08),
+    var(--lg-shadow);
+  animation: liquid-glass-drift 20s ease-in-out infinite alternate;
+}
+@keyframes liquid-glass-drift {
+  0% { background-position: 0% 0%, 100% 100%, 50% 100%, 0 0; }
+  50% { background-position: 26% 16%, 74% 80%, 48% 96%, 0 0; }
+  100% { background-position: 52% 32%, 48% 58%, 46% 92%, 0 0; }
+}
+
+/* ---------------- 输入框 / 下拉 / 菜单: 内凹的液态玻璃 ---------------- */
+.field-shell,
+.select-trigger {
+  border-radius: 12px;
+  border-color: rgba(255, 255, 255, 0.72);
+  background-image: linear-gradient(180deg, rgba(255, 255, 255, 0.86), rgba(255, 255, 255, 0.52));
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.95),
+    inset 0 -1px 0 rgba(255, 255, 255, 0.35),
+    inset 0 3px 10px rgba(27, 58, 112, 0.05),
+    0 1px 2px rgba(15, 23, 42, 0.03);
+  transition: box-shadow 0.22s ease, border-color 0.22s ease, background 0.22s ease;
+}
+.field-shell:focus-within {
+  border-color: rgba(59, 130, 246, 0.55);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.95),
+    0 0 0 4px rgba(59, 130, 246, 0.12),
+    0 6px 18px rgba(37, 99, 235, 0.12);
+}
+
+.select-menu {
+  border-radius: 14px;
+  border: 1px solid rgba(255, 255, 255, 0.7);
+  background-color: rgba(255, 255, 255, 0.72);
+  -webkit-backdrop-filter: blur(22px) saturate(180%);
+  backdrop-filter: blur(22px) saturate(180%);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.9),
+    0 18px 36px rgba(27, 58, 112, 0.16),
+    0 2px 6px rgba(15, 23, 42, 0.06);
+}
+
+/* ---------------- 勾选胶囊 ---------------- */
+.check-pill {
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.65);
+  background-image: linear-gradient(180deg, rgba(255, 255, 255, 0.82), rgba(255, 255, 255, 0.48));
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.95),
+    0 4px 12px rgba(27, 58, 112, 0.06);
+  transition: transform 0.18s cubic-bezier(0.2, 0.9, 0.25, 1), box-shadow 0.22s ease, border-color 0.22s ease;
+}
+.check-pill:hover {
+  transform: translateY(-1px);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.95),
+    0 8px 18px rgba(27, 58, 112, 0.10);
+}
+.check-pill:has(input:checked) {
+  border-color: rgba(59, 130, 246, 0.45);
+  background-image: linear-gradient(180deg, rgba(219, 234, 254, 0.92), rgba(191, 219, 254, 0.55));
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.98),
+    0 6px 16px rgba(37, 99, 235, 0.16);
+}
+
+/* ---------------- 按钮: 液态玻璃 + 扫光 + 按压回弹 ---------------- */
+.btn,
+.win-btn,
+.select-trigger,
+.modal-close,
+.brand-banner,
+.check-pill {
+  position: relative;
+  overflow: hidden;
+}
+
+.btn {
+  border-radius: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.78);
+  background-color: transparent;
+  background-image: linear-gradient(180deg, rgba(255, 255, 255, 0.95), rgba(255, 255, 255, 0.58));
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.98),
+    inset 0 -1px 0 rgba(255, 255, 255, 0.40),
+    inset 0 -6px 14px rgba(148, 163, 184, 0.10),
+    0 8px 18px rgba(27, 58, 112, 0.10),
+    0 1px 2px rgba(15, 23, 42, 0.05);
+  transition:
+    transform 0.18s cubic-bezier(0.2, 0.9, 0.25, 1),
+    box-shadow 0.24s ease,
+    background-image 0.24s ease,
+    border-color 0.24s ease,
+    color 0.18s ease;
+  will-change: transform;
+}
+
+/* 悬浮时一道高光扫过 */
+.btn::before {
+  content: "";
+  position: absolute;
+  top: -40%;
+  bottom: -40%;
+  left: -60%;
+  width: 44%;
+  background: linear-gradient(100deg, rgba(255, 255, 255, 0) 0%, rgba(255, 255, 255, 0.85) 50%, rgba(255, 255, 255, 0) 100%);
+  transform: translateX(0) skewX(-18deg);
+  opacity: 0;
+  pointer-events: none;
+}
+.btn:hover:not(:disabled)::before {
+  opacity: 0.55;
+  animation: btn-sheen 0.72s cubic-bezier(0.25, 0.8, 0.3, 1);
+}
+@keyframes btn-sheen {
+  0% { transform: translateX(0) skewX(-18deg); }
+  100% { transform: translateX(560%) skewX(-18deg); }
+}
+
+.btn:hover:not(:disabled) {
+  transform: translateY(-1.5px) scale(1.015);
+  border-color: rgba(147, 197, 253, 0.85);
+  background-image: linear-gradient(180deg, #ffffff, rgba(239, 246, 255, 0.78));
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 1),
+    inset 0 -1px 0 rgba(255, 255, 255, 0.5),
+    inset 0 -6px 14px rgba(147, 197, 253, 0.14),
+    0 14px 28px rgba(27, 58, 112, 0.14),
+    0 2px 6px rgba(37, 99, 235, 0.08);
+}
+
+.btn:active:not(:disabled) {
+  transform: translateY(0) scale(0.96);
+  transition-duration: 0.07s;
+  box-shadow:
+    inset 0 2px 8px rgba(27, 58, 112, 0.14),
+    inset 0 1px 0 rgba(255, 255, 255, 0.6),
+    0 2px 6px rgba(15, 23, 42, 0.06);
+}
+
+/* 主按钮: 蓝色液态玻璃, 高光更亮 */
+.btn.primary {
+  border-color: rgba(255, 255, 255, 0.35);
+  background-image: linear-gradient(135deg, #60a5fa 0%, #3b82f6 34%, #2563eb 68%, #1d4ed8 100%);
+  color: #ffffff;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.50),
+    inset 0 -2px 8px rgba(30, 58, 138, 0.28),
+    0 10px 24px rgba(37, 99, 235, 0.30),
+    0 2px 6px rgba(30, 58, 138, 0.16);
+}
+.btn.primary:hover:not(:disabled) {
+  background-image: linear-gradient(135deg, #93c5fd 0%, #3b82f6 38%, #2563eb 72%, #1e40af 100%);
+  border-color: rgba(255, 255, 255, 0.45);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.60),
+    inset 0 -2px 8px rgba(30, 58, 138, 0.30),
+    0 16px 34px rgba(37, 99, 235, 0.42),
+    0 0 0 6px rgba(37, 99, 235, 0.10);
+}
+.btn.primary:active:not(:disabled) {
+  box-shadow:
+    inset 0 3px 10px rgba(15, 23, 42, 0.30),
+    0 2px 8px rgba(30, 58, 138, 0.20);
+}
+
+/* 浅蓝 / 白玻璃 */
+.btn.soft-blue-btn {
+  border-color: rgba(147, 197, 253, 0.75);
+  background-image: linear-gradient(180deg, rgba(219, 234, 254, 0.95), rgba(191, 219, 254, 0.62));
+  color: #1d4ed8;
+}
+.btn.soft-blue-btn:hover:not(:disabled) {
+  border-color: rgba(59, 130, 246, 0.75);
+  background-image: linear-gradient(180deg, #eff6ff, rgba(191, 219, 254, 0.80));
+  color: #1e40af;
+}
+.btn.soft-btn {
+  border-color: rgba(255, 255, 255, 0.80);
+  background-image: linear-gradient(180deg, rgba(255, 255, 255, 0.98), rgba(241, 245, 249, 0.72));
+}
+.btn.soft-btn:hover:not(:disabled) {
+  border-color: rgba(147, 197, 253, 0.85);
+  color: #1d4ed8;
+}
+
+/* 国服/外服胶囊: 小圆点带柔光 */
+.region-pill {
+  border-radius: 999px;
+  border-color: rgba(147, 197, 253, 0.75);
+  background-image: linear-gradient(180deg, rgba(255, 255, 255, 0.95), rgba(239, 246, 255, 0.65));
+}
+.region-dot {
+  box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.12);
+}
+.region-pill[data-region="global"] .region-dot {
+  background-color: var(--ok);
+  box-shadow: 0 0 0 3px rgba(16, 185, 129, 0.16);
+}
+
+/* 标题栏按钮 */
+.win-btn {
+  border-radius: 8px;
+  transition: background-color 0.16s ease, color 0.16s ease, transform 0.14s ease;
+}
+.win-btn:active { transform: scale(0.9); }
+
+/* ---------------- 弹窗: 更厚的液态玻璃 ---------------- */
+.glass-modal {
+  border-radius: 20px;
+  border: 1px solid rgba(255, 255, 255, 0.72);
+  background-color: rgba(255, 255, 255, 0.55);
+  background-image:
+    radial-gradient(120% 100% at 12% 0%, rgba(255, 255, 255, 0.95), rgba(255, 255, 255, 0) 55%),
+    linear-gradient(160deg, rgba(255, 255, 255, 0.72), rgba(239, 246, 255, 0.58));
+  -webkit-backdrop-filter: blur(30px) saturate(190%);
+  backdrop-filter: blur(30px) saturate(190%);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 1),
+    inset 0 -1px 0 rgba(255, 255, 255, 0.35),
+    0 30px 70px rgba(15, 23, 42, 0.22),
+    0 4px 14px rgba(15, 23, 42, 0.08);
+}
+
+/* 自绘标题栏: 一条更亮的玻璃边 */
+.app-titlebar {
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.90), rgba(244, 248, 255, 0.80));
+  border-bottom: 1px solid rgba(255, 255, 255, 0.75);
+  box-shadow: 0 1px 0 rgba(255, 255, 255, 0.9), 0 6px 18px rgba(27, 58, 112, 0.05);
+}
+
+/* ---------------- 按下去的涟漪 ---------------- */
+.press-ripple {
+  position: absolute;
+  width: 14px;
+  height: 14px;
+  margin: -7px 0 0 -7px;
+  border-radius: 50%;
+  pointer-events: none;
+  background: radial-gradient(circle, rgba(255, 255, 255, 0.9) 0%, rgba(255, 255, 255, 0.35) 45%, rgba(255, 255, 255, 0) 72%);
+  transform: scale(0);
+  opacity: 0.9;
+  animation: press-ripple 0.6s ease-out forwards;
+}
+@keyframes press-ripple {
+  0% { transform: scale(0); opacity: 0.85; }
+  100% { transform: scale(16); opacity: 0; }
+}
+
+/* 键盘可达性 */
+.btn:focus-visible,
+.check-pill:focus-visible,
+.brand-banner:focus-visible {
+  outline: 2px solid rgba(37, 99, 235, 0.60);
+  outline-offset: 2px;
+}
+
+/* 减少动效: 关掉流动与扫光 */
+@media (prefers-reduced-motion: reduce) {
+  .ambient-blob,
+  .glass,
+  .btn::before {
+    animation: none !important;
+  }
+  .btn,
+  .check-pill,
+  .win-btn {
+    transition: none;
+  }
+  .press-ripple { display: none; }
+}
+
 
