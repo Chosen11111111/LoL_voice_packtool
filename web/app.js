@@ -1102,6 +1102,23 @@
       log("无法连接后端：" + error.message);
     });
   connectEvents();
+
+  /**
+   * 启动动画收尾: index.html 里 .layout 预置了 ui-enter(避免首帧闪一下),
+   * 动画结束就摘掉 —— transform/filter 常驻会改变毛玻璃的 backdrop 根,
+   * 也会让 position: fixed 的弹窗改为相对 .layout 定位。
+   * 系统开启"减少动画"时 CSS 不播放, 这里保留 class 也无副作用。
+   */
+  const enterLayout = $("appLayout");
+  if (enterLayout && enterLayout.classList) {
+    enterLayout.addEventListener(
+      "animationend",
+      function () {
+        enterLayout.classList.remove("ui-enter");
+      },
+      { once: true }
+    );
+  }
 })();
 
 /**
@@ -1129,4 +1146,5 @@ function setupAppTitlebar() {
     if (!event.target.closest(".win-btn")) send("toggle-maximize");
   });
 }
+
 setupAppTitlebar();

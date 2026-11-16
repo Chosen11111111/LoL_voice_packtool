@@ -142,6 +142,38 @@ button, input, select {
   gap: 12px;
 }
 
+/* ---------------- 启动动画: 界面从右侧滑入屏幕中间 ----------------
+   缓出曲线(先快后缓) + 逐渐收窄的运动模糊 + 轻微斜切, 模拟"被甩进来"的拖影。
+   只在首屏播放一次; animationend 后由 app.js 摘掉 .ui-enter, 避免 transform/filter
+   常驻影响毛玻璃(backdrop-filter)与固定定位弹窗。 */
+@keyframes ui-enter {
+  0% {
+    opacity: 0;
+    transform: translate3d(46vw, 0, 0) scale(0.965) skewX(-3deg);
+    filter: blur(18px) saturate(1.15);
+  }
+  55% {
+    opacity: 1;
+    filter: blur(5.5px) saturate(1.06);
+  }
+  82% {
+    transform: translate3d(-0.35vw, 0, 0) scale(1.002) skewX(0.3deg);
+    filter: blur(1.2px);
+  }
+  100% {
+    opacity: 1;
+    transform: translate3d(0, 0, 0) scale(1) skewX(0);
+    filter: blur(0) saturate(1);
+  }
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .layout.ui-enter {
+    animation: ui-enter 820ms cubic-bezier(0.16, 1, 0.3, 1) both;
+    will-change: transform, filter, opacity;
+  }
+}
+
 /* ---------------- 毛玻璃通用卡片 ---------------- */
 .glass {
   background-color: var(--glass-bg);
