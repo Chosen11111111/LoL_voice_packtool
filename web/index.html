@@ -7,6 +7,17 @@
 <link rel="stylesheet" href="/styles.css" />
 </head>
 <body>
+<!-- 启动时的方向性运动模糊: feGaussianBlur 的 stdDeviation 只给 X(13 0), 所以是水平拖影,
+     不是四面八方的"糊"。动画用 SMIL, 由 app.js 在页面就绪时 beginElement() 触发。 -->
+<svg class="svg-defs" aria-hidden="true" focusable="false">
+  <filter id="uiMotionBlur" x="-20%" y="-20%" width="140%" height="140%" color-interpolation-filters="sRGB">
+    <feGaussianBlur id="uiMotionBlurGaussian" in="SourceGraphic" stdDeviation="13 0" result="blur">
+      <animate id="uiMotionBlurAnim" attributeName="stdDeviation" from="13 0" to="0 0"
+               dur="1.1s" begin="indefinite" fill="freeze"
+               calcMode="spline" keyTimes="0;1" keySplines="0.16 1 0.3 1" />
+    </feGaussianBlur>
+  </filter>
+</svg>
 <!-- 自绘标题栏: 只在原生外壳(无边框窗口)里显示; 浏览器里打开时保持隐藏, 见 app.js -->
 <div class="app-titlebar" id="appTitlebar" hidden>
   <img class="app-titlebar__logo" src="/brand/ico/voicepack-icon-trim.png" alt="" draggable="false" />
