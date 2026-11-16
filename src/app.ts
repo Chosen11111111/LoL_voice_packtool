@@ -311,6 +311,17 @@ async function waitForever(): Promise<void> {
   });
 }
 
+/**
+ * 启动器最多只等 10 秒就认定"进程已经跑起来了"。
+ * 我们要么活过这 10 秒, 要么它会把"正常交接/正常退出"误判成启动失败并弹错误框
+ * (而且它写的 startup.log 在 ACL 异常时还写不进去, 读到的都是上一次的旧日志)。
+ */
+const PROCESS_STARTED_AT = Date.now();
+async function outliveLauncher(): Promise<void> {
+  const elapsed = Date.now() - PROCESS_STARTED_AT;
+  if (elapsed < 11_000) await new Promise((resolve) => setTimeout(resolve, 11_000 - elapsed));
+}
+
 async function main(): Promise<void> {
   const config = await loadConfig();
   if (hasFlag("debug")) setLogLevel("debug" as LogLevel);
@@ -349,6 +360,8 @@ async function main(): Promise<void> {
     if (relaunched) {
       // 启动器在等 node 退出; 打一行带"HTTP 服务已启动"的日志, 让它当成正常交接, 不弹错误框。
       console.log("HTTP 服务已启动（已转交管理员实例）");
+      // 它最多只观察 10 秒: 活过这个时间它才会安心退出, 不会弹"程序启动后立刻退出了"。
+      await outliveLauncher();
       return;
     }
     logger.warn("管理员授权被取消，继续用普通权限运行（界面可能只能用浏览器打开）");
@@ -384,6 +397,10 @@ async function main(): Promise<void> {
   }
 
   const url = `http://${host === "0.0.0.0" ? "127.0.0.1" : host}:${running.port}/`;
+  // 启动器(voice-launcher)用这行判断"服务真的起来了": 没有它, 任何正常的提前退出
+  // 都会被当成"程序启动后立刻退出了"弹一个吓人的错误框(发布模式日志级别是 warn,
+  // logger 里那条 HTTP 服务已启动 会被过滤掉, 所以这里必须用 console 直出)。
+  console.log(`HTTP 服务已启动: ${url}`);
   console.log("======================================================");
   console.log("   英雄联盟 语音包 / 语言包 切换器");
   console.log("======================================================");
@@ -528,6 +545,8 @@ async function main(): Promise<void> {
 
   await cleanupOnExit();
   await running.close();
+  // 正常退出也要活过启动器的 10 秒观察窗, 否则它会弹"启动后立刻退出"(日志还可能是旧的)。
+  await outliveLauncher();
   console.log("[*] 已退出。");
 }
 
