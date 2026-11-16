@@ -1111,10 +1111,16 @@
    */
   const enterLayout = $("appLayout");
   if (enterLayout && enterLayout.classList) {
+    // 原生外壳里窗口本体会滑动(app.ts 调 Win32), 内容只做运动模糊;
+    // 浏览器窗口模式没有窗口可动, 退回"内容自己从右侧滑入"。
+    const nativeShell =
+      (window.ipc && typeof window.ipc.postMessage === "function") ||
+      /[?&]shell=1\b/.test((window.location && window.location.search) || "");
+    if (!nativeShell) enterLayout.classList.add("ui-browser-slide");
     enterLayout.addEventListener(
       "animationend",
       function () {
-        enterLayout.classList.remove("ui-enter");
+        enterLayout.classList.remove("ui-enter", "ui-browser-slide");
       },
       { once: true }
     );

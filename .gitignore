@@ -35,3 +35,7 @@ config.json
 # 字体/资源探测的临时产物, 绝不进仓库
 overlay-probe/
 
+# 早期"编译一个 Rust 小工具做窗口动画"的备选方案(已改由 app.ts 内 PowerShell 完成)
+assets/desktop/
+desktop/src/bin/window-anim.rs
+

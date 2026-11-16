@@ -113,6 +113,8 @@ await fs.rm(path.join(resource, "assets", "voice-sync"), { recursive: true, forc
 for (const name of [".app-profile", ".tmp"]) {
   await fs.rm(path.join(resource, name), { recursive: true, force: true }).catch(() => undefined);
 }
+// 启动动画已改由 app.ts 内的 PowerShell 完成, assets/desktop 是早期备选方案, 不进发布包
+await fs.rm(path.join(resource, "assets", "desktop"), { recursive: true, force: true }).catch(() => undefined);
 // 空的语言包目录是运行时自动建的, 不该跟着发布包发出去(有用户的包就保留)
 const langDir = path.join(resource, "language");
 if ((await fs.readdir(langDir).catch(() => [] as string[])).length === 0) {

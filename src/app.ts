@@ -10,7 +10,7 @@ import os from "node:os";
 import path from "node:path";
 import { appRoot, loadConfig, saveConfig } from "./core/config.ts";
 import { createLogger, getLogFile, setLogFile, setLogLevel, type LogLevel } from "./core/logger.ts";
-import { run, runPowerShell } from "./core/win/shell.ts";
+import { encodePowerShell, run, runPowerShell } from "./core/win/shell.ts";
 import { startApiServer } from "./server/api.ts";
 
 const logger = createLogger("app");
@@ -272,6 +272,99 @@ async function relaunchElevated(extraArgs: string[]): Promise<boolean> {
   return result.ok;
 }
 
+/**
+ * 启动动画: 把原生外壳窗口从屏幕右侧缓出滑到它原本居中的位置。
+ *
+ * 为什么用 PowerShell + Add-Type: 窗口位置只能通过 Win32 SetWindowPos 改, 而
+ * 重新编译 shell(tao/wry)需要联网拉 crates。这里内联一段 C# 到内存里编译执行,
+ * 动画循环跑在 C# 侧, 比逐帧起进程稳。外壳还没出现时先在 C# 里轮询等它。
+ */
+function startWindowAnimator(): void {
+  if (process.platform !== "win32") return;
+  const script = [
+    'Add-Type -TypeDefinition @"',
+    "using System;",
+    "using System.Collections.Generic;",
+    "using System.Runtime.InteropServices;",
+    "using System.Text;",
+    "using System.Threading;",
+    "public static class LvWindowAnim {",
+    "  [StructLayout(LayoutKind.Sequential)] public struct RECT { public int Left; public int Top; public int Right; public int Bottom; }",
+    "  delegate bool EnumProc(IntPtr h, IntPtr l);",
+    '  [DllImport("user32.dll")] static extern bool EnumWindows(EnumProc cb, IntPtr l);',
+    '  [DllImport("user32.dll", CharSet=CharSet.Unicode)] static extern int GetClassName(IntPtr h, StringBuilder s, int n);',
+    '  [DllImport("user32.dll", CharSet=CharSet.Unicode)] static extern int GetWindowText(IntPtr h, StringBuilder s, int n);',
+    '  [DllImport("user32.dll")] static extern uint GetWindowThreadProcessId(IntPtr h, out uint pid);',
+    '  [DllImport("kernel32.dll")] static extern IntPtr OpenProcess(uint access, bool inherit, uint pid);',
+    '  [DllImport("kernel32.dll")] static extern bool GetProcessTimes(IntPtr h, out long creation, out long exit, out long kernel, out long user);',
+    '  [DllImport("kernel32.dll")] static extern bool CloseHandle(IntPtr h);',
+    '  [DllImport("user32.dll")] static extern bool GetWindowRect(IntPtr h, out RECT r);',
+    '  [DllImport("user32.dll")] static extern bool SetWindowPos(IntPtr h, IntPtr after, int x, int y, int cx, int cy, uint flags);',
+    '  [DllImport("user32.dll")] static extern bool ShowWindow(IntPtr h, int cmd);',
+    '  [DllImport("user32.dll")] static extern int GetSystemMetrics(int index);',
+    "  static bool IsOurs(IntPtr h) {",
+    '    var c = new StringBuilder(128); GetClassName(h, c, 128); if (c.ToString() != "Window Class") return false;',
+    '    var t = new StringBuilder(256); GetWindowText(h, t, 256); return t.ToString() == "LoL Voice";',
+    "  }",
+    "  static List<IntPtr> Snapshot() {",
+    "    var list = new List<IntPtr>();",
+    "    EnumWindows(delegate(IntPtr h, IntPtr l) { if (IsOurs(h)) list.Add(h); return true; }, IntPtr.Zero);",
+    "    return list;",
+    "  }",
+    "  static bool IsFresh(IntPtr hwnd, DateTime notBefore) {",
+    "    uint pid; GetWindowThreadProcessId(hwnd, out pid);",
+    "    IntPtr h = OpenProcess(0x1000, false, pid);",
+    "    if (h == IntPtr.Zero) return false;",
+    "    long c, e, k, u; bool ok = GetProcessTimes(h, out c, out e, out k, out u);",
+    "    CloseHandle(h);",
+    "    if (!ok) return false;",
+    "    return DateTime.FromFileTimeUtc(c) >= notBefore.AddSeconds(-2);",
+    "  }",
+    "  public static void Run(DateTime notBefore) {",
+    "    List<IntPtr> before = Snapshot();",
+    "    IntPtr hwnd = IntPtr.Zero;",
+    "    DateTime deadline = DateTime.UtcNow.AddSeconds(6);",
+    "    while (DateTime.UtcNow < deadline) {",
+    "      foreach (IntPtr candidate in Snapshot()) { if (!before.Contains(candidate) || IsFresh(candidate, notBefore)) { hwnd = candidate; break; } }",
+    "      if (hwnd != IntPtr.Zero) break;",
+    "      Thread.Sleep(5);",
+    "    }",
+    "    if (hwnd == IntPtr.Zero) return;",
+    "    ShowWindow(hwnd, 0);",
+    "    Thread.Sleep(120);",
+    "    RECT r;",
+    "    if (!GetWindowRect(hwnd, out r)) return;",
+    "    int ww = r.Right - r.Left, hh = r.Bottom - r.Top;",
+    "    if (ww <= 0 || hh <= 0) return;",
+    "    int tx = r.Left, ty = r.Top;",
+    "    int sw = GetSystemMetrics(0);",
+    "    int sx = sw + 60;",
+    "    SetWindowPos(hwnd, IntPtr.Zero, sx, ty, ww, hh, 0x14);",
+    "    ShowWindow(hwnd, 5);",
+    "    for (int i = 1; i <= 45; i++) {",
+    "      double t = i / 45.0;",
+    "      double e = 1 - Math.Pow(1 - t, 3);",
+    "      int x = (int)(sx + (tx - sx) * e);",
+    "      SetWindowPos(hwnd, IntPtr.Zero, x, ty, ww, hh, 0x14);",
+    "      Thread.Sleep(16);",
+    "    }",
+    "    SetWindowPos(hwnd, IntPtr.Zero, tx, ty, ww, hh, 0x14);",
+    "  }",
+    "}",
+    '"@',
+    "[LvWindowAnim]::Run([DateTime]::UtcNow)"
+  ].join("\r\n");
+  try {
+    spawn("powershell", ["-NoProfile", "-ExecutionPolicy", "Bypass", "-EncodedCommand", encodePowerShell(script)], {
+      detached: true,
+      stdio: "ignore",
+      windowsHide: true
+    }).unref();
+  } catch {
+    /* 动画失败不影响启动 */
+  }
+}
+
 function findShell(): string | null {
   if (process.platform !== "win32") return null;
   // 发布包把外壳放在 desktop/voice-shell.exe; 开发目录里是 cargo 的产物
@@ -397,6 +490,8 @@ async function main(): Promise<void> {
   }
 
   const url = `http://${host === "0.0.0.0" ? "127.0.0.1" : host}:${running.port}/`;
+  // 带 ?shell=1 让页面知道"窗口本体会动", 内容只做运动模糊, 不要再滑一次。
+  const shellUrl = `${url}?shell=1`;
   // 启动器(voice-launcher)用这行判断"服务真的起来了": 没有它, 任何正常的提前退出
   // 都会被当成"程序启动后立刻退出了"弹一个吓人的错误框(发布模式日志级别是 warn,
   // logger 里那条 HTTP 服务已启动 会被过滤掉, 所以这里必须用 console 直出)。
@@ -444,11 +539,16 @@ async function main(): Promise<void> {
   if (shell) {
     await killStaleShells();
     await new Promise((resolve) => setTimeout(resolve, 200));
+    // 先让动画器把 C# 编译好、拍下"当前已有窗口"的快照, 再启动外壳 ——
+    // 这样新窗口一创建就被它认出来并挪到右侧, 不会先在中间闪一下。
+    // (Add-Type 实测约 300~400ms, 这里留 700ms 余量; 编译慢的机器也不会漏掉窗口)
+    startWindowAnimator();
+    await new Promise((resolve) => setTimeout(resolve, 700));
   }
 
   let windowProcess: ChildProcess;
   try {
-    windowProcess = shell ? openShellWindow(shell, url) : openAppWindow(browser!, url);
+    windowProcess = shell ? openShellWindow(shell, shellUrl) : openAppWindow(browser!, url);
   } catch (error) {
     logger.warn(`打开应用窗口失败, 改用默认浏览器: ${String((error as Error).message ?? error)}`);
     openDefaultBrowser(url);
@@ -496,7 +596,7 @@ async function main(): Promise<void> {
     await killOrphanWebView2();
     await new Promise((resolve) => setTimeout(resolve, 800));
     try {
-      windowProcess = openShellWindow(shell, url);
+      windowProcess = openShellWindow(shell, shellUrl);
       outcome = await waitWindow(windowProcess, true);
     } catch (error) {
       logger.warn(`重试原生外壳失败: ${String((error as Error).message ?? error)}`);
@@ -509,7 +609,7 @@ async function main(): Promise<void> {
       await fs.promises.rm(webviewDataDir(), { recursive: true, force: true }).catch(() => undefined);
       await new Promise((resolve) => setTimeout(resolve, 500));
       try {
-        windowProcess = openShellWindow(shell, url);
+        windowProcess = openShellWindow(shell, shellUrl);
         outcome = await waitWindow(windowProcess, true);
       } catch (error) {
         logger.warn(`最后一次重试原生外壳失败: ${String((error as Error).message ?? error)}`);
