@@ -127,6 +127,23 @@ if (await exists(readmeSource)) {
   console.log("说明: 使用说明.txt");
 }
 
+// 5.6) "重新启动"入口: 上一次实例没退干净(托盘里/闪退)时, 双击 exe 会提示
+//      "软件已经在运行了, 但没能把窗口叫回来"。这个 cmd 只结束本工具自己的进程, 再启动。
+//      (启动器是编译好的 Rust exe, 发布包里没法改它的提示, 所以给一个可操作的出口。)
+const relaunch = [
+  "@echo off",
+  "chcp 65001 >nul",
+  "setlocal",
+  'cd /d "%~dp0"',
+  "echo 正在清理上一次遗留的进程（只结束本工具，不动其它程序）...",
+  'powershell -NoProfile -ExecutionPolicy Bypass -Command "$p=\'%~dp0\'; Get-CimInstance Win32_Process -Filter \\"Name=\'node.exe\'\\" | Where-Object { $_.CommandLine -and $_.CommandLine -like \'*app.ts*\' -and $_.CommandLine -like \'*LoL_Voice*\' } | ForEach-Object { try { Stop-Process -Id $_.ProcessId -Force -ErrorAction Stop } catch {} }; Get-Process voice-shell -ErrorAction SilentlyContinue | ForEach-Object { try { Stop-Process -Id $_.Id -Force -ErrorAction Stop } catch {} }"',
+  "timeout /t 1 >nul",
+  'start "" "%~dp0LoL_Voice.exe"',
+  ""
+].join("\r\n");
+await fs.writeFile(path.join(out, "启动(自动清理).cmd"), relaunch, "utf8");
+console.log("入口: 启动(自动清理).cmd");
+
 // 6) 清掉"低完整性"标记: 带该标记的 exe 只能低权限运行, 而 Windows 禁止低权限进程
 //    注册托盘图标(Shell_NotifyIcon 会返回 5 拒绝访问)。
 spawnSync("icacls", [out, "/setintegritylevel", "(OI)(CI)M", "/T", "/C", "/Q"], { stdio: "ignore" });

@@ -8,7 +8,7 @@ import { spawn, type ChildProcess } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { appRoot, loadConfig, saveConfig } from "./core/config.ts";
-import { createLogger, setLogFile, setLogLevel, type LogLevel } from "./core/logger.ts";
+import { createLogger, getLogFile, setLogFile, setLogLevel, type LogLevel } from "./core/logger.ts";
 import { startApiServer } from "./server/api.ts";
 
 const logger = createLogger("app");
@@ -221,13 +221,16 @@ async function main(): Promise<void> {
   const releaseMode = hasFlag("release") || process.env.LEAGUE_VOICE_RELEASE === "1";
   if (releaseMode) {
     setLogLevel("warn" as LogLevel);
-    // 发布包也留一份日志: 用户报"闪退"时, 这份文件就是唯一的线索
-    try {
-      const dir = path.join(process.env["LOCALAPPDATA"] ?? appRoot(), "LoL_Voice");
-      fs.mkdirSync(dir, { recursive: true });
-      setLogFile(path.join(dir, "app.log"));
-    } catch {
-      /* 目录不可写就只走控制台 */
+    // 发布包也留一份日志: 用户报"闪退"时, 这份文件就是唯一的线索。
+    // 先试 %LOCALAPPDATA%; 不行(只读/被占用/被安全软件拦)就退到软件目录自己的 .tmp,
+    // 再不行就只输出控制台 —— 绝不能因为日志写不进去而让程序启动失败。
+    const candidates = [
+      path.join(process.env["LOCALAPPDATA"] ?? appRoot(), "LoL_Voice", "app.log"),
+      path.join(appRoot(), ".tmp", "app.log")
+    ];
+    for (const file of candidates) {
+      setLogFile(file);
+      if (getLogFile()) break;
     }
   } else {
     // 应用模式下把日志落盘, 排障时可直接查看(窗口是独立进程, 控制台输出容易丢)

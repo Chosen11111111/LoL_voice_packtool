@@ -30,7 +30,28 @@ export function setLogFile(file: string | null): void {
   if (!file) return;
   try {
     fs.mkdirSync(path.dirname(file), { recursive: true });
-    logStream = fs.createWriteStream(file, { flags: "a", encoding: "utf8" });
+    // 先探一次能不能追加: 目录只读/文件被占用时直接放弃写文件, 别等异步 error 把进程带崩。
+    const fd = fs.openSync(file, "a");
+    fs.closeSync(fd);
+    const stream = fs.createWriteStream(file, { flags: "a", encoding: "utf8" });
+    stream.on("error", (error) => {
+      // 日志写不进去并不是致命错误: 降级成只输出控制台, 绝不能让 uncaughtException 杀掉程序。
+      if (logStream === stream) {
+        logStream = null;
+        logFilePath = null;
+      }
+      try {
+        console.warn(`[logger] 日志文件不可写, 已改为只输出控制台: ${String((error as Error).message ?? error)}`);
+      } catch {
+        /* ignore */
+      }
+      try {
+        stream.destroy();
+      } catch {
+        /* ignore */
+      }
+    });
+    logStream = stream;
     logFilePath = file;
   } catch {
     logStream = null;
