@@ -115,6 +115,8 @@ for (const name of [".app-profile", ".tmp"]) {
 }
 // 启动动画已改由 app.ts 内的 PowerShell 完成, assets/desktop 是早期备选方案, 不进发布包
 await fs.rm(path.join(resource, "assets", "desktop"), { recursive: true, force: true }).catch(() => undefined);
+// 复用旧发布目录时会把上一轮运行留下的本机配置带进去(里面有用户的游戏路径), 必须清掉
+await fs.rm(path.join(resource, "config.json"), { force: true }).catch(() => undefined);
 // 空的语言包目录是运行时自动建的, 不该跟着发布包发出去(有用户的包就保留)
 const langDir = path.join(resource, "language");
 if ((await fs.readdir(langDir).catch(() => [] as string[])).length === 0) {
