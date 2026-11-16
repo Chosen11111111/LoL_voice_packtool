@@ -48,6 +48,24 @@ async function measure(dir: string): Promise<{ bytes: number; files: number }> {
 
 const mb = (n: number) => (n / 1024 / 1024).toFixed(1) + " MB";
 
+/**
+ * 覆盖一个可能正在被占用的文件: 先写临时文件再改名。
+ * 目标正被运行中的进程/杀软占用时, 保留旧文件并提示, 不让整个打包失败
+ * (同一版本重建时旧文件内容通常一样; 换了新文件则下次关闭程序后再打一次)。
+ */
+async function replaceBestEffort(src: string, dest: string, label: string): Promise<boolean> {
+  const temp = `${dest}.new-${process.pid}`;
+  try {
+    await fs.copyFile(src, temp);
+    await fs.rename(temp, dest);
+    return true;
+  } catch (error) {
+    await fs.rm(temp, { force: true }).catch(() => undefined);
+    console.log(`[!] ${label} 被占用，保留现有文件（${String((error as Error).message).slice(0, 90)}）`);
+    return false;
+  }
+}
+
 // 1) 建版本文件夹 —— 只写不删: 不动 release/ 下任何已有内容
 //    (曾经这里会清空 release/, 把用户正在测试的旧版本一起删掉; 现在一概不碰)
 const existed = await exists(out);
@@ -95,6 +113,11 @@ await fs.rm(path.join(resource, "assets", "voice-sync"), { recursive: true, forc
 for (const name of [".app-profile", ".tmp"]) {
   await fs.rm(path.join(resource, name), { recursive: true, force: true }).catch(() => undefined);
 }
+// 空的语言包目录是运行时自动建的, 不该跟着发布包发出去(有用户的包就保留)
+const langDir = path.join(resource, "language");
+if ((await fs.readdir(langDir).catch(() => [] as string[])).length === 0) {
+  await fs.rm(langDir, { recursive: true, force: true }).catch(() => undefined);
+}
 
 // 3) 窗口外壳 → resource/desktop/
 const built = (await exists(path.join(root, "desktop", "target", "release", "voice-shell.exe")))
@@ -103,8 +126,8 @@ const built = (await exists(path.join(root, "desktop", "target", "release", "voi
 await fs.mkdir(path.join(resource, "desktop"), { recursive: true });
 const shell = path.join(built, "voice-shell.exe");
 if (await exists(shell)) {
-  await fs.copyFile(shell, path.join(resource, "desktop", "voice-shell.exe"));
-  console.log("外壳: resource/desktop/voice-shell.exe " + mb((await fs.stat(shell)).size));
+  const copied = await replaceBestEffort(shell, path.join(resource, "desktop", "voice-shell.exe"), "voice-shell.exe");
+  console.log("外壳: resource/desktop/voice-shell.exe " + mb((await fs.stat(shell)).size) + (copied ? "" : "（沿用旧文件）"));
 } else {
   console.log("[!] 没找到 voice-shell.exe, 发布包会退回浏览器窗口模式");
 }
@@ -112,13 +135,13 @@ if (await exists(shell)) {
 // 4) 自带 Node 运行时 → resource/runtime/
 await fs.mkdir(path.join(resource, "runtime"), { recursive: true });
 const nodeExe = process.execPath;
-await fs.copyFile(nodeExe, path.join(resource, "runtime", "node.exe"));
+await replaceBestEffort(nodeExe, path.join(resource, "runtime", "node.exe"), "runtime/node.exe");
 console.log("运行时: resource/runtime/node.exe " + mb((await fs.stat(nodeExe)).size));
 
 // 5) 启动入口(改名成用户看到的名字, 放在最外面)
 const launcher = path.join(built, "voice-launcher.exe");
 if (await exists(launcher)) {
-  await fs.copyFile(launcher, path.join(out, "LoL_Voice.exe"));
+  await replaceBestEffort(launcher, path.join(out, "LoL_Voice.exe"), "LoL_Voice.exe");
   console.log("入口: LoL_Voice.exe " + mb((await fs.stat(launcher)).size));
 } else {
   console.log("[!] 没找到 voice-launcher.exe, 先跑: cd desktop && cargo build --release");

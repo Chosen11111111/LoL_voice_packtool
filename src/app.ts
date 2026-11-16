@@ -241,6 +241,37 @@ function webviewDataDir(): string {
   return path.join(process.env["LOCALAPPDATA"] ?? appRoot(), "LoL_Voice", "WebView2");
 }
 
+/** 当前进程是否具备管理员权限(net session 只有管理员能成功)。 */
+async function isElevated(): Promise<boolean> {
+  if (process.platform !== "win32") return false;
+  const result = await run("net", ["session"], { timeoutMs: 5000 });
+  return result.ok;
+}
+
+/**
+ * 以管理员身份重新启动自己(会弹一次 UAC)。
+ *
+ * 为什么需要: 日志、WebView2 用户目录、浏览器 profile 都在 %LOCALAPPDATA%\LoL_Voice 下。
+ * 有些机器的 ACL 只把写权限给了管理员组, 未提权进程写不进去 —— 外壳会以 0x800700AA 秒退,
+ * 用户只能看到一个 127.0.0.1 的空窗口。提权一次就能正常打开原生窗口。
+ * 传 --no-elevate 防止提权后仍不可写时无限重启。
+ */
+async function relaunchElevated(extraArgs: string[]): Promise<boolean> {
+  if (process.platform !== "win32") return false;
+  const node = process.execPath;
+  const entry = process.argv[1] ?? path.join(appRoot(), "src", "app.ts");
+  const args = [entry, ...extraArgs.filter((item) => item !== "--no-elevate"), "--no-elevate"];
+  if ((process.env.LEAGUE_VOICE_RELEASE === "1" || hasFlag("release")) && !args.includes("--release")) {
+    args.push("--release");
+  }
+  const quote = (text: string) => `'${text.replace(/'/g, "''")}'`;
+  const script =
+    `Start-Process -FilePath ${quote(node)} -ArgumentList @(${args.map(quote).join(",")}) ` +
+    `-WorkingDirectory ${quote(appRoot())} -WindowStyle Hidden -Verb RunAs`;
+  const result = await run("powershell", ["-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", script], { timeoutMs: 60000 });
+  return result.ok;
+}
+
 function findShell(): string | null {
   if (process.platform !== "win32") return null;
   // 发布包把外壳放在 desktop/voice-shell.exe; 开发目录里是 cargo 的产物
@@ -307,6 +338,20 @@ async function main(): Promise<void> {
   } else {
     // 应用模式下把日志落盘, 排障时可直接查看(窗口是独立进程, 控制台输出容易丢)
     setLogFile(path.join(appRoot(), ".tmp", "app.log"));
+  }
+
+  // 权限自检: %LOCALAPPDATA%\LoL_Voice 写不进去时(ACL 只给了管理员组 / 安全软件拦),
+  // 外壳和浏览器 profile 都建不出来, 用户只会看到一个 127.0.0.1 空窗口。
+  // 这里直接请求管理员权限重启一次; 用户取消授权就继续用普通权限跑(走浏览器兜底)。
+  if (!hasFlag("no-elevate") && !(await isElevated()) && !probeWritable(localAppDataDir())) {
+    logger.warn("当前权限无法写入 %LOCALAPPDATA%\\LoL_Voice，正在请求管理员权限重新启动…");
+    const relaunched = await relaunchElevated(process.argv.slice(2));
+    if (relaunched) {
+      // 启动器在等 node 退出; 打一行带"HTTP 服务已启动"的日志, 让它当成正常交接, 不弹错误框。
+      console.log("HTTP 服务已启动（已转交管理员实例）");
+      return;
+    }
+    logger.warn("管理员授权被取消，继续用普通权限运行（界面可能只能用浏览器打开）");
   }
 
   // 安装目录不可写(最常见的坑: 解压到 C:\Program Files)会让配置、语音包、日志全部写不进去,
