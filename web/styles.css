@@ -1034,6 +1034,10 @@ button, input, select {
 .win-btn--close:active { background-color: #c9362c; }
 .win-btn:focus-visible { outline: 2px solid var(--blue); outline-offset: -1px; }
 
+/* 液态玻璃实验已停用(保留代码便于回滚): 用永不满足的媒体查询整体关掉,
+   视觉上回到原来的毛玻璃 UI。 */
+@media (min-width: 99999px) {
+
 /* ============================================================
    液态玻璃 (Liquid Glass) —— 覆盖上面的基础毛玻璃
    多层半透明渐变 + 强背板模糊 + 四边内高光 + 缓慢流动的高光/色相
@@ -1350,6 +1354,64 @@ button, input, select {
     transition: none;
   }
   .press-ripple { display: none; }
+}
+
+} /* 液态玻璃实验结束 */
+
+/* ============================================================
+   按钮动效(只动按钮): 顺滑变色 + 轻微放大, 不改变整体 UI 质感
+   ============================================================ */
+.btn {
+  transition:
+    background-color 0.24s ease,
+    border-color 0.24s ease,
+    color 0.2s ease,
+    box-shadow 0.24s ease,
+    transform 0.18s cubic-bezier(0.2, 0.8, 0.25, 1);
+  will-change: transform;
+}
+
+.btn:hover:not(:disabled) {
+  transform: translateY(-1px) scale(1.02);
+}
+
+.btn:active:not(:disabled) {
+  transform: translateY(0) scale(0.97);
+  transition-duration: 0.08s;
+}
+
+/* 主按钮: 悬浮再深一格, 光晕柔一点 */
+.btn.primary {
+  transition:
+    background-color 0.24s ease,
+    border-color 0.24s ease,
+    box-shadow 0.26s ease,
+    transform 0.18s cubic-bezier(0.2, 0.8, 0.25, 1);
+}
+.btn.primary:hover:not(:disabled) {
+  box-shadow:
+    0 6px 18px rgba(37, 99, 235, 0.30),
+    inset 0 1px 0 rgba(255, 255, 255, 0.24);
+}
+
+/* 浅蓝/白玻璃按钮: 颜色渐变而不是突跳 */
+.btn.soft-blue-btn,
+.btn.soft-btn {
+  transition:
+    background-color 0.24s ease,
+    border-color 0.24s ease,
+    color 0.2s ease,
+    box-shadow 0.24s ease,
+    transform 0.18s cubic-bezier(0.2, 0.8, 0.25, 1);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .btn,
+  .btn:hover:not(:disabled),
+  .btn:active:not(:disabled) {
+    transform: none;
+    transition: background-color 0.01s linear, border-color 0.01s linear, color 0.01s linear;
+  }
 }
 
 
