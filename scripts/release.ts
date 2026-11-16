@@ -90,6 +90,12 @@ if (dropped) console.log("清理已废弃的每语种插件目录: " + dropped +
 // 2d) 旧版选人语音插件(assets/voice-sync)也已合并进 client-plugin, 不往发布包里带。
 await fs.rm(path.join(resource, "assets", "voice-sync"), { recursive: true, force: true }).catch(() => undefined);
 
+// 2e) 开发/测试运行留下的缓存目录绝对不能进发布包:
+//     .app-profile 是浏览器窗口的独立 profile(几百个文件), .tmp 是本机日志。
+for (const name of [".app-profile", ".tmp"]) {
+  await fs.rm(path.join(resource, name), { recursive: true, force: true }).catch(() => undefined);
+}
+
 // 3) 窗口外壳 → resource/desktop/
 const built = (await exists(path.join(root, "desktop", "target", "release", "voice-shell.exe")))
   ? path.join(root, "desktop", "target", "release")

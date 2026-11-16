@@ -9,6 +9,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { appRoot, loadConfig, saveConfig } from "./core/config.ts";
 import { createLogger, getLogFile, setLogFile, setLogLevel, type LogLevel } from "./core/logger.ts";
+import { run, runPowerShell } from "./core/win/shell.ts";
 import { startApiServer } from "./server/api.ts";
 
 const logger = createLogger("app");
@@ -115,8 +116,9 @@ function openDefaultBrowser(url: string): void {
 
 /** 以应用窗口方式打开界面, 返回窗口进程(关闭时 resolve)。 */
 function openAppWindow(browser: string, url: string): ChildProcess {
-  // 独立 profile: 避免复用已打开的浏览器实例(那样窗口会立刻交出去, 拿不到关闭事件)
-  const profile = path.join(appRoot(), ".app-profile");
+  // 独立 profile: 避免复用已打开的浏览器实例(那样窗口会立刻交出去, 拿不到关闭事件)。
+  // 放 LOCALAPPDATA 而不是程序目录: 程序目录可能只读, 而且不该往发布包里写缓存。
+  const profile = path.join(process.env["LOCALAPPDATA"] ?? appRoot(), "LoL_Voice", ".app-profile");
   fs.mkdirSync(profile, { recursive: true });
   return spawn(
     browser,
@@ -167,6 +169,39 @@ function hasWebView2(): boolean {
     }
   }
   return false;
+}
+
+/**
+ * 清理上一次留下的窗口外壳。
+ *
+ * 外壳(voice-shell.exe)会把 WebView2 的用户数据目录固定在 %LOCALAPPDATA%\LoL_Voice\WebView2。
+ * 如果上一次的 shell 没退干净(闪退/托盘收起后异常), 新 shell 打开这个目录会报
+ * 0x800700AA「请求的资源在使用中」→ 秒退 → 用户看不到界面。
+ * 名字是我们独有的, taskkill 不会误伤别的程序。
+ */
+async function killStaleShells(): Promise<void> {
+  try {
+    await run("taskkill", ["/F", "/IM", "voice-shell.exe"], { timeoutMs: 8000 });
+  } catch {
+    /* 没有就算了 */
+  }
+}
+
+/** 结束占着 WebView2 用户目录的孤儿进程(只匹配我们自己的路径)。 */
+async function killOrphanWebView2(): Promise<void> {
+  try {
+    await runPowerShell(
+      `Get-CimInstance Win32_Process -Filter "Name='msedgewebview2.exe'" | Where-Object { $_.CommandLine -like '*LoL_Voice*WebView2*' } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }`,
+      { timeoutMs: 15000 }
+    );
+  } catch {
+    /* 查不到就算了 */
+  }
+}
+
+/** 外壳使用的 WebView2 用户数据目录(与 desktop/src/main.rs 里一致)。 */
+function webviewDataDir(): string {
+  return path.join(process.env["LOCALAPPDATA"] ?? appRoot(), "LoL_Voice", "WebView2");
 }
 
 function findShell(): string | null {
@@ -296,6 +331,12 @@ async function main(): Promise<void> {
     return;
   }
 
+  // 上一次的 shell 可能还占着 WebView2 的用户数据目录(0x800700AA)。先清掉再开。
+  if (shell) {
+    await killStaleShells();
+    await new Promise((resolve) => setTimeout(resolve, 200));
+  }
+
   let windowProcess: ChildProcess;
   try {
     windowProcess = shell ? openShellWindow(shell, url) : openAppWindow(browser!, url);
@@ -337,6 +378,34 @@ async function main(): Promise<void> {
   process.on("SIGINT", stopOnSignal);
 
   let outcome = await waitWindow(windowProcess, Boolean(shell));
+  if (outcome === "failed" && shell) {
+    // 最常见的原因: 上一次的 msedgewebview2 还占着用户数据目录(0x800700AA)。
+    // 清掉孤儿进程后重试一次, 比直接退回浏览器窗口更接近用户想要的界面。
+    logger.warn("原生外壳启动失败, 清理残留的 WebView2 进程后重试一次…");
+    await killStaleShells();
+    await killOrphanWebView2();
+    await new Promise((resolve) => setTimeout(resolve, 800));
+    try {
+      windowProcess = openShellWindow(shell, url);
+      outcome = await waitWindow(windowProcess, true);
+    } catch (error) {
+      logger.warn(`重试原生外壳失败: ${String((error as Error).message ?? error)}`);
+    }
+    if (outcome === "failed") {
+      // 用户数据目录本身坏了(更新中断/被杀软改过)也会一直 BUSY: 清掉缓存目录再试最后一次。
+      logger.warn("清掉 WebView2 用户数据缓存后最后重试一次…");
+      await killStaleShells();
+      await killOrphanWebView2();
+      await fs.promises.rm(webviewDataDir(), { recursive: true, force: true }).catch(() => undefined);
+      await new Promise((resolve) => setTimeout(resolve, 500));
+      try {
+        windowProcess = openShellWindow(shell, url);
+        outcome = await waitWindow(windowProcess, true);
+      } catch (error) {
+        logger.warn(`最后一次重试原生外壳失败: ${String((error as Error).message ?? error)}`);
+      }
+    }
+  }
   if (outcome === "failed") {
     // 外壳死了(最常见是 WebView2 缺失/被杀软拦截/显卡驱动崩), 退回浏览器窗口,
     // 至少让用户看到界面, 而不是"闪一下就没了"。
