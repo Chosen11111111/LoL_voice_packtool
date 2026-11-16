@@ -1,6 +1,7 @@
 /** REST API: 界面(未来任意前端)只需对着这一组接口写。 */
 import path from "node:path";
 import os from "node:os";
+import { mkdirSync, writeFileSync } from "node:fs";
 import { copyFile, mkdir, readFile, rename, rm, stat } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
 import { APP_NAME, APP_NAME_CN, APP_VERSION, API_VERSION } from "../version.ts";
@@ -75,6 +76,15 @@ function asRecord(value: unknown): Record<string, unknown> {
   return value && typeof value === "object" ? (value as Record<string, unknown>) : {};
 }
 
+/**
+ * 界面首帧就绪标记文件: 页面 load 后 POST /api/ui-ready, 这里把它写出来。
+ * 窗口动画器(app.ts)在文件出现前一直把窗口停在场外, 这样不会先看到一个白窗口。
+ */
+let uiReadyFile: string | null = null;
+export function setUiReadyFile(file: string | null): void {
+  uiReadyFile = file;
+}
+
 function asModules(value: unknown): ModuleId[] | undefined {
   if (!Array.isArray(value)) return undefined;
   const allowed: ModuleId[] = ["lobby_voice", "ingame_voice", "ingame_lang", "lobby_lang"];
@@ -94,9 +104,21 @@ function asModules(value: unknown): ModuleId[] | undefined {
 export function buildRouter(): Router {
   const router = new Router();
 
+  // 页面首帧就绪: 写标记文件, 让窗口动画器开始滑入(见 app.ts)
+  router.post("/api/ui-ready", () => {
+    if (uiReadyFile) {
+      try {
+        mkdirSync(path.dirname(uiReadyFile), { recursive: true });
+        writeFileSync(uiReadyFile, "1");
+      } catch {
+        /* 写不了就算了, 动画器会超时兜底 */
+      }
+    }
+    return { ok: true };
+  });
+
   router.get("/api/health", () => ({
-    ok: true,
-    app: APP_NAME,
+    ok: true,    app: APP_NAME,
     app_cn: APP_NAME_CN,
     version: APP_VERSION,
     api_version: API_VERSION,

@@ -11,7 +11,7 @@ import path from "node:path";
 import { appRoot, loadConfig, saveConfig } from "./core/config.ts";
 import { createLogger, getLogFile, setLogFile, setLogLevel, type LogLevel } from "./core/logger.ts";
 import { encodePowerShell, run, runPowerShell } from "./core/win/shell.ts";
-import { startApiServer } from "./server/api.ts";
+import { startApiServer, setUiReadyFile } from "./server/api.ts";
 
 const logger = createLogger("app");
 
@@ -279,13 +279,17 @@ async function relaunchElevated(extraArgs: string[]): Promise<boolean> {
  * 重新编译 shell(tao/wry)需要联网拉 crates。这里内联一段 C# 到内存里编译执行,
  * 动画循环跑在 C# 侧, 比逐帧起进程稳。外壳还没出现时先在 C# 里轮询等它。
  */
-function startWindowAnimator(mode: "shell" | "browser" = "shell"): void {
+function startWindowAnimator(mode: "shell" | "browser" = "shell", readyFile?: string): void {
   if (process.platform !== "win32") return;
+  // 每次开窗口都清掉旧的就绪标记, 否则会立刻开始滑入(页面还没加载)
+  if (readyFile) fs.rmSync(readyFile, { force: true });
+  const readyArg = readyFile ? `'${readyFile.replace(/'/g, "''")}'` : "''";
   const script = [
     'Add-Type -TypeDefinition @"',
     "using System;",
     "using System.Collections.Generic;",
     "using System.Diagnostics;",
+    "using System.IO;",
     "using System.Runtime.InteropServices;",
     "using System.Text;",
     "using System.Threading;",
@@ -302,6 +306,7 @@ function startWindowAnimator(mode: "shell" | "browser" = "shell"): void {
     '  [DllImport("user32.dll")] static extern bool GetWindowRect(IntPtr h, out RECT r);',
     '  [DllImport("user32.dll")] static extern bool SetWindowPos(IntPtr h, IntPtr after, int x, int y, int cx, int cy, uint flags);',
     '  [DllImport("user32.dll")] static extern bool ShowWindow(IntPtr h, int cmd);',
+    '  [DllImport("user32.dll")] static extern int GetSystemMetrics(int index);',
     '  [DllImport("winmm.dll")] static extern uint timeBeginPeriod(uint period);',
     '  [DllImport("winmm.dll")] static extern uint timeEndPeriod(uint period);',
     '  [DllImport("dwmapi.dll")] static extern int DwmFlush();',
@@ -325,7 +330,7 @@ function startWindowAnimator(mode: "shell" | "browser" = "shell"): void {
     "    if (!ok) return false;",
     "    return DateTime.FromFileTimeUtc(c) >= notBefore.AddSeconds(-2);",
     "  }",
-    "  public static void Run(DateTime notBefore, int mode) {",
+    "  public static void Run(DateTime notBefore, int mode, string readyPath) {",
     "    List<IntPtr> before = Snapshot(mode);",
     '    Console.WriteLine("wait mode=" + mode + " existing=" + before.Count);',
     "    IntPtr hwnd = IntPtr.Zero;",
@@ -338,22 +343,34 @@ function startWindowAnimator(mode: "shell" | "browser" = "shell"): void {
     "    if (hwnd == IntPtr.Zero) { Console.WriteLine(\"no-window\"); return; }",
     '    Console.WriteLine("found hwnd=" + hwnd);',
     "    ShowWindow(hwnd, 0);",
-    "    Thread.Sleep(120);",
     "    RECT r;",
     "    if (!GetWindowRect(hwnd, out r)) return;",
     "    int ww = r.Right - r.Left, hh = r.Bottom - r.Top;",
     "    if (ww <= 0 || hh <= 0) return;",
     "    int tx = r.Left, ty = r.Top;",
+    "    // 先藏到场外, 等页面 load 后 POST /api/ui-ready 写出标记文件, 再开始滑入 ——",
+    "    // 否则 WebView2 还在白屏时窗口就已经滑到中间了。",
+    "    int sw = GetSystemMetrics(0);",
+    "    SetWindowPos(hwnd, IntPtr.Zero, sw + 60, ty, ww, hh, 0x14);",
+    "    DateTime readyDeadline = DateTime.UtcNow.AddSeconds(6);",
+    "    while (DateTime.UtcNow < readyDeadline) {",
+    "      if (File.Exists(readyPath)) break;",
+    "      Thread.Sleep(10);",
+    "    }",
+    '    Console.WriteLine("ready=" + (File.Exists(readyPath) ? "1" : "timeout"));',
+    "    // 在屏幕外先显示 120ms, 让 WebView2 把第一帧真正画出来, 再开始滑入;",
+    "    // 否则窗口进入屏幕时还可能是一张白纸。",
+    "    ShowWindow(hwnd, 5);",
+    "    Thread.Sleep(120);",
     "    int sx = tx + 240;",
     "    SetWindowPos(hwnd, IntPtr.Zero, sx, ty, ww, hh, 0x14);",
-    "    ShowWindow(hwnd, 5);",
     "    // 高帧率: 不再 Sleep(16)(会被系统 15.6ms 定时器量化成 ~30fps 的抖动),",
     "    // 改成跟随桌面合成器的垂直同步 DwmFlush(), 60Hz/144Hz 屏都能一帧不丢。",
     "    timeBeginPeriod(1);",
-    "    Stopwatch sw = Stopwatch.StartNew();",
+    "    Stopwatch clock = Stopwatch.StartNew();",
     "    const double durationMs = 560.0;",
     "    while (true) {",
-    "      double t = sw.Elapsed.TotalMilliseconds / durationMs;",
+    "      double t = clock.Elapsed.TotalMilliseconds / durationMs;",
     "      if (t >= 1.0) break;",
     "      double e = 1 - Math.Pow(1 - t, 3);",
     "      int x = (int)(sx + (tx - sx) * e);",
@@ -366,7 +383,7 @@ function startWindowAnimator(mode: "shell" | "browser" = "shell"): void {
     "  }",
     "}",
     '"@',
-    `[LvWindowAnim]::Run([DateTime]::UtcNow, ${mode === "browser" ? 1 : 0})`
+    `[LvWindowAnim]::Run([DateTime]::UtcNow, ${mode === "browser" ? 1 : 0}, ${readyArg})`
   ].join("\r\n");
   try {
     const child = spawn("powershell", ["-NoProfile", "-ExecutionPolicy", "Bypass", "-EncodedCommand", encodePowerShell(script)], {
@@ -492,6 +509,16 @@ async function main(): Promise<void> {
     console.error("[!] " + hint);
   }
 
+  // 页面首帧就绪标记: 窗口动画器一直把窗口停在场外, 直到页面 load 后 POST 写出这个文件
+  const uiReadyFile = path.join(appRoot(), ".tmp", "ui-ready.flag");
+  try {
+    fs.mkdirSync(path.dirname(uiReadyFile), { recursive: true });
+  } catch {
+    /* 目录建不了就让动画器超时兜底 */
+  }
+  fs.rmSync(uiReadyFile, { force: true });
+  setUiReadyFile(uiReadyFile);
+
   await healStaleLoader("启动自检");
 
   let running;
@@ -563,12 +590,12 @@ async function main(): Promise<void> {
     if (shell) {
       await killStaleShells();
       await new Promise((resolve) => setTimeout(resolve, 200));
-      startWindowAnimator("shell");
+      startWindowAnimator("shell", uiReadyFile);
       await new Promise((resolve) => setTimeout(resolve, 700));
       windowProcess = openShellWindow(shell, shellUrl);
     } else {
       // 浏览器 --app 窗口也要动: 它的标题就是页面标题, 用 Chrome_WidgetWin_1 + 标题识别
-      startWindowAnimator("browser");
+      startWindowAnimator("browser", uiReadyFile);
       await new Promise((resolve) => setTimeout(resolve, 500));
       windowProcess = openAppWindow(browser!, url);
     }
@@ -648,7 +675,7 @@ async function main(): Promise<void> {
     if (!browserAlreadyTried && fallbackBrowser) {
       logger.warn("原生外壳启动失败, 改用浏览器窗口继续运行");
       // 浏览器窗口同样让它从右边滑进来(标题匹配页面标题)
-      startWindowAnimator("browser");
+      startWindowAnimator("browser", uiReadyFile);
       await new Promise((resolve) => setTimeout(resolve, 500));
       try {
         windowProcess = openAppWindow(fallbackBrowser, url);

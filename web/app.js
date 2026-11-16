@@ -1126,6 +1126,22 @@
       { once: true }
     );
   }
+  // 页面的 HTML/CSS/图片都加载完, 再通知后端"界面已经能看了":
+  // 窗口动画器收到后才会把窗口从屏幕外滑进来, 避免先看到白窗口。
+  if (typeof fetch === "function" && window.location && /^https?:$/.test(window.location.protocol)) {
+    const signalReady = function () {
+      try {
+        fetch("/api/ui-ready", { method: "POST" }).catch(function () {});
+      } catch (error) {
+        /* 忽略: 动画器有超时兜底 */
+      }
+    };
+    if (document.readyState === "complete") {
+      setTimeout(signalReady, 60);
+    } else {
+      window.addEventListener("load", function () { setTimeout(signalReady, 60); }, { once: true });
+    }
+  }
 })();
 
 /**
