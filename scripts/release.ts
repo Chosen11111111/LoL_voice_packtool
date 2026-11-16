@@ -156,48 +156,6 @@ if (await exists(readmeSource)) {
   console.log("说明: 使用说明.txt");
 }
 
-// 5.6) "重新启动"入口: 上一次实例没退干净(托盘里/闪退)时, 双击 exe 会提示
-//      "软件已经在运行了, 但没能把窗口叫回来"。这个 cmd 只结束本工具自己的进程, 再启动。
-//      (启动器是编译好的 Rust exe, 发布包里没法改它的提示, 所以给一个可操作的出口。)
-const relaunch = [
-  "@echo off",
-  "chcp 65001 >nul",
-  "setlocal",
-  'cd /d "%~dp0"',
-  "echo 正在清理上一次遗留的进程（只结束本工具，不动其它程序）...",
-  'powershell -NoProfile -ExecutionPolicy Bypass -Command "$p=\'%~dp0\'; Get-CimInstance Win32_Process -Filter \\"Name=\'node.exe\'\\" | Where-Object { $_.CommandLine -and $_.CommandLine -like \'*app.ts*\' -and $_.CommandLine -like \'*LoL_Voice*\' } | ForEach-Object { try { Stop-Process -Id $_.ProcessId -Force -ErrorAction Stop } catch {} }; Get-Process voice-shell -ErrorAction SilentlyContinue | ForEach-Object { try { Stop-Process -Id $_.Id -Force -ErrorAction Stop } catch {} }"',
-  "timeout /t 1 >nul",
-  'start "" "%~dp0LoL_Voice.exe"',
-  ""
-].join("\r\n");
-await fs.writeFile(path.join(out, "启动(自动清理).cmd"), relaunch, "utf8");
-console.log("入口: 启动(自动清理).cmd");
-
-// 5.7) 权限修复: 有些机器上 %LOCALAPPDATA%\LoL_Voice 的 ACL 只给了管理员组写权限,
-//      普通(未提权)进程写不进去 -> app.log/WebView2/浏览器 profile 全部报 EPERM,
-//      表现是"点了 exe 只有 127.0.0.1 窗口 / 没有界面"。这个脚本用管理员把目录重新授权。
-const repair = [
-  "@echo off",
-  "chcp 65001 >nul",
-  "setlocal",
-  'cd /d "%~dp0"',
-  "net session >nul 2>&1",
-  "if errorlevel 1 (",
-  "  echo 需要管理员权限，正在请求授权...",
-  '  powershell -NoProfile -Command "Start-Process -FilePath \'%~f0\' -Verb RunAs"',
-  "  exit /b",
-  ")",
-  'echo 修复 "%LOCALAPPDATA%\\LoL_Voice" 的写入权限...',
-  'takeown /F "%LOCALAPPDATA%\\LoL_Voice" /R /D Y >nul 2>&1',
-  'icacls "%LOCALAPPDATA%\\LoL_Voice" /grant "%USERNAME%:(OI)(CI)F" /T /C',
-  "echo.",
-  "echo 完成。现在可以重新双击 LoL_Voice.exe。",
-  "pause",
-  ""
-].join("\r\n");
-await fs.writeFile(path.join(out, "修复权限(管理员).cmd"), repair, "utf8");
-console.log("入口: 修复权限(管理员).cmd");
-
 // 6) 清掉"低完整性"标记: 带该标记的 exe 只能低权限运行, 而 Windows 禁止低权限进程
 //    注册托盘图标(Shell_NotifyIcon 会返回 5 拒绝访问)。
 spawnSync("icacls", [out, "/setintegritylevel", "(OI)(CI)M", "/T", "/C", "/Q"], { stdio: "ignore" });

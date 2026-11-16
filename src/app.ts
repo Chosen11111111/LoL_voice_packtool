@@ -426,7 +426,7 @@ async function main(): Promise<void> {
   if (!localWritable) {
     logger.warn(
       "LocalAppData\\LoL_Voice 不可写（权限或安全软件拦截）：跳过 WebView2 外壳，改用浏览器窗口；" +
-        "若想恢复原生窗口，请右键以管理员运行发布包里的『修复权限(管理员).cmd』"
+        "想恢复原生窗口，请右键以管理员身份运行 LoL_Voice.exe"
     );
   }
   const shell = hasFlag("browser-window") || !webview2 || !localWritable ? null : findShell();
