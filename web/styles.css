@@ -143,20 +143,14 @@ button, input, select {
 }
 
 /* ---------------- 启动动画: 配合原生窗口从右侧滑入 ----------------
-   窗口本体由 app.ts 调 Win32 SetWindowPos 完成(约 580ms, 缓出, 只走 240px)。
-   这里**不做四面八方的 blur** —— 用 SVG 的 feGaussianBlur(13 0) 做水平方向拖影,
-   配合向右的位移看起来才是"运动模糊"。SMIL 由 app.js 在页面就绪时触发。 */
-.svg-defs {
-  position: absolute;
-  width: 0;
-  height: 0;
-  overflow: hidden;
-}
-
+   窗口本体由 app.ts 调 Win32 SetWindowPos 完成(约 560ms, 缓出, 只走 240px,
+   用 DwmFlush 跟随显示器刷新率, 不再 Sleep 固定 16ms —— 那样会被系统 15.6ms 定时器
+   量化成 30fps 的抖动)。
+   这里不做模糊, 只保留很轻的淡入/缩放。 */
 @keyframes ui-enter {
   0% {
-    opacity: 0.55;
-    transform: scale(0.992);
+    opacity: 0.72;
+    transform: scale(0.994);
   }
   100% {
     opacity: 1;
@@ -166,9 +160,8 @@ button, input, select {
 
 @media (prefers-reduced-motion: no-preference) {
   .layout.ui-enter {
-    filter: url(#uiMotionBlur);
-    animation: ui-enter 420ms cubic-bezier(0.16, 1, 0.3, 1) both;
-    will-change: transform, opacity, filter;
+    animation: ui-enter 360ms cubic-bezier(0.16, 1, 0.3, 1) both;
+    will-change: transform, opacity;
   }
 }
 
@@ -182,7 +175,7 @@ button, input, select {
 
 @keyframes ui-enter-browser {
   0% {
-    opacity: 0.55;
+    opacity: 0.6;
     transform: translate3d(16vw, 0, 0) scale(0.985);
   }
   100% {

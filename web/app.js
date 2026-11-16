@@ -1111,30 +1111,20 @@
    */
   const enterLayout = $("appLayout");
   if (enterLayout && enterLayout.classList) {
-    // 原生外壳里窗口本体会滑动(app.ts 调 Win32), 内容只做水平方向的运动模糊;
+    // 原生外壳里窗口本体会滑动(app.ts 调 Win32), 内容只做很轻的淡入;
     // 浏览器窗口模式没有窗口可动, 退回"内容自己从右侧滑入"。
     const nativeShell =
       (window.ipc && typeof window.ipc.postMessage === "function") ||
       /[?&]shell=1\b/.test((window.location && window.location.search) || "");
     if (!nativeShell) enterLayout.classList.add("ui-browser-slide");
-
-    // SVG feGaussianBlur 的 stdDeviation 只改了 X 方向(13 0) -> 水平拖影。
-    // 用 SMIL 手动触发, 保证模糊从页面真正可见的那一刻才开始衰减。
-    const blurAnim = $("uiMotionBlurAnim");
-    if (blurAnim && typeof blurAnim.beginElement === "function") {
-      try {
-        blurAnim.beginElement();
-      } catch (error) {
-        /* 忽略 */
-      }
-      // 模糊动画 1.1s; 结束后摘掉 filter/transform, 避免常驻影响毛玻璃
-      setTimeout(function () {
+    // 动画结束摘掉 class: transform 常驻会改变毛玻璃的 backdrop 根
+    enterLayout.addEventListener(
+      "animationend",
+      function () {
         enterLayout.classList.remove("ui-enter", "ui-browser-slide");
-      }, 1250);
-    } else {
-      // 没有 SMIL(极老内核): 不要让 13px 的模糊常驻
-      enterLayout.classList.remove("ui-enter", "ui-browser-slide");
-    }
+      },
+      { once: true }
+    );
   }
 })();
 
