@@ -1368,15 +1368,14 @@ button, input, select {
     color 0.2s ease,
     box-shadow 0.24s ease,
     transform 0.18s cubic-bezier(0.2, 0.8, 0.25, 1);
-  will-change: transform;
 }
 
 .btn:hover:not(:disabled) {
-  transform: translateY(-1px) scale(1.02);
+  transform: translateY(-1px);
 }
 
 .btn:active:not(:disabled) {
-  transform: translateY(0) scale(0.97);
+  transform: translateY(1px);
   transition-duration: 0.08s;
 }
 
