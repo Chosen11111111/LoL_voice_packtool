@@ -324,6 +324,7 @@ function startWindowAnimator(mode: "shell" | "browser" = "shell"): void {
     "  }",
     "  public static void Run(DateTime notBefore, int mode) {",
     "    List<IntPtr> before = Snapshot(mode);",
+    '    Console.WriteLine("wait mode=" + mode + " existing=" + before.Count);',
     "    IntPtr hwnd = IntPtr.Zero;",
     "    DateTime deadline = DateTime.UtcNow.AddSeconds(6);",
     "    while (DateTime.UtcNow < deadline) {",
@@ -331,7 +332,8 @@ function startWindowAnimator(mode: "shell" | "browser" = "shell"): void {
     "      if (hwnd != IntPtr.Zero) break;",
     "      Thread.Sleep(5);",
     "    }",
-    "    if (hwnd == IntPtr.Zero) return;",
+    "    if (hwnd == IntPtr.Zero) { Console.WriteLine(\"no-window\"); return; }",
+    '    Console.WriteLine("found hwnd=" + hwnd);',
     "    ShowWindow(hwnd, 0);",
     "    Thread.Sleep(120);",
     "    RECT r;",
@@ -351,17 +353,23 @@ function startWindowAnimator(mode: "shell" | "browser" = "shell"): void {
     "      Thread.Sleep(16);",
     "    }",
     "    SetWindowPos(hwnd, IntPtr.Zero, tx, ty, ww, hh, 0x14);",
+    '    Console.WriteLine("done");',
     "  }",
     "}",
     '"@',
     `[LvWindowAnim]::Run([DateTime]::UtcNow, ${mode === "browser" ? 1 : 0})`
   ].join("\r\n");
   try {
-    spawn("powershell", ["-NoProfile", "-ExecutionPolicy", "Bypass", "-EncodedCommand", encodePowerShell(script)], {
-      detached: true,
-      stdio: "ignore",
+    const child = spawn("powershell", ["-NoProfile", "-ExecutionPolicy", "Bypass", "-EncodedCommand", encodePowerShell(script)], {
+      stdio: ["ignore", "pipe", "pipe"],
       windowsHide: true
-    }).unref();
+    });
+    child.stdout?.on("data", (chunk: Buffer) => {
+      for (const line of String(chunk).split(/\r?\n/)) if (line.trim()) logger.info(`[动画] ${line.trim()}`);
+    });
+    child.stderr?.on("data", (chunk: Buffer) => {
+      for (const line of String(chunk).split(/\r?\n/)) if (line.trim()) logger.warn(`[动画] ${line.trim()}`);
+    });
     logger.info(`窗口动画器已启动（${mode}）`);
   } catch (error) {
     logger.warn(`窗口动画器启动失败（${mode}）: ${String((error as Error).message ?? error)}`);
