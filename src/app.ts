@@ -307,6 +307,9 @@ function startWindowAnimator(mode: "shell" | "browser" = "shell", readyFile?: st
     '  [DllImport("user32.dll")] static extern bool SetWindowPos(IntPtr h, IntPtr after, int x, int y, int cx, int cy, uint flags);',
     '  [DllImport("user32.dll")] static extern bool ShowWindow(IntPtr h, int cmd);',
     '  [DllImport("user32.dll")] static extern int GetSystemMetrics(int index);',
+    '  [DllImport("user32.dll")] static extern IntPtr MonitorFromWindow(IntPtr h, uint flags);',
+    '  [DllImport("user32.dll")] static extern bool GetMonitorInfo(IntPtr monitor, ref MONITORINFO info);',
+    "  [StructLayout(LayoutKind.Sequential)] public struct MONITORINFO { public int cbSize; public RECT rcMonitor; public RECT rcWork; public uint dwFlags; }",
     '  [DllImport("winmm.dll")] static extern uint timeBeginPeriod(uint period);',
     '  [DllImport("winmm.dll")] static extern uint timeEndPeriod(uint period);',
     '  [DllImport("dwmapi.dll")] static extern int DwmFlush();',
@@ -343,15 +346,23 @@ function startWindowAnimator(mode: "shell" | "browser" = "shell", readyFile?: st
     "    if (hwnd == IntPtr.Zero) { Console.WriteLine(\"no-window\"); return; }",
     '    Console.WriteLine("found hwnd=" + hwnd);',
     "    ShowWindow(hwnd, 0);",
+    "    // 等 Rust 侧完成居中/尺寸设置, 再读尺寸并自己按显示器算中心:",
+    "    // 之前直接用找到窗口那一瞬间的坐标, 会停在 Windows 随便放的初始位置。",
+    "    Thread.Sleep(220);",
     "    RECT r;",
     "    if (!GetWindowRect(hwnd, out r)) return;",
     "    int ww = r.Right - r.Left, hh = r.Bottom - r.Top;",
     "    if (ww <= 0 || hh <= 0) return;",
-    "    int tx = r.Left, ty = r.Top;",
+    "    MONITORINFO mi = new MONITORINFO();",
+    "    mi.cbSize = Marshal.SizeOf(typeof(MONITORINFO));",
+    "    IntPtr monitor = MonitorFromWindow(hwnd, 2); // MONITOR_DEFAULTTONEAREST",
+    "    bool hasMon = monitor != IntPtr.Zero && GetMonitorInfo(monitor, ref mi);",
+    "    int tx = hasMon ? mi.rcMonitor.Left + (mi.rcMonitor.Right - mi.rcMonitor.Left - ww) / 2 : r.Left;",
+    "    int ty = hasMon ? mi.rcMonitor.Top + (mi.rcMonitor.Bottom - mi.rcMonitor.Top - hh) / 2 : r.Top;",
     "    // 先藏到场外, 等页面 load 后 POST /api/ui-ready 写出标记文件, 再开始滑入 ——",
     "    // 否则 WebView2 还在白屏时窗口就已经滑到中间了。",
-    "    int sw = GetSystemMetrics(0);",
-    "    SetWindowPos(hwnd, IntPtr.Zero, sw + 60, ty, ww, hh, 0x14);",
+    "    int right = hasMon ? mi.rcMonitor.Right : GetSystemMetrics(0);",
+    "    SetWindowPos(hwnd, IntPtr.Zero, right + 60, ty, ww, hh, 0x14);",
     "    DateTime readyDeadline = DateTime.UtcNow.AddSeconds(6);",
     "    while (DateTime.UtcNow < readyDeadline) {",
     "      if (File.Exists(readyPath)) break;",
@@ -614,13 +625,15 @@ async function main(): Promise<void> {
       const startedAt = Date.now();
       proc.on("exit", (code) => {
         const lived = Date.now() - startedAt;
-        if (lived < 4000) {
-          logger.warn(`${isShell ? "原生外壳" : "窗口进程"} ${lived}ms 就退出了(exit=${code}), 判定为启动失败`);
-          resolve("failed");
+        // 退出码 0 = 窗口被正常关闭(用户点 X / Alt+F4)。必须直接退出:
+        // 以前不看退出码, 4 秒内关窗会被当成"启动失败"并自动重试, 表现就是关掉又自己弹出来。
+        if (code === 0) {
+          logger.info(`窗口已关闭(exit=0, ${lived}ms)，正在停止服务…`);
+          resolve("closed");
           return;
         }
-        logger.info(`窗口已关闭(exit=${code})，正在停止服务…`);
-        resolve("closed");
+        logger.warn(`${isShell ? "原生外壳" : "窗口进程"}异常退出(exit=${code}, ${lived}ms), 判定为启动失败`);
+        resolve("failed");
       });
       proc.on("error", (error) => {
         logger.warn(`窗口进程异常: ${error.message}`);
